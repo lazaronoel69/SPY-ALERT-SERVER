@@ -47,7 +47,7 @@ def get_high_vela(fecha_str, hora_est):
         fecha = datetime.strptime(fecha_str, "%Y-%m-%d")
         inicio = fecha.strftime("%Y-%m-%d")
         fin = (fecha + timedelta(days=1)).strftime("%Y-%m-%d")
-        spy = yf.download("SPY", start=inicio, end=fin, interval="1h", progress=False)
+        spy = yf.download("SPY", start=inicio, end=fin, interval="1h", auto_adjust=False, progress=False)
         if spy.empty:
             return None
         for idx in spy.index:
@@ -108,7 +108,7 @@ def calcular_techo_ahora():
 # ═══════════════════════════════════════════════════════════
 def get_ultima_vela():
     try:
-        spy = yf.download("SPY", period="2d", interval="1h", progress=False)
+        spy = yf.download("SPY", period="2d", interval="1h", auto_adjust=False, progress=False)
         if spy.empty or len(spy) < 2:
             return None
         ultima = spy.iloc[-2]
