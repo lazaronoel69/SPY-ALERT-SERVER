@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-SPY Alert System v4.0
-- Fuente de datos: Alpha Vantage API (confiable desde servidores cloud)
-- Reporte a las :01 de cada hora
+SPY Alert System v5.0
+- Fuente de datos: Polygon.io (diseñado para servidores cloud)
+- Reporte a las :01 de cada hora (hora final del operador)
 - Verificacion P1/P2 sin auto-correccion
 """
 
@@ -18,10 +18,10 @@ app = Flask(__name__)
 # ═══════════════════════════════════════════════════════════
 # CONFIGURACION
 # ═══════════════════════════════════════════════════════════
-TELEGRAM_TOKEN    = "8668514895:AAG5HKGmDLr6_SM1rz3gwC6uk1Ue9iepN70"
-TELEGRAM_CHAT_ID  = "-5010153427"
-EST               = pytz.timezone("America/New_York")
-ALPHA_VANTAGE_KEY = "TYQ1F390ML6O8AWL"  # Reemplazar con key gratuita de alphavantage.co
+TELEGRAM_TOKEN   = "8668514895:AAG5HKGmDLr6_SM1rz3gwC6uk1Ue9iepN70"
+TELEGRAM_CHAT_ID = "-5010153427"
+POLYGON_KEY      = "NNo2iBmpBTx0Kwn7DHs4f_PAwPvzirpZ"
+EST              = pytz.timezone("America/New_York")
 
 # P1 y P2 — con ADJ desactivado en TradingView
 P1 = { "fecha": "2026-02-26", "hora": 10, "high": 693.36 }
@@ -40,54 +40,48 @@ def enviar_telegram(mensaje):
         print(f"Error Telegram: {e}")
 
 # ═══════════════════════════════════════════════════════════
-# ALPHA VANTAGE — datos intraday confiables desde cloud
+# POLYGON.IO — datos intraday confiables desde cloud
 # ═══════════════════════════════════════════════════════════
-def get_spy_intraday():
-    """Obtiene velas de 60 minutos de SPY via Alpha Vantage"""
+def get_spy_velas(fecha_inicio, fecha_fin, limit=10):
+    """Obtiene velas de 1 hora de SPY via Polygon.io"""
     try:
         url = (
-            f"https://www.alphavantage.co/query"
-            f"?function=TIME_SERIES_INTRADAY"
-            f"&symbol=SPY"
-            f"&interval=60min"
-            f"&outputsize=compact"
-            f"&apikey={ALPHA_VANTAGE_KEY}"
+            f"https://api.polygon.io/v2/aggs/ticker/SPY/range/1/hour"
+            f"/{fecha_inicio}/{fecha_fin}"
+            f"?adjusted=false&sort=desc&limit={limit}"
+            f"&apiKey={POLYGON_KEY}"
         )
         r = requests.get(url, timeout=15)
         data = r.json()
 
-        if "Time Series (60min)" not in data:
-            print(f"Alpha Vantage error: {data}")
+        if data.get("status") not in ["OK", "DELAYED"] or not data.get("results"):
+            print(f"Polygon error: {data}")
             return None
 
-        series = data["Time Series (60min)"]
         velas = []
-        for timestamp_str, values in series.items():
-            dt = datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S")
-            dt_est = EST.localize(dt)
+        for v in data["results"]:
+            dt = datetime.fromtimestamp(v["t"] / 1000, tz=pytz.UTC).astimezone(EST)
             velas.append({
-                "time": dt_est,
-                "open":  float(values["1. open"]),
-                "high":  float(values["2. high"]),
-                "low":   float(values["3. low"]),
-                "close": float(values["4. close"]),
+                "time":  dt,
+                "open":  v["o"],
+                "high":  v["h"],
+                "low":   v["l"],
+                "close": v["c"],
             })
-
-        # Ordenar por tiempo descendente
-        velas.sort(key=lambda x: x["time"], reverse=True)
         return velas
 
     except Exception as e:
-        print(f"Error Alpha Vantage: {e}")
+        print(f"Error Polygon: {e}")
         return None
 
 def get_ultima_vela():
-    """Retorna la ultima vela cerrada"""
-    velas = get_spy_intraday()
+    """Retorna la ultima vela cerrada de SPY"""
+    hoy = datetime.now(EST).strftime("%Y-%m-%d")
+    ayer = (datetime.now(EST) - timedelta(days=2)).strftime("%Y-%m-%d")
+    velas = get_spy_velas(ayer, hoy, limit=10)
     if not velas or len(velas) < 2:
         return None
-    # velas[0] es la mas reciente (puede estar abierta)
-    # velas[1] es la ultima cerrada
+    # velas[0] es la mas reciente, velas[1] es la ultima cerrada
     ultima = velas[1]
     return {
         "open":  ultima["open"],
@@ -99,47 +93,28 @@ def get_ultima_vela():
 
 def get_high_vela_fecha(fecha_str, hora_est):
     """Obtiene el high de una vela especifica por fecha y hora"""
-    try:
-        url = (
-            f"https://www.alphavantage.co/query"
-            f"?function=TIME_SERIES_INTRADAY"
-            f"&symbol=SPY"
-            f"&interval=60min"
-            f"&outputsize=full"
-            f"&apikey={ALPHA_VANTAGE_KEY}"
-        )
-        r = requests.get(url, timeout=15)
-        data = r.json()
-
-        if "Time Series (60min)" not in data:
-            return None
-
-        series = data["Time Series (60min)"]
-        for timestamp_str, values in series.items():
-            dt = datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S")
-            dt_est = EST.localize(dt)
-            if dt_est.strftime("%Y-%m-%d") == fecha_str and dt_est.hour == hora_est:
-                return float(values["2. high"])
+    velas = get_spy_velas(fecha_str, fecha_str, limit=20)
+    if not velas:
         return None
-
-    except Exception as e:
-        print(f"Error Alpha Vantage fecha: {e}")
-        return None
+    for v in velas:
+        if v["time"].hour == hora_est:
+            return v["high"]
+    return None
 
 # ═══════════════════════════════════════════════════════════
 # VERIFICACION P1 Y P2 — solo avisa, NO corrige
 # ═══════════════════════════════════════════════════════════
 def verificar_puntos():
     mensaje = "🔍 <b>Verificacion P1 y P2</b>\n"
-    mensaje += "<i>(Alpha Vantage sin ADJ vs operador)</i>\n\n"
+    mensaje += "<i>(Polygon.io sin ADJ vs operador)</i>\n\n"
 
     high_p1 = get_high_vela_fecha(P1["fecha"], P1["hora"])
     if high_p1:
         diff = abs(high_p1 - P1["high"])
         if diff > 0.50:
-            mensaje += f"⚠️ <b>P1 REVISAR</b>\n   Operador: ${P1['high']:.2f} | AV: ${high_p1:.2f} | Diff: ${diff:.2f}\n\n"
+            mensaje += f"⚠️ <b>P1 REVISAR</b>\n   Operador: ${P1['high']:.2f} | Polygon: ${high_p1:.2f} | Diff: ${diff:.2f}\n\n"
         else:
-            mensaje += f"✅ <b>P1 OK</b> — ${P1['high']:.2f} (AV: ${high_p1:.2f} | Diff: ${diff:.2f})\n\n"
+            mensaje += f"✅ <b>P1 OK</b> — ${P1['high']:.2f} (Polygon: ${high_p1:.2f} | Diff: ${diff:.2f})\n\n"
     else:
         mensaje += f"⚠️ P1 no verificado — usando ${P1['high']:.2f}\n\n"
 
@@ -147,9 +122,9 @@ def verificar_puntos():
     if high_p2:
         diff = abs(high_p2 - P2["high"])
         if diff > 0.50:
-            mensaje += f"⚠️ <b>P2 REVISAR</b>\n   Operador: ${P2['high']:.2f} | AV: ${high_p2:.2f} | Diff: ${diff:.2f}\n\n"
+            mensaje += f"⚠️ <b>P2 REVISAR</b>\n   Operador: ${P2['high']:.2f} | Polygon: ${high_p2:.2f} | Diff: ${diff:.2f}\n\n"
         else:
-            mensaje += f"✅ <b>P2 OK</b> — ${P2['high']:.2f} (AV: ${high_p2:.2f} | Diff: ${diff:.2f})\n\n"
+            mensaje += f"✅ <b>P2 OK</b> — ${P2['high']:.2f} (Polygon: ${high_p2:.2f} | Diff: ${diff:.2f})\n\n"
     else:
         mensaje += f"⚠️ P2 no verificado — usando ${P2['high']:.2f}\n\n"
 
@@ -225,7 +200,7 @@ def reporte_horario():
 # LOOP — reporta a las :01 de cada hora
 # ═══════════════════════════════════════════════════════════
 def monitor_loop():
-    print("SPY Alert System v4.0 iniciado...")
+    print("SPY Alert System v5.0 iniciado...")
     time.sleep(5)
     verificar_puntos()
     while True:
@@ -242,11 +217,11 @@ def monitor_loop():
 # ═══════════════════════════════════════════════════════════
 @app.route("/", methods=["GET"])
 def home():
-    return jsonify({"status": "SPY Alert System v4.0 activo"}), 200
+    return jsonify({"status": "SPY Alert System v5.0 activo"}), 200
 
 @app.route("/test", methods=["GET"])
 def test():
-    enviar_telegram("✅ <b>SPY Alert System v4.0</b> — activo y funcionando.")
+    enviar_telegram("✅ <b>SPY Alert System v5.0</b> — activo y funcionando.")
     return jsonify({"status": "ok"}), 200
 
 @app.route("/reporte", methods=["GET"])
