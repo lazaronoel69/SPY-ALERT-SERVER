@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-SPY Alert System v3.0
-- Reporte a las :01 de cada hora (hora final del operador)
-- Yahoo Finance con headers para evitar bloqueo en cloud
-- Verificacion de P1/P2 sin auto-correccion
+SPY Alert System v4.0
+- Fuente de datos: Alpha Vantage API (confiable desde servidores cloud)
+- Reporte a las :01 de cada hora
+- Verificacion P1/P2 sin auto-correccion
 """
 
 import requests
@@ -12,28 +12,20 @@ import time
 from datetime import datetime, timedelta
 import pytz
 from flask import Flask, jsonify
-import pandas as pd
 
 app = Flask(__name__)
 
 # ═══════════════════════════════════════════════════════════
 # CONFIGURACION
 # ═══════════════════════════════════════════════════════════
-TELEGRAM_TOKEN   = "8668514895:AAG5HKGmDLr6_SM1rz3gwC6uk1Ue9iepN70"
-TELEGRAM_CHAT_ID = "-5010153427"
-EST              = pytz.timezone("America/New_York")
+TELEGRAM_TOKEN    = "8668514895:AAG5HKGmDLr6_SM1rz3gwC6uk1Ue9iepN70"
+TELEGRAM_CHAT_ID  = "-5010153427"
+EST               = pytz.timezone("America/New_York")
+ALPHA_VANTAGE_KEY = "TYQ1F390ML6O8AWL"  # Reemplazar con key gratuita de alphavantage.co
 
 # P1 y P2 — con ADJ desactivado en TradingView
 P1 = { "fecha": "2026-02-26", "hora": 10, "high": 693.36 }
 P2 = { "fecha": "2026-03-10", "hora": 14, "high": 683.35 }
-
-# Headers para evitar bloqueo de Yahoo Finance en servidores cloud
-YF_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-    "Accept-Language": "en-US,en;q=0.5",
-    "Connection": "keep-alive",
-}
 
 # ═══════════════════════════════════════════════════════════
 # TELEGRAM
@@ -48,88 +40,116 @@ def enviar_telegram(mensaje):
         print(f"Error Telegram: {e}")
 
 # ═══════════════════════════════════════════════════════════
-# YAHOO FINANCE — con headers para evitar bloqueo en cloud
+# ALPHA VANTAGE — datos intraday confiables desde cloud
 # ═══════════════════════════════════════════════════════════
-def get_spy_data(period="2d", interval="1h"):
+def get_spy_intraday():
+    """Obtiene velas de 60 minutos de SPY via Alpha Vantage"""
     try:
-        session = requests.Session()
-        session.headers.update(YF_HEADERS)
-
-        # Obtener cookie primero
-        session.get("https://finance.yahoo.com", timeout=10)
-
-        import yfinance as yf
-        spy = yf.download(
-            "SPY",
-            period=period,
-            interval=interval,
-            auto_adjust=False,
-            progress=False,
-            session=session
+        url = (
+            f"https://www.alphavantage.co/query"
+            f"?function=TIME_SERIES_INTRADAY"
+            f"&symbol=SPY"
+            f"&interval=60min"
+            f"&outputsize=compact"
+            f"&apikey={ALPHA_VANTAGE_KEY}"
         )
-        return spy if not spy.empty else None
+        r = requests.get(url, timeout=15)
+        data = r.json()
+
+        if "Time Series (60min)" not in data:
+            print(f"Alpha Vantage error: {data}")
+            return None
+
+        series = data["Time Series (60min)"]
+        velas = []
+        for timestamp_str, values in series.items():
+            dt = datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S")
+            dt_est = EST.localize(dt)
+            velas.append({
+                "time": dt_est,
+                "open":  float(values["1. open"]),
+                "high":  float(values["2. high"]),
+                "low":   float(values["3. low"]),
+                "close": float(values["4. close"]),
+            })
+
+        # Ordenar por tiempo descendente
+        velas.sort(key=lambda x: x["time"], reverse=True)
+        return velas
+
     except Exception as e:
-        print(f"Error Yahoo Finance: {e}")
+        print(f"Error Alpha Vantage: {e}")
         return None
 
-def get_spy_data_fecha(fecha_str, interval="1h"):
-    try:
-        session = requests.Session()
-        session.headers.update(YF_HEADERS)
-        session.get("https://finance.yahoo.com", timeout=10)
+def get_ultima_vela():
+    """Retorna la ultima vela cerrada"""
+    velas = get_spy_intraday()
+    if not velas or len(velas) < 2:
+        return None
+    # velas[0] es la mas reciente (puede estar abierta)
+    # velas[1] es la ultima cerrada
+    ultima = velas[1]
+    return {
+        "open":  ultima["open"],
+        "close": ultima["close"],
+        "high":  ultima["high"],
+        "low":   ultima["low"],
+        "time":  ultima["time"].strftime("%H:%M EST")
+    }
 
-        import yfinance as yf
-        fecha = datetime.strptime(fecha_str, "%Y-%m-%d")
-        fin = (fecha + timedelta(days=1)).strftime("%Y-%m-%d")
-        spy = yf.download(
-            "SPY",
-            start=fecha_str,
-            end=fin,
-            interval=interval,
-            auto_adjust=False,
-            progress=False,
-            session=session
+def get_high_vela_fecha(fecha_str, hora_est):
+    """Obtiene el high de una vela especifica por fecha y hora"""
+    try:
+        url = (
+            f"https://www.alphavantage.co/query"
+            f"?function=TIME_SERIES_INTRADAY"
+            f"&symbol=SPY"
+            f"&interval=60min"
+            f"&outputsize=full"
+            f"&apikey={ALPHA_VANTAGE_KEY}"
         )
-        return spy if not spy.empty else None
+        r = requests.get(url, timeout=15)
+        data = r.json()
+
+        if "Time Series (60min)" not in data:
+            return None
+
+        series = data["Time Series (60min)"]
+        for timestamp_str, values in series.items():
+            dt = datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S")
+            dt_est = EST.localize(dt)
+            if dt_est.strftime("%Y-%m-%d") == fecha_str and dt_est.hour == hora_est:
+                return float(values["2. high"])
+        return None
+
     except Exception as e:
-        print(f"Error Yahoo Finance fecha: {e}")
+        print(f"Error Alpha Vantage fecha: {e}")
         return None
 
 # ═══════════════════════════════════════════════════════════
 # VERIFICACION P1 Y P2 — solo avisa, NO corrige
 # ═══════════════════════════════════════════════════════════
-def get_high_vela(fecha_str, hora_est):
-    spy = get_spy_data_fecha(fecha_str)
-    if spy is None:
-        return None
-    for idx in spy.index:
-        idx_est = idx.astimezone(EST)
-        if idx_est.hour == hora_est:
-            val = spy.loc[idx, "High"]
-            return float(val.iloc[0] if hasattr(val, 'iloc') else val)
-    return None
-
 def verificar_puntos():
     mensaje = "🔍 <b>Verificacion P1 y P2</b>\n"
-    mensaje += "<i>(Yahoo Finance sin ADJ vs operador)</i>\n\n"
+    mensaje += "<i>(Alpha Vantage sin ADJ vs operador)</i>\n\n"
 
-    high_p1 = get_high_vela(P1["fecha"], P1["hora"])
+    high_p1 = get_high_vela_fecha(P1["fecha"], P1["hora"])
     if high_p1:
         diff = abs(high_p1 - P1["high"])
         if diff > 0.50:
-            mensaje += f"⚠️ <b>P1 REVISAR</b>\n   Operador: ${P1['high']:.2f} | Yahoo: ${high_p1:.2f} | Diff: ${diff:.2f}\n   Verificar en TradingView con ADJ desactivado\n\n"
+            mensaje += f"⚠️ <b>P1 REVISAR</b>\n   Operador: ${P1['high']:.2f} | AV: ${high_p1:.2f} | Diff: ${diff:.2f}\n\n"
         else:
-            mensaje += f"✅ <b>P1 OK</b> — ${P1['high']:.2f} (Yahoo: ${high_p1:.2f} | Diff: ${diff:.2f})\n\n"
+            mensaje += f"✅ <b>P1 OK</b> — ${P1['high']:.2f} (AV: ${high_p1:.2f} | Diff: ${diff:.2f})\n\n"
     else:
         mensaje += f"⚠️ P1 no verificado — usando ${P1['high']:.2f}\n\n"
 
-    high_p2 = get_high_vela(P2["fecha"], P2["hora"])
+    high_p2 = get_high_vela_fecha(P2["fecha"], P2["hora"])
     if high_p2:
         diff = abs(high_p2 - P2["high"])
         if diff > 0.50:
-            mensaje += f"⚠️ <b>P2 REVISAR</b>\n   Operador: ${P2['high']:.2f} | Yahoo: ${high_p2:.2f} | Diff: ${diff:.2f}\n   Verificar en TradingView con ADJ desactivado\n\n"
+            mensaje += f"⚠️ <b>P2 REVISAR</b>\n   Operador: ${P2['high']:.2f} | AV: ${high_p2:.2f} | Diff: ${diff:.2f}\n\n"
         else:
-            mensaje += f"✅ <b>P2 OK</b> — ${P2['high']:.2f} (Yahoo: ${high_p2:.2f} | Diff: ${diff:.2f})\n\n"
+            mensaje += f"✅ <b>P2 OK</b> — ${P2['high']:.2f} (AV: ${high_p2:.2f} | Diff: ${diff:.2f})\n\n"
     else:
         mensaje += f"⚠️ P2 no verificado — usando ${P2['high']:.2f}\n\n"
 
@@ -150,26 +170,6 @@ def calcular_techo_ahora():
     return round(techo, 2)
 
 # ═══════════════════════════════════════════════════════════
-# OBTENER ULTIMA VELA CERRADA DE SPY
-# ═══════════════════════════════════════════════════════════
-def get_ultima_vela():
-    spy = get_spy_data(period="2d", interval="1h")
-    if spy is None or len(spy) < 2:
-        return None
-    try:
-        ultima = spy.iloc[-2]
-        return {
-            "open":  float(ultima["Open"]),
-            "close": float(ultima["Close"]),
-            "high":  float(ultima["High"]),
-            "low":   float(ultima["Low"]),
-            "time":  spy.index[-2].astimezone(EST).strftime("%H:%M EST")
-        }
-    except Exception as e:
-        print(f"Error procesando vela: {e}")
-        return None
-
-# ═══════════════════════════════════════════════════════════
 # REPORTE HORARIO
 # ═══════════════════════════════════════════════════════════
 def reporte_horario():
@@ -179,9 +179,7 @@ def reporte_horario():
         print(f"Fuera de horario: {ahora_est.strftime('%H:%M EST')}")
         return
 
-    # Hora final para el operador = hora actual (vela de TradingView cierra :30)
     hora_operador = f"{hora}:00 EST"
-
     techo = calcular_techo_ahora()
     vela  = get_ultima_vela()
 
@@ -201,7 +199,7 @@ def reporte_horario():
     if ruptura:
         mensaje = (
             f"🟢 <b>RUPTURA DEL CANAL</b>\n"
-            f"<b>Hora analisis:</b> {hora_operador}\n\n"
+            f"<b>Hora:</b> {hora_operador}\n\n"
             f"<b>Techo:</b> ${techo:.2f}\n"
             f"<b>Cierre vela:</b> ${vela['close']:.2f}\n"
             f"<b>Mecha sup:</b> {mecha_pct:.0f}%\n\n"
@@ -224,10 +222,10 @@ def reporte_horario():
     enviar_telegram(mensaje)
 
 # ═══════════════════════════════════════════════════════════
-# LOOP — reporta a los :01 de cada hora
+# LOOP — reporta a las :01 de cada hora
 # ═══════════════════════════════════════════════════════════
 def monitor_loop():
-    print("SPY Alert System v3.0 iniciado...")
+    print("SPY Alert System v4.0 iniciado...")
     time.sleep(5)
     verificar_puntos()
     while True:
@@ -244,11 +242,11 @@ def monitor_loop():
 # ═══════════════════════════════════════════════════════════
 @app.route("/", methods=["GET"])
 def home():
-    return jsonify({"status": "SPY Alert System v3.0 activo"}), 200
+    return jsonify({"status": "SPY Alert System v4.0 activo"}), 200
 
 @app.route("/test", methods=["GET"])
 def test():
-    enviar_telegram("✅ <b>SPY Alert System v3.0</b> — activo y funcionando.")
+    enviar_telegram("✅ <b>SPY Alert System v4.0</b> — activo y funcionando.")
     return jsonify({"status": "ok"}), 200
 
 @app.route("/reporte", methods=["GET"])
