@@ -88,6 +88,7 @@ def get_vela_twelvedata(fecha_str=None):
             "interval": "1h",
             "outputsize": 10,
             "timezone": "America/New_York",
+            "adjust": "false",   # Sin ajuste de dividendos — igual que TradingView sin ADJ
             "apikey": TWELVEDATA_KEY,
         }
         if fecha_str:
