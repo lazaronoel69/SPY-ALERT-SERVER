@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-SPY Alert System v6.0
+SPY Alert System v6.1
 - Fuente de datos: Twelve Data (principal) + Finnhub (backup)
 - Reportes a las :01 de cada hora: 10,11,12,13,14,15,16 EST
 - Solo Lunes a Viernes (mercado abierto)
 - Vela 7 (4:00 PM) es de 30 minutos — se confirma igual a las 4:01 PM
-- Verificacion P1/P2 al inicio
+- P1 y P2 se ingresan manualmente desde TradingView sin ADJ — sin verificacion automatica
 """
 
 import requests
@@ -34,19 +34,6 @@ HORAS_REPORTE = [10, 11, 12, 13, 14, 15, 16]
 # Formato: fecha YYYY-MM-DD, vela = numero 1-7, high = precio sin ADJ
 P1 = { "fecha": "2026-02-26", "vela": 1, "hora_est": 10, "high": 693.29 }
 P2 = { "fecha": "2026-03-10", "vela": 5, "hora_est": 14, "high": 683.36 }
-
-# Mapa vela -> hora de cierre en TradingView (para consulta de datos)
-# La vela cierra 30 min despues de nuestra hora de confirmacion
-# Ejemplo: confirmamos a las 10:00, la vela en TV cerro a las 10:30
-VELA_A_HORA_TV = {
-    1: 10,   # vela cierra 10:30 TV — nosotros consultamos datos de hora 10
-    2: 11,
-    3: 12,
-    4: 13,
-    5: 14,
-    6: 15,
-    7: 16,   # vela de 30 min — cierra 4:00 PM, confirmamos 4:01 PM
-}
 
 # ═══════════════════════════════════════════════════════════
 # HELPERS — DIA DE MERCADO
@@ -88,7 +75,6 @@ def get_vela_twelvedata(fecha_str=None):
             "interval": "1h",
             "outputsize": 10,
             "timezone": "America/New_York",
-            "adjust": "false",   # Sin ajuste de dividendos — igual que TradingView sin ADJ
             "apikey": TWELVEDATA_KEY,
         }
         if fecha_str:
@@ -225,24 +211,6 @@ def get_ultima_vela():
     print("Ambas fuentes fallaron ❌")
     return None, None
 
-def get_high_vela_por_hora(fecha_str, hora_est):
-    """Obtiene el high de una vela especifica por fecha y hora EST."""
-    # Intentar TwelveData
-    velas = get_vela_twelvedata(fecha_str=fecha_str)
-    if velas:
-        for v in velas:
-            if v["hora"] == hora_est:
-                return v["high"], "TwelveData"
-
-    # Backup Finnhub
-    velas = get_vela_finnhub(fecha_str=fecha_str)
-    if velas:
-        for v in velas:
-            if v["hora"] == hora_est:
-                return v["high"], "Finnhub"
-
-    return None, None
-
 # ═══════════════════════════════════════════════════════════
 # CALCULAR TECHO DIAGONAL
 # ═══════════════════════════════════════════════════════════
@@ -255,36 +223,6 @@ def calcular_techo_ahora():
     pendiente = (P2["high"] - P1["high"]) / (p2_dt.timestamp() - p1_dt.timestamp())
     techo = P1["high"] + pendiente * (ahora.timestamp() - p1_dt.timestamp())
     return round(techo, 2)
-
-# ═══════════════════════════════════════════════════════════
-# VERIFICACION P1 Y P2
-# ═══════════════════════════════════════════════════════════
-def verificar_puntos():
-    mensaje = "🔍 <b>Verificacion P1 y P2</b>\n"
-    mensaje += "<i>(Sin ADJ — fuente externa vs operador)</i>\n\n"
-
-    # Verificar P1
-    high_p1, fuente_p1 = get_high_vela_por_hora(P1["fecha"], P1["hora_est"])
-    if high_p1:
-        diff = abs(high_p1 - P1["high"])
-        estado = "⚠️ <b>P1 REVISAR</b>" if diff > 0.50 else "✅ <b>P1 OK</b>"
-        mensaje += f"{estado}\n   Operador: ${P1['high']:.2f} | {fuente_p1}: ${high_p1:.2f} | Diff: ${diff:.2f}\n\n"
-    else:
-        mensaje += f"⚠️ P1 no verificado — usando ${P1['high']:.2f}\n\n"
-
-    # Verificar P2
-    high_p2, fuente_p2 = get_high_vela_por_hora(P2["fecha"], P2["hora_est"])
-    if high_p2:
-        diff = abs(high_p2 - P2["high"])
-        estado = "⚠️ <b>P2 REVISAR</b>" if diff > 0.50 else "✅ <b>P2 OK</b>"
-        mensaje += f"{estado}\n   Operador: ${P2['high']:.2f} | {fuente_p2}: ${high_p2:.2f} | Diff: ${diff:.2f}\n\n"
-    else:
-        mensaje += f"⚠️ P2 no verificado — usando ${P2['high']:.2f}\n\n"
-
-    techo = calcular_techo_ahora()
-    mensaje += f"📐 Techo canal ahora: <b>${techo:.2f}</b>\n"
-    mensaje += f"⚠️ Regla: ADJ siempre desactivado en TradingView"
-    enviar_telegram(mensaje)
 
 # ═══════════════════════════════════════════════════════════
 # REPORTE HORARIO
@@ -364,9 +302,7 @@ def reporte_horario():
 # LOOP — reporta a las :01 de cada hora de reporte
 # ═══════════════════════════════════════════════════════════
 def monitor_loop():
-    print("SPY Alert System v6.0 iniciado...")
-    time.sleep(5)
-    verificar_puntos()
+    print("SPY Alert System v6.1 iniciado...")
 
     while True:
         ahora = datetime.now(EST)
@@ -393,7 +329,7 @@ def monitor_loop():
 def home():
     ahora = datetime.now(EST)
     return jsonify({
-        "status": "SPY Alert System v6.0 activo",
+        "status": "SPY Alert System v6.1 activo",
         "hora_est": ahora.strftime("%A %H:%M EST"),
         "mercado": "abierto" if es_dia_mercado(ahora) else "cerrado (fin de semana)",
     }), 200
@@ -402,7 +338,7 @@ def home():
 def test():
     ahora = datetime.now(EST)
     enviar_telegram(
-        f"✅ <b>SPY Alert System v6.0</b> activo\n"
+        f"✅ <b>SPY Alert System v6.1</b> activo\n"
         f"Hora: {ahora.strftime('%A %d/%m/%Y %H:%M EST')}\n"
         f"Mercado: {'Abierto' if es_dia_mercado(ahora) else 'Cerrado (fin de semana)'}"
     )
@@ -412,11 +348,6 @@ def test():
 def reporte_manual():
     reporte_horario()
     return jsonify({"status": "reporte enviado"}), 200
-
-@app.route("/verificar", methods=["GET"])
-def verificar_manual():
-    verificar_puntos()
-    return jsonify({"status": "verificacion enviada"}), 200
 
 if __name__ == "__main__":
     thread = threading.Thread(target=monitor_loop, daemon=True)
