@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
-SPY Alert System v6.1
+SPY Alert System v6.2
 - Fuente de datos: Twelve Data (principal) + Finnhub (backup)
 - Reportes a las :01 de cada hora: 10,11,12,13,14,15,16 EST
 - Solo Lunes a Viernes (mercado abierto)
 - Vela 7 (4:00 PM) es de 30 minutos — se confirma igual a las 4:01 PM
 - P1 y P2 se ingresan manualmente desde TradingView sin ADJ — sin verificacion automatica
+- Techo calculado al cierre exacto de la vela — coincide con TradingView
 """
 
 import requests
@@ -214,14 +215,19 @@ def get_ultima_vela():
 # ═══════════════════════════════════════════════════════════
 # CALCULAR TECHO DIAGONAL
 # ═══════════════════════════════════════════════════════════
-def calcular_techo_ahora():
-    """Calcula el valor del techo del canal bajista en el momento actual."""
+def calcular_techo(dt_referencia=None):
+    """
+    Calcula el techo del canal bajista en un momento dado.
+    Para reportes horarios pasar el cierre exacto de la vela (ej. 12:00:00 EST).
+    Si no se pasa dt_referencia usa datetime.now(EST).
+    """
     fmt = "%Y-%m-%d %H:%M"
     p1_dt = EST.localize(datetime.strptime(f"{P1['fecha']} {P1['hora_est']}:00", fmt))
     p2_dt = EST.localize(datetime.strptime(f"{P2['fecha']} {P2['hora_est']}:00", fmt))
-    ahora = datetime.now(EST)
+    if dt_referencia is None:
+        dt_referencia = datetime.now(EST)
     pendiente = (P2["high"] - P1["high"]) / (p2_dt.timestamp() - p1_dt.timestamp())
-    techo = P1["high"] + pendiente * (ahora.timestamp() - p1_dt.timestamp())
+    techo = P1["high"] + pendiente * (dt_referencia.timestamp() - p1_dt.timestamp())
     return round(techo, 2)
 
 # ═══════════════════════════════════════════════════════════
@@ -247,7 +253,9 @@ def reporte_horario():
     hora_label = f"{hora}:00 EST"
     es_ultima_vela = (hora == 16)
 
-    techo = calcular_techo_ahora()
+    # Techo calculado al cierre exacto de la vela (hora:00:00) — no al momento del reporte
+    cierre_vela = ahora_est.replace(minute=0, second=0, microsecond=0)
+    techo = calcular_techo(cierre_vela)
     vela, fuente = get_ultima_vela()
 
     if not vela:
