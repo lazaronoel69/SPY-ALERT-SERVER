@@ -511,9 +511,16 @@ def activar():
     except Exception as e:
         return jsonify({"error": str(e)}), 400
 
+# ═══════════════════════════════════════════════════════════
+# ARRANQUE DEL MONITOR — funciona con gunicorn Y python directo
+# ═══════════════════════════════════════════════════════════
+def arrancar_monitor():
+    thread = threading.Thread(target=monitor_loop, daemon=True)
+    thread.start()
+
+arrancar_monitor()
+
 if __name__ == "__main__":
     import os
     port = int(os.environ.get("PORT", 5000))
-    thread = threading.Thread(target=monitor_loop, daemon=True)
-    thread.start()
     app.run(host="0.0.0.0", port=port, debug=False)
