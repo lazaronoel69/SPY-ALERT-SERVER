@@ -513,12 +513,14 @@ def activar():
 
 # ═══════════════════════════════════════════════════════════
 # ARRANQUE DEL MONITOR — funciona con gunicorn Y python directo
+# Delay de 5 segundos para que Flask responda primero al health check
 # ═══════════════════════════════════════════════════════════
 def arrancar_monitor():
+    time.sleep(5)
     thread = threading.Thread(target=monitor_loop, daemon=True)
     thread.start()
 
-arrancar_monitor()
+threading.Thread(target=arrancar_monitor, daemon=True).start()
 
 if __name__ == "__main__":
     import os
