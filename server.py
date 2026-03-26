@@ -512,6 +512,8 @@ def activar():
         return jsonify({"error": str(e)}), 400
 
 if __name__ == "__main__":
+    import os
+    port = int(os.environ.get("PORT", 5000))
     thread = threading.Thread(target=monitor_loop, daemon=True)
     thread.start()
-    app.run(host="0.0.0.0", port=5000, debug=False)
+    app.run(host="0.0.0.0", port=port, debug=False)
