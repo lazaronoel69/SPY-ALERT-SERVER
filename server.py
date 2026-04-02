@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
 """
-Breakout Sentinel v6.5
+Breakout Sentinel v6.6
 - Fuente de datos: Twelve Data (principal) + Finnhub (backup)
 - Reportes a las :01 de cada hora: 10,11,12,13,14,15,16 EST
 - Solo Lunes a Viernes (mercado abierto)
 - Vela 7 (4:00 PM) es de 30 minutos — se confirma igual a las 4:01 PM
-- Techo calculado al cierre exacto de la vela — coincide con TradingView
+- Techo, piso y mitad calculados dinamicamente hora a hora
+- Distancia canal = P1 high - PISO (constante, paralelo)
 - P2 se actualiza automaticamente si el high de la vela supera el techo
 - Ruptura alcista: cierre > techo + vela verde + mecha <= 35%
 - Ruptura sin confirmacion: cierre > techo pero vela roja o mecha > 35%
 - Canal invalidado: P2 nuevo > P1 — sistema se apaga automaticamente
-- NUEVO: Primera Vela Roja — alerta especial a las 10:01 reemplaza reporte normal
-  Condiciones: vela roja + open entre mitad del canal y techo
-- NUEVO: Piso del canal configurable — linea paralela al techo
-- NUEVO: endpoint /apagar para desactivar manualmente
+- Primera Vela Roja — alerta especial a las 10:01 reemplaza reporte normal
+- endpoint /apagar para desactivar manualmente
+- endpoint /piso para actualizar solo el piso sin tocar P1/P2
 """
 
 import requests
@@ -49,9 +49,10 @@ P1 = { "fecha": "2026-02-26", "hora_est": 10, "high": 693.29 }
 # P2 — DINAMICO, se actualiza automaticamente
 P2 = { "fecha": "2026-03-10", "hora_est": 14, "high": 683.36 }
 
-# PISO — precio fijo del piso del canal (paralelo al techo)
-# La distancia techo-piso se mantiene constante en todo momento
-PISO = 644.50
+# PISO — precio del piso del canal introducido por el operador
+# La linea de piso es paralela al techo con distancia fija = P1 - PISO
+# Actualizar via /piso?valor=XXX o via /activar
+PISO = 629.00
 
 # Estado del sistema
 SISTEMA_ACTIVO = True  # False = canal invalidado o apagado manualmente
@@ -404,7 +405,7 @@ def reporte_horario():
 # LOOP
 # ═══════════════════════════════════════════════════════════
 def monitor_loop():
-    print("Breakout Sentinel v6.5 iniciado...")
+    print("Breakout Sentinel v6.6 iniciado...")
     while True:
         ahora = datetime.now(EST)
         minutos_hasta_01 = (1 - ahora.minute) % 60
@@ -429,7 +430,7 @@ def home():
     techo = calcular_techo(cierre_vela)
     piso, mitad = calcular_piso_y_mitad(cierre_vela)
     return jsonify({
-        "sistema":  "Breakout Sentinel v6.5",
+        "sistema":  "Breakout Sentinel v6.6",
         "estado":   "activo" if SISTEMA_ACTIVO else "apagado",
         "hora_est": ahora.strftime("%A %H:%M EST"),
         "mercado":  "abierto" if es_dia_mercado(ahora) else "cerrado (fin de semana)",
@@ -447,7 +448,7 @@ def test():
     techo = calcular_techo(cierre_vela)
     piso, mitad = calcular_piso_y_mitad(cierre_vela)
     enviar_telegram(
-        f"✅ <b>Breakout Sentinel v6.5</b>\n"
+        f"✅ <b>Breakout Sentinel v6.6</b>\n"
         f"Estado: {'Activo' if SISTEMA_ACTIVO else 'Apagado'}\n"
         f"Hora: {ahora.strftime('%A %d/%m/%Y %H:%M EST')}\n"
         f"Mercado: {'Abierto' if es_dia_mercado(ahora) else 'Cerrado (fin de semana)'}\n\n"
@@ -469,6 +470,27 @@ def apagar_manual():
     """Apaga el sistema manualmente."""
     apagar_sistema("Apagado manualmente por el operador.")
     return jsonify({"status": "sistema apagado"}), 200
+
+@app.route("/piso", methods=["GET"])
+def actualizar_piso():
+    """Actualiza solo el piso del canal sin tocar P1/P2.
+    Uso: /piso?valor=629.00
+    """
+    global PISO
+    try:
+        PISO = float(request.args["valor"])
+        techo = calcular_techo()
+        piso, mitad = calcular_piso_y_mitad()
+        enviar_telegram(
+            f"📐 <b>Piso del canal actualizado</b>\n\n"
+            f"<b>Piso nuevo:</b> ${PISO:.2f}\n"
+            f"<b>Techo ahora:</b> ${techo:.2f}\n"
+            f"<b>Mitad canal:</b> ${mitad:.2f}\n"
+            f"<b>Distancia canal:</b> ${P1['high'] - PISO:.2f}"
+        )
+        return jsonify({"status": "piso actualizado", "piso": PISO, "mitad": mitad}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
 
 @app.route("/activar", methods=["GET"])
 def activar():
