@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
 """
-Breakout Sentinel v6.6
+Breakout Sentinel v6.7
 - Fuente de datos: Twelve Data (principal) + Finnhub (backup)
-- Reportes a las :01 de cada hora: 10,11,12,13,14,15,16 EST
+- BS reportes a las :01 de cada hora: 10,11,12,13,14,15,16 EST
+- RPG reportes a las :02 de cada hora: 10,11,12,13,14,15,16 EST
 - Solo Lunes a Viernes (mercado abierto)
-- Vela 7 (4:00 PM) es de 30 minutos — se confirma igual a las 4:01 PM
-- Techo, piso y mitad calculados dinamicamente hora a hora
-- Distancia canal = P1 high - PISO (constante, paralelo)
-- P2 se actualiza automaticamente si el high de la vela supera el techo
-- Ruptura alcista: cierre > techo + vela verde + mecha <= 35%
-- Ruptura sin confirmacion: cierre > techo pero vela roja o mecha > 35%
-- Canal invalidado: P2 nuevo > P1 — sistema se apaga automaticamente
-- Primera Vela Roja — alerta especial a las 10:01 reemplaza reporte normal
-- endpoint /apagar para desactivar manualmente
-- endpoint /piso para actualizar solo el piso sin tocar P1/P2
+- Techo, piso y mitad BS calculados dinamicamente hora a hora
+- P2 se actualiza automaticamente si el high supera el techo
+- Ruptura alcista BS: cierre > techo + vela verde + mecha <= 35%
+- Canal invalidado: P2 >= P1 - sistema se apaga
+- 1VR: alerta especial a las 10:01 si vela 1 roja en mitad superior
+- RPG: gap cualquier direccion + vela 1 verde -> piso = low vela 1
+        alerta puts si vela 2-7 cierra bajo el piso - una vez por dia
+- Todos los reportes BS incluyen techo, mitad y piso
+- Switches: BS, 1VR y RPG activables via /estrategia
 """
 
 import requests
@@ -56,6 +56,21 @@ PISO = { "fecha": "2026-03-30", "hora_est": 15, "low": 629.48 }
 
 # Estado del sistema
 SISTEMA_ACTIVO = True  # False = canal invalidado o apagado manualmente
+
+# ═══════════════════════════════════════════════════════════
+# SWITCHES — activar/desactivar estrategias
+# ═══════════════════════════════════════════════════════════
+BS_ACTIVO  = True
+VR1_ACTIVO = True
+RPG_ACTIVO = True
+
+# ═══════════════════════════════════════════════════════════
+# ESTADO RPG — se resetea cada dia de mercado
+# ═══════════════════════════════════════════════════════════
+RPG_PISO_GAP   = None   # low de la vela 1 cuando hay gap + verde
+RPG_VIGILANDO  = False  # True desde vela 1 hasta ruptura o fin del dia
+RPG_DISPARADO  = False  # True cuando ya disparo la alerta hoy
+RPG_DIA_ACTUAL = None   # fecha del dia actual para reset
 
 # ═══════════════════════════════════════════════════════════
 # HELPERS — DIA DE MERCADO
@@ -278,9 +293,112 @@ def apagar_sistema(motivo):
     print(f"Sistema apagado: {motivo}")
 
 # ═══════════════════════════════════════════════════════════
-# REPORTE HORARIO
+# RPG — RESET DIARIO Y REPORTE
 # ═══════════════════════════════════════════════════════════
-def reporte_horario():
+def reset_rpg_si_nuevo_dia(ahora_est):
+    """Resetea el estado RPG si es un nuevo dia de mercado."""
+    global RPG_PISO_GAP, RPG_VIGILANDO, RPG_DISPARADO, RPG_DIA_ACTUAL
+    dia_hoy = ahora_est.date()
+    if RPG_DIA_ACTUAL != dia_hoy:
+        RPG_PISO_GAP   = None
+        RPG_VIGILANDO  = False
+        RPG_DISPARADO  = False
+        RPG_DIA_ACTUAL = dia_hoy
+        print(f"RPG reseteado para nuevo dia: {dia_hoy}")
+
+def reporte_rpg(hora, vela, fuente, ahora_est):
+    """
+    Reporte RPG a las :02 de cada hora.
+    Hora 10:02 — evalua gap + vela 1 verde → fija piso del gap
+    Horas 11:02 a 16:02 — verifica si cierre < piso del gap
+    """
+    global RPG_PISO_GAP, RPG_VIGILANDO, RPG_DISPARADO
+
+    if not RPG_ACTIVO:
+        return
+
+    hora_label = f"{hora}:00 EST"
+    vela_num   = hora - 9
+
+    # ── Vela 1 — 10:02 AM ───────────────────────────────
+    if hora == 10:
+        # Necesitamos el close de ayer — lo obtenemos de la API
+        # Usamos el open de la vela como referencia del gap
+        # close_ayer = open de la vela 1 ajustado — usamos datos de la vela anterior
+        vela_ayer, _ = get_ultima_vela()  # esto da la vela anterior a la actual
+        if not vela_ayer:
+            enviar_telegram(
+                f"📊 <b>RPG — {hora_label} — Vela {vela_num}</b>\n"
+                f"No se pudo obtener datos para calcular gap.\n"
+                f"RPG en espera."
+            )
+            return
+
+        # Gap = diferencia entre open de hoy y close de ayer
+        close_ayer = vela_ayer["close"]
+        open_hoy   = vela["open"]
+        gap_pct    = abs(open_hoy - close_ayer) / close_ayer * 100
+        hay_gap    = gap_pct > 0
+        vela_verde = vela["close"] > vela["open"]
+        direccion  = "arriba ↑" if open_hoy > close_ayer else "abajo ↓"
+
+        if hay_gap and vela_verde:
+            RPG_PISO_GAP  = round(vela["low"], 2)
+            RPG_VIGILANDO = True
+            RPG_DISPARADO = False
+            enviar_telegram(
+                f"📊 <b>RPG — Gap detectado — {hora_label}</b>\n\n"
+                f"<b>Gap:</b> {gap_pct:.2f}% {direccion}\n"
+                f"<b>Close ayer:</b> ${close_ayer:.2f}\n"
+                f"<b>Open hoy:</b> ${open_hoy:.2f}\n"
+                f"<b>Vela 1:</b> Verde ✅\n"
+                f"<b>Piso del gap:</b> ${RPG_PISO_GAP:.2f}\n\n"
+                f"👁 <b>RPG en vigilancia — Velas 2 a 7</b>"
+            )
+        else:
+            razones = []
+            if not hay_gap:    razones.append("sin gap")
+            if not vela_verde: razones.append("vela 1 no es verde")
+            enviar_telegram(
+                f"📊 <b>RPG — {hora_label} — Sin activacion</b>\n\n"
+                f"<b>Gap:</b> {gap_pct:.2f}% {direccion}\n"
+                f"<b>Vela 1:</b> {'Verde' if vela_verde else 'Roja'}\n"
+                f"<b>Razon:</b> {', '.join(razones)}\n\n"
+                f"RPG en espera hasta manana."
+            )
+        return
+
+    # ── Velas 2-7 — 11:02 a 16:02 ───────────────────────
+    if not RPG_VIGILANDO or RPG_DISPARADO or RPG_PISO_GAP is None:
+        return  # RPG no activo hoy — silencio
+
+    cierre_bajo_piso = vela["close"] < RPG_PISO_GAP
+    proxima = f"{hora + 1}:00 EST" if hora < 16 else "apertura manana"
+
+    if cierre_bajo_piso:
+        RPG_DISPARADO = True
+        RPG_VIGILANDO = False
+        enviar_telegram(
+            f"🔴 <b>RPG — RUPTURA PISO GAP</b>\n"
+            f"<b>Hora:</b> {hora_label} — Vela {vela_num}\n\n"
+            f"<b>Piso del gap:</b> ${RPG_PISO_GAP:.2f}\n"
+            f"<b>Cierre vela:</b> ${vela['close']:.2f}\n"
+            f"<b>Fuente:</b> {fuente}\n\n"
+            f"🎯 <b>EVALUAR ENTRADA PUTS</b>"
+        )
+    else:
+        enviar_telegram(
+            f"📊 <b>RPG — Piso intacto — {hora_label}</b>\n\n"
+            f"<b>Piso del gap:</b> ${RPG_PISO_GAP:.2f}\n"
+            f"<b>Cierre vela:</b> ${vela['close']:.2f}\n"
+            f"<b>Diferencia:</b> +${vela['close'] - RPG_PISO_GAP:.2f}\n\n"
+            f"RPG vigilando — proxima: {proxima}"
+        )
+
+# ═══════════════════════════════════════════════════════════
+# REPORTE HORARIO BS
+# ═══════════════════════════════════════════════════════════
+def reporte_bs():
     global SISTEMA_ACTIVO
 
     if not SISTEMA_ACTIVO:
@@ -307,9 +425,13 @@ def reporte_horario():
     nota_vela     = " <i>(vela 30 min)</i>" if es_ultima else ""
     proxima       = f"{hora + 1}:00 EST" if hora < 16 else ("apertura del lunes" if ahora_est.weekday() == 4 else "apertura manana")
 
-    # Techo al cierre exacto de la vela
+    # Reset RPG si es nuevo dia
+    reset_rpg_si_nuevo_dia(ahora_est)
+
+    # Techo, piso y mitad al cierre exacto de la vela
     cierre_vela = ahora_est.replace(minute=0, second=0, microsecond=0)
     techo = calcular_techo(cierre_vela)
+    piso_bs, mitad_bs, _ = calcular_piso_y_mitad(cierre_vela)
 
     vela, fuente = get_ultima_vela()
 
@@ -357,11 +479,12 @@ def reporte_horario():
         nota_p2 = f"\n📌 <b>P2 actualizado:</b> ${p2_anterior:.2f} → ${P2['high']:.2f}"
 
     if cierre_rompe and vela_verde and mecha_ok:
-        # RUPTURA ALCISTA COMPLETA
         enviar_telegram(
             f"🟢 <b>BREAKOUT SENTINEL — RUPTURA ALCISTA</b>\n"
             f"<b>Hora:</b> {hora_label} — Vela {vela_num}{nota_vela}\n\n"
             f"<b>Techo:</b> ${techo:.2f}\n"
+            f"<b>Mitad:</b> ${mitad_bs:.2f}\n"
+            f"<b>Piso BS:</b> ${piso_bs:.2f}\n"
             f"<b>Cierre:</b> ${vela['close']:.2f}\n"
             f"<b>High:</b> ${vela['high']:.2f}\n"
             f"<b>Mecha sup:</b> {mecha_pct:.0f}%\n"
@@ -371,7 +494,6 @@ def reporte_horario():
         )
 
     elif cierre_rompe:
-        # RUPTURA SIN CONFIRMACION ALCISTA
         razon = []
         if not vela_verde: razon.append("vela roja")
         if not mecha_ok:   razon.append(f"mecha {mecha_pct:.0f}% > {MECHA_MAX}%")
@@ -379,6 +501,8 @@ def reporte_horario():
             f"⚠️ <b>BREAKOUT SENTINEL — RUPTURA SIN CONFIRMACION</b>\n"
             f"<b>Hora:</b> {hora_label} — Vela {vela_num}{nota_vela}\n\n"
             f"<b>Techo:</b> ${techo:.2f}\n"
+            f"<b>Mitad:</b> ${mitad_bs:.2f}\n"
+            f"<b>Piso BS:</b> ${piso_bs:.2f}\n"
             f"<b>Cierre:</b> ${vela['close']:.2f}\n"
             f"<b>High:</b> ${vela['high']:.2f}\n"
             f"<b>Razon:</b> {', '.join(razon)}\n"
@@ -388,15 +512,15 @@ def reporte_horario():
         )
 
     else:
-        # SIN RUPTURA
         razon = []
         if not vela_verde:   razon.append("vela roja")
         if not cierre_rompe: razon.append(f"cierre ${vela['close']:.2f} bajo techo ${techo:.2f}")
-
         enviar_telegram(
             f"🔴 <b>Breakout Sentinel — Sin ruptura</b>\n"
             f"<b>Hora:</b> {hora_label} — Vela {vela_num}{nota_vela}\n\n"
             f"<b>Techo:</b> ${techo:.2f}\n"
+            f"<b>Mitad:</b> ${mitad_bs:.2f}\n"
+            f"<b>Piso BS:</b> ${piso_bs:.2f}\n"
             f"<b>Cierre:</b> ${vela['close']:.2f}\n"
             f"<b>Vela:</b> {'Verde' if vela_verde else 'Roja'} | Mecha: {mecha_pct:.0f}%\n"
             f"<b>Razon:</b> {', '.join(razon)}\n"
@@ -409,18 +533,32 @@ def reporte_horario():
 # LOOP
 # ═══════════════════════════════════════════════════════════
 def monitor_loop():
-    print("Breakout Sentinel v6.6 iniciado...")
+    print("Breakout Sentinel v6.7 iniciado...")
     while True:
         ahora = datetime.now(EST)
-        minutos_hasta_01 = (1 - ahora.minute) % 60
-        if minutos_hasta_01 == 0:
-            minutos_hasta_01 = 60
-        segundos_espera = minutos_hasta_01 * 60 - ahora.second
-        print(f"Proximo chequeo en {minutos_hasta_01} min | {ahora.strftime('%A %H:%M EST')}")
+        minuto_actual = ahora.minute
+
+        # Calcular segundos hasta el proximo :01
+        if minuto_actual < 1:
+            segundos_espera = (1 - minuto_actual) * 60 - ahora.second
+        else:
+            segundos_espera = (61 - minuto_actual) * 60 - ahora.second
+
+        print(f"Proximo chequeo en {segundos_espera//60}m {segundos_espera%60}s | {ahora.strftime('%A %H:%M EST')}")
         time.sleep(segundos_espera)
+
         ahora = datetime.now(EST)
         if es_dia_mercado(ahora) and es_hora_reporte(ahora.hour):
-            reporte_horario()
+            # :01 — BS y 1VR
+            if ahora.minute == 1:
+                reporte_bs()
+                # Esperar 60 segundos para el :02 RPG
+                time.sleep(60)
+                ahora2 = datetime.now(EST)
+                if es_dia_mercado(ahora2) and es_hora_reporte(ahora2.hour):
+                    vela, fuente = get_ultima_vela()
+                    if vela:
+                        reporte_rpg(ahora2.hour, vela, fuente, ahora2)
         else:
             print(f"No toca reporte: {ahora.strftime('%A %H:%M EST')}")
 
@@ -434,15 +572,18 @@ def home():
     techo = calcular_techo(cierre_vela)
     piso, mitad, distancia = calcular_piso_y_mitad(cierre_vela)
     return jsonify({
-        "sistema":  "Breakout Sentinel v6.6",
-        "estado":   "activo" if SISTEMA_ACTIVO else "apagado",
-        "hora_est": ahora.strftime("%A %H:%M EST"),
-        "mercado":  "abierto" if es_dia_mercado(ahora) else "cerrado (fin de semana)",
-        "P1":       P1,
-        "P2":       P2,
+        "sistema":    "Breakout Sentinel v6.7",
+        "estado":     "activo" if SISTEMA_ACTIVO else "apagado",
+        "hora_est":   ahora.strftime("%A %H:%M EST"),
+        "mercado":    "abierto" if es_dia_mercado(ahora) else "cerrado (fin de semana)",
+        "estrategias": {"BS": BS_ACTIVO, "1VR": VR1_ACTIVO, "RPG": RPG_ACTIVO},
+        "P1":         P1,
+        "P2":         P2,
         "techo_actual": techo,
-        "piso_actual":  piso,
         "mitad_canal":  mitad,
+        "piso_actual":  piso,
+        "rpg_vigilando": RPG_VIGILANDO,
+        "rpg_piso_gap":  RPG_PISO_GAP,
     }), 200
 
 @app.route("/test", methods=["GET"])
@@ -452,22 +593,47 @@ def test():
     techo = calcular_techo(cierre_vela)
     piso, mitad, distancia = calcular_piso_y_mitad(cierre_vela)
     enviar_telegram(
-        f"✅ <b>Breakout Sentinel v6.6</b>\n"
+        f"✅ <b>Breakout Sentinel v6.7</b>\n"
         f"Estado: {'Activo' if SISTEMA_ACTIVO else 'Apagado'}\n"
         f"Hora: {ahora.strftime('%A %d/%m/%Y %H:%M EST')}\n"
         f"Mercado: {'Abierto' if es_dia_mercado(ahora) else 'Cerrado (fin de semana)'}\n\n"
+        f"<b>Estrategias:</b> BS={'ON' if BS_ACTIVO else 'OFF'} | 1VR={'ON' if VR1_ACTIVO else 'OFF'} | RPG={'ON' if RPG_ACTIVO else 'OFF'}\n\n"
         f"<b>P1:</b> ${P1['high']:.2f} ({P1['fecha']})\n"
         f"<b>P2:</b> ${P2['high']:.2f} ({P2['fecha']})\n"
         f"<b>Techo ahora:</b> ${techo:.2f}\n"
         f"<b>Mitad canal:</b> ${mitad:.2f}\n"
-        f"<b>Piso:</b> ${piso:.2f}"
+        f"<b>Piso BS:</b> ${piso:.2f}\n\n"
+        f"<b>RPG vigilando:</b> {'Si — piso gap $' + str(RPG_PISO_GAP) if RPG_VIGILANDO else 'No'}"
     )
     return jsonify({"status": "ok"}), 200
 
 @app.route("/reporte", methods=["GET"])
 def reporte_manual():
-    reporte_horario()
-    return jsonify({"status": "reporte enviado"}), 200
+    reporte_bs()
+    return jsonify({"status": "reporte BS enviado"}), 200
+
+@app.route("/estrategia", methods=["GET"])
+def cambiar_estrategia():
+    """Activa o desactiva estrategias individualmente.
+    Uso: /estrategia?bs=true&1vr=false&rpg=true
+    """
+    global BS_ACTIVO, VR1_ACTIVO, RPG_ACTIVO
+    try:
+        if "bs" in request.args:
+            BS_ACTIVO = request.args["bs"].lower() == "true"
+        if "1vr" in request.args:
+            VR1_ACTIVO = request.args["1vr"].lower() == "true"
+        if "rpg" in request.args:
+            RPG_ACTIVO = request.args["rpg"].lower() == "true"
+        enviar_telegram(
+            f"⚙️ <b>Estrategias actualizadas</b>\n\n"
+            f"<b>BS:</b> {'ON ✅' if BS_ACTIVO else 'OFF ❌'}\n"
+            f"<b>1VR:</b> {'ON ✅' if VR1_ACTIVO else 'OFF ❌'}\n"
+            f"<b>RPG:</b> {'ON ✅' if RPG_ACTIVO else 'OFF ❌'}"
+        )
+        return jsonify({"BS": BS_ACTIVO, "1VR": VR1_ACTIVO, "RPG": RPG_ACTIVO}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
 
 @app.route("/apagar", methods=["GET"])
 def apagar_manual():
