@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Breakout Sentinel v6.4
+Breakout Sentinel v6.5
 - Fuente de datos: Twelve Data (principal) + Finnhub (backup)
 - Reportes a las :01 de cada hora: 10,11,12,13,14,15,16 EST
 - Solo Lunes a Viernes (mercado abierto)
@@ -198,16 +198,13 @@ def calcular_techo(dt_referencia=None):
 def calcular_piso_y_mitad(dt_referencia=None):
     """
     Calcula el piso y la mitad del canal en un momento dado.
-    El piso es una linea paralela al techo desplazada por la distancia fija techo-PISO.
-    La mitad es el punto exacto entre techo y piso.
+    La distancia canal se calcula en P1 donde el techo es fijo y conocido.
+    Asi la distancia es siempre constante — canal perfectamente paralelo.
     """
-    techo = calcular_techo(dt_referencia)
-    # Calcular el techo al momento de referencia del documento maestro (hoy)
-    # La distancia entre techo y piso se mantiene constante
-    techo_ref = calcular_techo()  # techo actual
-    distancia = techo_ref - PISO  # distancia fija del canal
-    piso  = round(techo - distancia, 2)
-    mitad = round(piso + distancia / 2, 2)
+    techo    = calcular_techo(dt_referencia)
+    distancia = P1["high"] - PISO  # distancia fija calculada en P1 — nunca cambia
+    piso     = round(techo - distancia, 2)
+    mitad    = round(piso + distancia / 2, 2)
     return piso, mitad
 
 # ═══════════════════════════════════════════════════════════
@@ -407,7 +404,7 @@ def reporte_horario():
 # LOOP
 # ═══════════════════════════════════════════════════════════
 def monitor_loop():
-    print("Breakout Sentinel v6.4 iniciado...")
+    print("Breakout Sentinel v6.5 iniciado...")
     while True:
         ahora = datetime.now(EST)
         minutos_hasta_01 = (1 - ahora.minute) % 60
@@ -432,7 +429,7 @@ def home():
     techo = calcular_techo(cierre_vela)
     piso, mitad = calcular_piso_y_mitad(cierre_vela)
     return jsonify({
-        "sistema":  "Breakout Sentinel v6.4",
+        "sistema":  "Breakout Sentinel v6.5",
         "estado":   "activo" if SISTEMA_ACTIVO else "apagado",
         "hora_est": ahora.strftime("%A %H:%M EST"),
         "mercado":  "abierto" if es_dia_mercado(ahora) else "cerrado (fin de semana)",
@@ -450,7 +447,7 @@ def test():
     techo = calcular_techo(cierre_vela)
     piso, mitad = calcular_piso_y_mitad(cierre_vela)
     enviar_telegram(
-        f"✅ <b>Breakout Sentinel v6.4</b>\n"
+        f"✅ <b>Breakout Sentinel v6.5</b>\n"
         f"Estado: {'Activo' if SISTEMA_ACTIVO else 'Apagado'}\n"
         f"Hora: {ahora.strftime('%A %d/%m/%Y %H:%M EST')}\n"
         f"Mercado: {'Abierto' if es_dia_mercado(ahora) else 'Cerrado (fin de semana)'}\n\n"
