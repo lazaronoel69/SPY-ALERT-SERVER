@@ -49,10 +49,10 @@ P1 = { "fecha": "2026-02-26", "hora_est": 10, "high": 693.29 }
 # P2 — DINAMICO, se actualiza automaticamente
 P2 = { "fecha": "2026-03-10", "hora_est": 14, "high": 683.36 }
 
-# PISO — precio del piso del canal introducido por el operador
-# La linea de piso es paralela al techo con distancia fija = P1 - PISO
-# Actualizar via /piso?valor=XXX o via /activar
-PISO = 629.00
+# PISO — igual que P1 y P2: fecha, vela y low de la vela mas baja del canal
+# La distancia se calcula en ese punto exacto (techo en esa vela - low)
+# De ahi en adelante piso y mitad son dinamicos y paralelos al techo
+PISO = { "fecha": "2026-03-30", "hora_est": 15, "low": 629.48 }
 
 # Estado del sistema
 SISTEMA_ACTIVO = True  # False = canal invalidado o apagado manualmente
@@ -199,14 +199,18 @@ def calcular_techo(dt_referencia=None):
 def calcular_piso_y_mitad(dt_referencia=None):
     """
     Calcula el piso y la mitad del canal en un momento dado.
-    La distancia canal se calcula en P1 donde el techo es fijo y conocido.
-    Asi la distancia es siempre constante — canal perfectamente paralelo.
+    La distancia se calcula en la barra del piso:
+      distancia = techo en ese punto - low de esa vela
+    De ahi en adelante piso y mitad son dinamicos y paralelos al techo.
     """
-    techo    = calcular_techo(dt_referencia)
-    distancia = P1["high"] - PISO  # distancia fija calculada en P1 — nunca cambia
-    piso     = round(techo - distancia, 2)
-    mitad    = round(piso + distancia / 2, 2)
-    return piso, mitad
+    fmt    = "%Y-%m-%d %H:%M"
+    piso_dt = EST.localize(datetime.strptime(f"{PISO['fecha']} {PISO['hora_est']}:00", fmt))
+    techo_en_piso = calcular_techo(piso_dt)
+    distancia = round(techo_en_piso - PISO["low"], 2)
+    techo     = calcular_techo(dt_referencia)
+    piso      = round(techo - distancia, 2)
+    mitad     = round(piso + distancia / 2, 2)
+    return piso, mitad, distancia
 
 # ═══════════════════════════════════════════════════════════
 # ALERTA PRIMERA VELA ROJA — solo a las 10:01 AM
@@ -221,7 +225,7 @@ def alerta_primera_vela_roja(vela, techo, fuente):
     Retorna True si envia alerta, False si no aplica.
     """
     cierre_vela = datetime.now(EST).replace(minute=0, second=0, microsecond=0)
-    piso, mitad = calcular_piso_y_mitad(cierre_vela)
+    piso, mitad, distancia = calcular_piso_y_mitad(cierre_vela)
 
     vela_roja       = vela["close"] < vela["open"]
     open_bajo_techo = vela["open"] < techo
@@ -428,7 +432,7 @@ def home():
     ahora = datetime.now(EST)
     cierre_vela = ahora.replace(minute=0, second=0, microsecond=0)
     techo = calcular_techo(cierre_vela)
-    piso, mitad = calcular_piso_y_mitad(cierre_vela)
+    piso, mitad, distancia = calcular_piso_y_mitad(cierre_vela)
     return jsonify({
         "sistema":  "Breakout Sentinel v6.6",
         "estado":   "activo" if SISTEMA_ACTIVO else "apagado",
@@ -446,7 +450,7 @@ def test():
     ahora = datetime.now(EST)
     cierre_vela = ahora.replace(minute=0, second=0, microsecond=0)
     techo = calcular_techo(cierre_vela)
-    piso, mitad = calcular_piso_y_mitad(cierre_vela)
+    piso, mitad, distancia = calcular_piso_y_mitad(cierre_vela)
     enviar_telegram(
         f"✅ <b>Breakout Sentinel v6.6</b>\n"
         f"Estado: {'Activo' if SISTEMA_ACTIVO else 'Apagado'}\n"
@@ -473,31 +477,40 @@ def apagar_manual():
 
 @app.route("/piso", methods=["GET"])
 def actualizar_piso():
-    """Actualiza solo el piso del canal sin tocar P1/P2.
-    Uso: /piso?valor=629.00
+    """Actualiza el piso del canal sin tocar P1/P2.
+    Uso: /piso?fecha=2026-03-30&vela=6&low=629.48
+    vela = numero de vela 1-7 (hora final)
     """
     global PISO
     try:
-        PISO = float(request.args["valor"])
+        vela_num = int(request.args["vela"])
+        hora_map = {1:10, 2:11, 3:12, 4:13, 5:14, 6:15, 7:16}
+        PISO = {
+            "fecha":    request.args["fecha"],
+            "hora_est": hora_map[vela_num],
+            "low":      float(request.args["low"]),
+        }
         techo = calcular_techo()
-        piso, mitad = calcular_piso_y_mitad()
+        piso, mitad, distancia = calcular_piso_y_mitad()
         enviar_telegram(
             f"📐 <b>Piso del canal actualizado</b>\n\n"
-            f"<b>Piso nuevo:</b> ${PISO:.2f}\n"
+            f"<b>Fecha piso:</b> {PISO['fecha']} Vela {vela_num}\n"
+            f"<b>Low piso:</b> ${PISO['low']:.2f}\n"
+            f"<b>Distancia canal:</b> ${distancia:.2f}\n\n"
             f"<b>Techo ahora:</b> ${techo:.2f}\n"
             f"<b>Mitad canal:</b> ${mitad:.2f}\n"
-            f"<b>Distancia canal:</b> ${P1['high'] - PISO:.2f}"
+            f"<b>Piso ahora:</b> ${piso:.2f}"
         )
-        return jsonify({"status": "piso actualizado", "piso": PISO, "mitad": mitad}), 200
+        return jsonify({"status": "piso actualizado", "piso": PISO, "mitad": mitad, "distancia": distancia}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 400
 
 @app.route("/activar", methods=["GET"])
 def activar():
     """Reactiva el sistema con nuevos P1, P2 y piso.
-    Uso: /activar?p1_fecha=2026-03-01&p1_hora=10&p1_high=680.00
-                 &p2_fecha=2026-03-15&p2_hora=13&p2_high=670.00
-                 &piso=644.50
+    Uso: /activar?p1_fecha=2026-02-26&p1_hora=10&p1_high=693.29
+                 &p2_fecha=2026-03-10&p2_hora=14&p2_high=683.36
+                 &piso_fecha=2026-03-30&piso_vela=6&piso_low=629.48
     """
     global P1, P2, PISO, SISTEMA_ACTIVO
     try:
@@ -511,22 +524,30 @@ def activar():
             "hora_est": int(request.args["p2_hora"]),
             "high":     float(request.args["p2_high"]),
         }
-        PISO = float(request.args.get("piso", PISO))
+        vela_map = {1:10, 2:11, 3:12, 4:13, 5:14, 6:15, 7:16}
+        piso_vela = int(request.args.get("piso_vela", 6))
+        PISO = {
+            "fecha":    request.args.get("piso_fecha", PISO["fecha"]),
+            "hora_est": vela_map[piso_vela],
+            "low":      float(request.args.get("piso_low", PISO["low"])),
+        }
         SISTEMA_ACTIVO = True
 
         techo = calcular_techo()
-        _, mitad = calcular_piso_y_mitad()
+        piso, mitad, distancia = calcular_piso_y_mitad()
 
         enviar_telegram(
             f"✅ <b>Breakout Sentinel — REACTIVADO</b>\n\n"
-            f"<b>P1:</b> ${P1['high']:.2f} — {P1['fecha']} {P1['hora_est']}:00 EST\n"
-            f"<b>P2:</b> ${P2['high']:.2f} — {P2['fecha']} {P2['hora_est']}:00 EST\n"
+            f"<b>P1:</b> ${P1['high']:.2f} — {P1['fecha']} Vela {request.args['p1_hora']}\n"
+            f"<b>P2:</b> ${P2['high']:.2f} — {P2['fecha']} Vela {request.args['p2_hora']}\n"
+            f"<b>Piso:</b> ${PISO['low']:.2f} — {PISO['fecha']} Vela {piso_vela}\n"
+            f"<b>Distancia canal:</b> ${distancia:.2f}\n\n"
             f"<b>Techo ahora:</b> ${techo:.2f}\n"
             f"<b>Mitad canal:</b> ${mitad:.2f}\n"
-            f"<b>Piso:</b> ${PISO:.2f}\n\n"
+            f"<b>Piso ahora:</b> ${piso:.2f}\n\n"
             f"Sistema activo — monitoreando canal bajista."
         )
-        return jsonify({"status": "sistema reactivado", "P1": P1, "P2": P2, "piso": PISO}), 200
+        return jsonify({"status": "sistema reactivado", "P1": P1, "P2": P2, "PISO": PISO}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 400
 
