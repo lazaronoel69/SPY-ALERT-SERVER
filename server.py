@@ -459,15 +459,12 @@ def reporte_horario():
             f"<b>Fuente:</b> {fuente}\n\n"
             f"Sistema activo — proxima: {proxima}"
         )
-            f"{nota_p2}\n\n"
-            f"Sistema activo — proxima: {proxima}"
-        )
 
 # ═══════════════════════════════════════════════════════════
 # LOOP
 # ═══════════════════════════════════════════════════════════
 def monitor_loop():
-    print("Breakout Sentinel v6.7 iniciado...")
+    print("Breakout Sentinel v6.8 iniciado...")
     while True:
         ahora = datetime.now(EST)
         minutos_hasta_01 = (1 - ahora.minute) % 60
