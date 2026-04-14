@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Breakout Sentinel v6.8
+Breakout Sentinel v6.9
 - Fuente de datos: Twelve Data (principal) + Finnhub (backup)
 - Reportes a las :01 de cada hora: 10,11,12,13,14,15,16 EST
 - Solo Lunes a Viernes y dias habiles del mercado americano
@@ -52,6 +52,11 @@ PISO = None  # Se activa via /activar
 # Estado del sistema
 CANAL_ACTIVO   = False  # True solo cuando el operador activa via /activar
 SISTEMA_ACTIVO = True   # False = apagado manualmente
+
+# Switches por estrategia
+BS_ON  = True
+VR1_ON = True
+RPG_ON = True
 
 # ═══════════════════════════════════════════════════════════
 # HELPERS — DIA DE MERCADO
@@ -391,6 +396,14 @@ def reporte_horario():
         if aplico:
             return  # 1VR reemplaza el reporte normal de las 10:01
 
+    # ── Auto-P2: si el high supera el techo actualizar P2 ──
+    if CANAL_ACTIVO and vela and techo:
+        if vela["high"] > techo:
+            P2["fecha"]    = ahora_est.strftime("%Y-%m-%d")
+            P2["hora_est"] = ahora_est.hour
+            P2["high"]     = round(vela["high"], 2)
+            print(f"Auto-P2 actualizado: ${P2['high']:.2f}")
+
     # ── Si canal no esta activo — no hay reporte BS ──────
     if not CANAL_ACTIVO:
         print(f"Canal no activo — sin reporte BS: {hora_label}")
@@ -464,7 +477,7 @@ def reporte_horario():
 # LOOP
 # ═══════════════════════════════════════════════════════════
 def monitor_loop():
-    print("Breakout Sentinel v6.8 iniciado...")
+    print("Breakout Sentinel v6.9 iniciado...")
     while True:
         ahora = datetime.now(EST)
         minutos_hasta_01 = (1 - ahora.minute) % 60
@@ -489,7 +502,7 @@ def home():
     techo = calcular_techo(cierre_vela)
     piso, mitad, distancia = calcular_piso_y_mitad(cierre_vela)
     return jsonify({
-        "sistema":      "Breakout Sentinel v6.8",
+        "sistema":      "Breakout Sentinel v6.9",
         "estado":       "activo" if SISTEMA_ACTIVO else "apagado",
         "canal_activo": CANAL_ACTIVO,
         "hora_est":     ahora.strftime("%A %H:%M EST"),
@@ -519,7 +532,7 @@ def test():
     else:
         canal_info = "\n<b>Canal:</b> Sin activar — usar /activar para definir P1, P2 y Piso"
     enviar_telegram(
-        f"✅ <b>Breakout Sentinel v6.8</b>\n"
+        f"✅ <b>Breakout Sentinel v6.9</b>\n"
         f"Estado: {'Activo' if SISTEMA_ACTIVO else 'Apagado'}\n"
         f"Canal: {'Activo' if CANAL_ACTIVO else 'Sin activar'}\n"
         f"Hora: {ahora.strftime('%A %d/%m/%Y %H:%M EST')}\n"
@@ -615,6 +628,26 @@ def activar():
             f"Sistema activo — monitoreando canal bajista."
         )
         return jsonify({"status": "canal activado", "P1": P1, "P2": P2, "PISO": PISO}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+@app.route("/estrategia", methods=["GET"])
+def estrategia():
+    """Activa o desactiva estrategias individuales.
+    Uso: /estrategia?bs=true&vr1=false&rpg=true
+    """
+    global BS_ON, VR1_ON, RPG_ON
+    try:
+        if "bs"  in request.args: BS_ON  = request.args["bs"].lower()  == "true"
+        if "vr1" in request.args: VR1_ON = request.args["vr1"].lower() == "true"
+        if "rpg" in request.args: RPG_ON = request.args["rpg"].lower() == "true"
+        enviar_telegram(
+            f"⚙️ <b>Estrategias actualizadas</b>\n\n"
+            f"<b>BS:</b>  {'ON ✅' if BS_ON  else 'OFF ❌'}\n"
+            f"<b>1VR:</b> {'ON ✅' if VR1_ON else 'OFF ❌'}\n"
+            f"<b>RPG:</b> {'ON ✅' if RPG_ON else 'OFF ❌'}"
+        )
+        return jsonify({"BS": BS_ON, "1VR": VR1_ON, "RPG": RPG_ON}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 400
 
