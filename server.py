@@ -1,20 +1,8 @@
 #!/usr/bin/env python3
 """
-Breakout Sentinel v6.9
-- Fuente de datos: Twelve Data (principal) + Finnhub (backup)
-- Reportes a las :01 de cada hora: 10,11,12,13,14,15,16 EST
-- Solo Lunes a Viernes y dias habiles del mercado americano
-- Festivos calculados automaticamente para cualquier año
-- P1, P2 y Piso sin valores hardcodeados — solo el operador los activa
-- Sin actualizacion automatica de P2 — solo el operador lo actualiza
-- 1VR simplificado: unica condicion es Vela 1 roja (cierre < open)
-- Canal inactivo por defecto — se activa via /activar
-- Techo, piso y mitad calculados dinamicamente hora a hora
-- Ruptura alcista: cierre > techo + vela verde + mecha <= 35%
-- Canal invalidado: P2 nuevo >= P1 — sistema se apaga
-- endpoint /apagar para desactivar manualmente
-- endpoint /piso para actualizar piso con fecha+vela+low
-- endpoint /activar para activar canal con P1, P2 y Piso
+Breakout Sentinel v7.0
+Estrategias: 1VR | RPG | GNA | GBA | RCB/CNF
+SPY — reportes hora a hora — alertas a Telegram
 """
 
 import requests
@@ -29,41 +17,48 @@ app = Flask(__name__)
 # ═══════════════════════════════════════════════════════════
 # CONFIGURACION
 # ═══════════════════════════════════════════════════════════
-TELEGRAM_TOKEN    = "8668514895:AAGWRxFmA9c8tZKIe-5i9tJ31RQtzi1-NYs"
-TELEGRAM_CHAT_ID  = "-5010153427"
-TWELVEDATA_KEY    = "66dd71373a884f7bb7da8e6e5e469571"
-FINNHUB_KEY       = "d71aocpr01qot5jcnohgd71aocpr01qot5jcnoi0"
-EST               = pytz.timezone("America/New_York")
+TELEGRAM_TOKEN   = "8668514895:AAGWRxFmA9c8tZKIe-5i9tJ31RQtzi1-NYs"
+TELEGRAM_CHAT_ID = "-5010153427"
+TWELVEDATA_KEY   = "66dd71373a884f7bb7da8e6e5e469571"
+FINNHUB_KEY      = "d71aocpr01qot5jcnohgd71aocpr01qot5jcnoi0"
+EST              = pytz.timezone("America/New_York")
 
-# Horas de confirmacion (hora final de cada vela)
 HORAS_REPORTE = [10, 11, 12, 13, 14, 15, 16]
+SISTEMA_ACTIVO = True
 
-# Mecha maxima para ruptura alcista confirmada
-MECHA_MAX = 35
-
-# ═══════════════════════════════════════════════════════════
-# ESTADO DEL CANAL — solo el operador activa via /activar
-# Sin valores hardcodeados — canal inactivo hasta que el operador lo active
-# ═══════════════════════════════════════════════════════════
-P1   = None  # Se activa via /activar
-P2   = None  # Se activa via /activar
-PISO = None  # Se activa via /activar
-
-# Estado del sistema
-CANAL_ACTIVO   = False  # True solo cuando el operador activa via /activar
-SISTEMA_ACTIVO = True   # False = apagado manualmente
-
-# Switches por estrategia
-BS_ON  = True
+# Switches estrategias
 VR1_ON = True
 RPG_ON = True
+GNA_ON = True
+GBA_ON = True
+CANAL_ON = False  # Se activa via /activar
+
+# Canal RCB/CNF
+P1   = None
+P2   = None
+PISO = None
+CANAL_ACTIVO = False
+
+# Estado diario — se resetea cada dia
+estado_dia = {
+    "fecha":          None,
+    "v1_close":       None,  # cierre de V1
+    "v1_open":        None,  # apertura de V1
+    "v7_ayer_close":  None,  # cierre V7 del dia anterior
+    "rpg_piso":       None,  # low de V1 si RPG activo
+    "rpg_activo":     False,
+    "rpg_fired":      False,
+    "gna_activo":     False,
+    "gna_fired":      False,
+    "gba_activo":     False,
+    "gba_fired":      False,
+    "vr1_fired":      False,
+}
 
 # ═══════════════════════════════════════════════════════════
-# HELPERS — DIA DE MERCADO
-# Festivos calculados automaticamente para cualquier año
+# FESTIVOS Y DIA DE MERCADO
 # ═══════════════════════════════════════════════════════════
 def calcular_pascua(year):
-    """Algoritmo de Gauss para calcular el Domingo de Pascua."""
     a = year % 19
     b = year // 100
     c = year % 100
@@ -82,97 +77,51 @@ def calcular_pascua(year):
     return date(year, month, day)
 
 def calcular_festivos(year):
-    """
-    Calcula los dias festivos del mercado americano para un año dado.
-    Se recalcula automaticamente — no hay que tocar el codigo nunca.
-    """
     from datetime import date, timedelta
-
     festivos = set()
-
     def observado(d):
-        """Si cae Sabado → Viernes anterior. Si cae Domingo → Lunes siguiente."""
-        if d.weekday() == 5:  # Sabado
-            return d - timedelta(days=1)
-        if d.weekday() == 6:  # Domingo
-            return d + timedelta(days=1)
+        if d.weekday() == 5: return d - timedelta(days=1)
+        if d.weekday() == 6: return d + timedelta(days=1)
         return d
-
     def nth_weekday(year, month, weekday, n):
-        """N-esimo dia de la semana en un mes. weekday: 0=Lunes, 4=Viernes."""
         d = date(year, month, 1)
         days_ahead = weekday - d.weekday()
-        if days_ahead < 0:
-            days_ahead += 7
-        d = d + timedelta(days=days_ahead)
-        return d + timedelta(weeks=n - 1)
-
+        if days_ahead < 0: days_ahead += 7
+        return d + timedelta(days=days_ahead) + timedelta(weeks=n-1)
     def last_weekday(year, month, weekday):
-        """Ultimo dia de la semana en un mes."""
         import calendar
         last_day = calendar.monthrange(year, month)[1]
         d = date(year, month, last_day)
-        days_back = (d.weekday() - weekday) % 7
-        return d - timedelta(days=days_back)
-
-    # New Year's Day — 1 Enero
+        return d - timedelta(days=(d.weekday() - weekday) % 7)
     festivos.add(observado(date(year, 1, 1)))
-
-    # MLK Day — 3er Lunes de Enero
     festivos.add(nth_weekday(year, 1, 0, 3))
-
-    # Presidents Day — 3er Lunes de Febrero
     festivos.add(nth_weekday(year, 2, 0, 3))
-
-    # Good Friday — Viernes antes del Domingo de Pascua
-    pascua = calcular_pascua(year)
-    good_friday = pascua - timedelta(days=2)
-    festivos.add(good_friday)
-
-    # Memorial Day — ultimo Lunes de Mayo
+    festivos.add(calcular_pascua(year) - timedelta(days=2))
     festivos.add(last_weekday(year, 5, 0))
-
-    # Juneteenth — 19 Junio
     festivos.add(observado(date(year, 6, 19)))
-
-    # Independence Day — 4 Julio
     festivos.add(observado(date(year, 7, 4)))
-
-    # Labor Day — 1er Lunes de Septiembre
     festivos.add(nth_weekday(year, 9, 0, 1))
-
-    # Thanksgiving — 4to Jueves de Noviembre
     festivos.add(nth_weekday(year, 11, 3, 4))
-
-    # Christmas — 25 Diciembre
     festivos.add(observado(date(year, 12, 25)))
-
     return festivos
 
-# Cache de festivos por año para no recalcular en cada llamada
 _festivos_cache = {}
 
 def es_dia_mercado(dt=None):
-    """Retorna True si el mercado esta abierto — no es fin de semana ni festivo."""
     from datetime import date
-    if dt is None:
-        dt = datetime.now(EST)
-    if dt.weekday() >= 5:  # Sabado o Domingo
-        return False
+    if dt is None: dt = datetime.now(EST)
+    if dt.weekday() >= 5: return False
     año = dt.year
     if año not in _festivos_cache:
         _festivos_cache[año] = calcular_festivos(año)
     return date(dt.year, dt.month, dt.day) not in _festivos_cache[año]
-
-def es_hora_reporte(hora):
-    return hora in HORAS_REPORTE
 
 # ═══════════════════════════════════════════════════════════
 # TELEGRAM
 # ═══════════════════════════════════════════════════════════
 def enviar_telegram(mensaje):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    payload = { "chat_id": TELEGRAM_CHAT_ID, "text": mensaje, "parse_mode": "HTML" }
+    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": mensaje, "parse_mode": "HTML"}
     try:
         r = requests.post(url, json=payload, timeout=10)
         print(f"Telegram: {r.status_code}")
@@ -180,304 +129,287 @@ def enviar_telegram(mensaje):
         print(f"Error Telegram: {e}")
 
 # ═══════════════════════════════════════════════════════════
-# TWELVE DATA — fuente principal
+# TWELVE DATA — obtener velas historicas
 # ═══════════════════════════════════════════════════════════
-def get_vela_twelvedata():
+def get_velas_twelvedata(outputsize=30):
     try:
         params = {
             "symbol":     "SPY",
             "interval":   "1h",
-            "outputsize": 10,
+            "outputsize": outputsize,
             "timezone":   "America/New_York",
             "apikey":     TWELVEDATA_KEY,
         }
-        url = "https://api.twelvedata.com/time_series"
-        r = requests.get(url, params=params, timeout=15)
+        r = requests.get("https://api.twelvedata.com/time_series", params=params, timeout=15)
         data = r.json()
-
         if data.get("status") == "error" or "values" not in data:
             print(f"TwelveData error: {data.get('message', data)}")
             return None
-
-        valores = data["values"]
-        if len(valores) < 2:
-            return None
-
-        # valores[1] es la ultima vela cerrada
-        v = valores[1]
-        dt = datetime.strptime(v["datetime"], "%Y-%m-%d %H:%M:%S")
-        return {
-            "open":  float(v["open"]),
-            "high":  float(v["high"]),
-            "low":   float(v["low"]),
-            "close": float(v["close"]),
-            "time":  dt.strftime("%H:%M EST")
-        }
+        return data["values"]  # lista de velas, la mas reciente primero
     except Exception as e:
         print(f"Error TwelveData: {e}")
         return None
 
-# ═══════════════════════════════════════════════════════════
-# FINNHUB — fuente backup
-# ═══════════════════════════════════════════════════════════
 def get_vela_finnhub():
     try:
         ahora_est = datetime.now(EST)
-        dt_fin    = ahora_est
-        dt_inicio = ahora_est - timedelta(hours=12)
-        ts_inicio = int(dt_inicio.timestamp())
-        ts_fin    = int(dt_fin.timestamp())
-
-        params = {
-            "symbol":     "SPY",
-            "resolution": "60",
-            "from":       ts_inicio,
-            "to":         ts_fin,
-            "token":      FINNHUB_KEY,
-        }
+        ts_inicio = int((ahora_est - timedelta(hours=12)).timestamp())
+        ts_fin    = int(ahora_est.timestamp())
+        params = {"symbol": "SPY", "resolution": "60", "from": ts_inicio, "to": ts_fin, "token": FINNHUB_KEY}
         r = requests.get("https://finnhub.io/api/v1/stock/candle", params=params, timeout=15)
         data = r.json()
-
-        if data.get("s") != "ok" or not data.get("c"):
-            print(f"Finnhub error: {data}")
+        if data.get("s") != "ok" or not data.get("c") or len(data["c"]) < 2:
             return None
-
-        if len(data["c"]) < 2:
-            return None
-
-        # penultima = ultima cerrada
         i = -2
         dt = datetime.fromtimestamp(data["t"][i], tz=EST)
-        return {
-            "open":  data["o"][i],
-            "high":  data["h"][i],
-            "low":   data["l"][i],
-            "close": data["c"][i],
-            "time":  dt.strftime("%H:%M EST"),
-        }
+        return {"open": data["o"][i], "high": data["h"][i], "low": data["l"][i], "close": data["c"][i], "datetime": dt.strftime("%Y-%m-%d %H:%M:%S")}
     except Exception as e:
         print(f"Error Finnhub: {e}")
         return None
 
 # ═══════════════════════════════════════════════════════════
-# OBTENER VELA — TwelveData primero, Finnhub como backup
+# CALCULAR SMA
 # ═══════════════════════════════════════════════════════════
-def get_ultima_vela():
-    vela = get_vela_twelvedata()
-    if vela:
-        print("Datos: TwelveData ✅")
-        return vela, "TwelveData"
-    print("TwelveData fallo — intentando Finnhub...")
-    vela = get_vela_finnhub()
-    if vela:
-        print("Datos: Finnhub ✅")
-        return vela, "Finnhub"
-    print("Ambas fuentes fallaron ❌")
-    return None, None
+def calcular_sma(velas, periodo):
+    """Calcula SMA del cierre de las ultimas N velas."""
+    if len(velas) < periodo:
+        return None
+    cierres = [float(v["close"]) for v in velas[:periodo]]
+    return sum(cierres) / periodo
 
 # ═══════════════════════════════════════════════════════════
-# CALCULAR TECHO DIAGONAL
+# RESET DIARIO
 # ═══════════════════════════════════════════════════════════
-def calcular_techo(dt_referencia=None):
-    """Calcula el techo al momento exacto. Retorna None si canal no activo."""
+def reset_diario(fecha_hoy, v7_ayer_close):
+    global estado_dia
+    estado_dia = {
+        "fecha":         fecha_hoy,
+        "v1_close":      None,
+        "v1_open":       None,
+        "v7_ayer_close": v7_ayer_close,
+        "rpg_piso":      None,
+        "rpg_activo":    False,
+        "rpg_fired":     False,
+        "gna_activo":    False,
+        "gna_fired":     False,
+        "gba_activo":    False,
+        "gba_fired":     False,
+        "vr1_fired":     False,
+    }
+    print(f"Reset diario — V7 ayer: ${v7_ayer_close:.2f}" if v7_ayer_close else "Reset diario — sin V7 ayer")
+
+# ═══════════════════════════════════════════════════════════
+# CANAL RCB/CNF
+# ═══════════════════════════════════════════════════════════
+def calcular_techo(dt_ref=None):
     if not CANAL_ACTIVO or P1 is None or P2 is None:
         return None
     fmt   = "%Y-%m-%d %H:%M"
     p1_dt = EST.localize(datetime.strptime(f"{P1['fecha']} {P1['hora_est']}:00", fmt))
     p2_dt = EST.localize(datetime.strptime(f"{P2['fecha']} {P2['hora_est']}:00", fmt))
-    if dt_referencia is None:
-        dt_referencia = datetime.now(EST)
+    if dt_ref is None:
+        dt_ref = datetime.now(EST)
     pendiente = (P2["high"] - P1["high"]) / (p2_dt.timestamp() - p1_dt.timestamp())
-    techo = P1["high"] + pendiente * (dt_referencia.timestamp() - p1_dt.timestamp())
-    return round(techo, 2)
+    return round(P1["high"] + pendiente * (dt_ref.timestamp() - p1_dt.timestamp()), 2)
 
-# ═══════════════════════════════════════════════════════════
-# CALCULAR PISO Y MITAD DEL CANAL
-# ═══════════════════════════════════════════════════════════
-def calcular_piso_y_mitad(dt_referencia=None):
-    """Calcula piso y mitad. Retorna None, None, None si canal no activo."""
+def calcular_piso_mitad(dt_ref=None):
     if not CANAL_ACTIVO or PISO is None:
-        return None, None, None
+        return None, None
     fmt     = "%Y-%m-%d %H:%M"
     piso_dt = EST.localize(datetime.strptime(f"{PISO['fecha']} {PISO['hora_est']}:00", fmt))
     techo_en_piso = calcular_techo(piso_dt)
     if techo_en_piso is None:
-        return None, None, None
-    distancia = round(techo_en_piso - PISO["low"], 2)
-    techo     = calcular_techo(dt_referencia)
+        return None, None
+    distancia = techo_en_piso - PISO["low"]
+    techo = calcular_techo(dt_ref)
     if techo is None:
-        return None, None, None
-    piso      = round(techo - distancia, 2)
-    mitad     = round(piso + distancia / 2, 2)
-    return piso, mitad, distancia
+        return None, None
+    return round(techo - distancia, 2), round(techo - distancia / 2, 2)
 
 # ═══════════════════════════════════════════════════════════
-# ALERTA PRIMERA VELA ROJA — solo a las 10:01 AM
-# ═══════════════════════════════════════════════════════════
-def alerta_primera_vela_roja(vela, fuente):
-    """
-    1VR — Primera Vela Roja.
-    Unica condicion: Vela 1 es roja (cierre < apertura).
-    Retorna True si envia alerta.
-    """
-    if vela["close"] < vela["open"]:
-        cierre_vela = datetime.now(EST).replace(minute=0, second=0, microsecond=0)
-        techo = calcular_techo(cierre_vela)
-        piso, mitad, distancia = calcular_piso_y_mitad(cierre_vela)
-        enviar_telegram(
-            f"🔻 <b>PRIMERA VELA ROJA — 10:00 EST</b>\n\n"
-            f"<b>Open:</b> ${vela['open']:.2f}\n"
-            f"<b>Cierre:</b> ${vela['close']:.2f}\n"
-            f"<b>Fuente:</b> {fuente}\n"
-            + (f"\n<b>Techo:</b> ${techo:.2f}\n<b>Mitad:</b> ${mitad:.2f}\n<b>Piso:</b> ${piso:.2f}" if techo else "") +
-            f"\n\n⚠️ <b>Vela 1 roja — vigilar continuacion bajista</b>"
-        )
-        return True
-    return False
-
-# ═══════════════════════════════════════════════════════════
-# APAGAR SISTEMA
-# ═══════════════════════════════════════════════════════════
-def apagar_sistema(motivo):
-    global SISTEMA_ACTIVO
-    SISTEMA_ACTIVO = False
-    enviar_telegram(
-        f"🏁 <b>CANAL INVALIDADO — SISTEMA APAGADO</b>\n\n"
-        f"{motivo}\n\n"
-        f"El sistema queda dormido.\n"
-        f"Reactivar cuando identifiques nuevo canal bajista."
-    )
-    print(f"Sistema apagado: {motivo}")
-
-# ═══════════════════════════════════════════════════════════
-# REPORTE HORARIO
+# REPORTE HORARIO PRINCIPAL
 # ═══════════════════════════════════════════════════════════
 def reporte_horario():
-    global SISTEMA_ACTIVO
+    global estado_dia, CANAL_ACTIVO
 
     if not SISTEMA_ACTIVO:
-        print("Sistema apagado — sin reporte.")
         return
 
-    ahora_est = datetime.now(EST)
-
-    # Filtro 1: Solo Lunes a Viernes
-    if not es_dia_mercado(ahora_est):
-        print(f"Fin de semana — sin reporte: {ahora_est.strftime('%A %H:%M EST')}")
+    ahora = datetime.now(EST)
+    if not es_dia_mercado(ahora):
+        print(f"No es dia de mercado: {ahora.strftime('%A %H:%M EST')}")
         return
 
-    hora = ahora_est.hour
-
-    # Filtro 2: Solo en horas de reporte
-    if not es_hora_reporte(hora):
-        print(f"Fuera de horario: {ahora_est.strftime('%H:%M EST')}")
+    hora = ahora.hour
+    if hora not in HORAS_REPORTE:
+        print(f"Fuera de horario: {ahora.strftime('%H:%M EST')}")
         return
 
-    vela_num      = hora - 9
-    hora_label    = f"{hora}:00 EST"
-    es_ultima     = (hora == 16)
-    nota_vela     = " <i>(vela 30 min)</i>" if es_ultima else ""
-    proxima       = f"{hora + 1}:00 EST" if hora < 16 else ("apertura del lunes" if ahora_est.weekday() == 4 else "apertura manana")
+    fecha_hoy = ahora.strftime("%Y-%m-%d")
 
-    vela, fuente = get_ultima_vela()
+    # Obtener velas historicas
+    velas = get_velas_twelvedata(outputsize=30)
+    if not velas:
+        vela_backup = get_vela_finnhub()
+        if not vela_backup:
+            enviar_telegram("⚠️ No se pudo obtener datos de SPY.")
+            return
+        velas = [vela_backup]
 
-    if not vela:
-        enviar_telegram(
-            f"⚠️ <b>Breakout Sentinel — {hora_label} — Vela {vela_num}</b>\n"
-            f"No se pudo obtener datos de SPY.\n"
-            f"Sistema activo — proxima: {proxima}"
-        )
-        return
+    print("Datos: TwelveData ✅")
 
-    # ── A las 10:01 — evaluar Primera Vela Roja ─────────
-    # Condicion unica: Vela 1 roja
+    # Vela actual cerrada = velas[1] (velas[0] es la que esta formandose)
+    vela_actual = {
+        "open":     float(velas[1]["open"]),
+        "high":     float(velas[1]["high"]),
+        "low":      float(velas[1]["low"]),
+        "close":    float(velas[1]["close"]),
+        "datetime": velas[1]["datetime"],
+    }
+
+    # Calcular SMAs usando velas[1] en adelante (cerradas)
+    sma20 = calcular_sma(velas[1:], 20)
+    sma40 = calcular_sma(velas[1:], 40)
+    tendencia_alza = sma20 is not None and sma40 is not None and sma20 > sma40
+
+    # Reset diario si es nuevo dia
+    if estado_dia["fecha"] != fecha_hoy:
+        # Buscar cierre V7 del dia anterior en el historico
+        v7_ayer = None
+        for v in velas[1:]:
+            dt_v = datetime.strptime(v["datetime"], "%Y-%m-%d %H:%M:%S")
+            if dt_v.strftime("%Y-%m-%d") != fecha_hoy and dt_v.hour == 15 and dt_v.minute == 30:
+                v7_ayer = float(v["close"])
+                break
+        reset_diario(fecha_hoy, v7_ayer)
+
+    v7_ayer = estado_dia["v7_ayer_close"]
+
+    # ── VELA 1 — 10:00 AM EST (timestamp TV 9:30) ────────
     if hora == 10:
-        aplico = alerta_primera_vela_roja(vela, fuente)
-        if aplico:
-            return  # 1VR reemplaza el reporte normal de las 10:01
+        estado_dia["v1_open"]  = vela_actual["open"]
+        estado_dia["v1_close"] = vela_actual["close"]
+        v1_verde = vela_actual["close"] > vela_actual["open"]
+        v1_roja  = vela_actual["close"] < vela_actual["open"]
 
-    # ── Auto-P2: si el high supera el techo actualizar P2 ──
-    if CANAL_ACTIVO and vela and techo:
-        if vela["high"] > techo:
-            P2["fecha"]    = ahora_est.strftime("%Y-%m-%d")
-            P2["hora_est"] = ahora_est.hour
-            P2["high"]     = round(vela["high"], 2)
-            print(f"Auto-P2 actualizado: ${P2['high']:.2f}")
+        # 1VR
+        if VR1_ON and v1_roja and not estado_dia["vr1_fired"]:
+            estado_dia["vr1_fired"] = True
+            techo = calcular_techo()
+            piso, mitad = calcular_piso_mitad()
+            msg = (
+                f"🔴 <b>1VR — PRIMERA VELA ROJA</b>\n"
+                f"<b>Open:</b> ${vela_actual['open']:.2f}\n"
+                f"<b>Cierre:</b> ${vela_actual['close']:.2f}\n"
+                f"⚠️ <b>PUT — Evaluar entrada</b>"
+            )
+            if techo:
+                msg += f"\n<b>Techo canal:</b> ${techo:.2f}"
+            enviar_telegram(msg)
 
-    # ── Si canal no esta activo — no hay reporte BS ──────
-    if not CANAL_ACTIVO:
-        print(f"Canal no activo — sin reporte BS: {hora_label}")
+        # RPG — gap + V1 verde
+        if RPG_ON and v7_ayer and v1_verde and not estado_dia["rpg_fired"]:
+            gap_alza = (vela_actual["open"] - v7_ayer) / v7_ayer * 100
+            gap_baja = (v7_ayer - vela_actual["open"]) / v7_ayer * 100
+            if gap_alza >= 0.5 or gap_baja >= 0.5:
+                estado_dia["rpg_piso"]   = vela_actual["low"]
+                estado_dia["rpg_activo"] = True
+                print(f"RPG activado — piso: ${vela_actual['low']:.2f}")
+
+        # GNA — gap alcista + tendencia alza + V1 verde
+        if GNA_ON and v7_ayer and v1_verde and tendencia_alza and not estado_dia["gna_fired"]:
+            gap_alza = (vela_actual["open"] - v7_ayer) / v7_ayer * 100
+            if gap_alza >= 0.1:
+                estado_dia["gna_activo"] = True
+                print(f"GNA activado — techo V1: ${vela_actual['close']:.2f}")
+
+        # GBA — gap bajista + V1 verde
+        if GBA_ON and v7_ayer and v1_verde and not estado_dia["gba_fired"]:
+            gap_baja = (v7_ayer - vela_actual["open"]) / v7_ayer * 100
+            if gap_baja >= 0.1:
+                estado_dia["gba_activo"] = True
+                print(f"GBA activado — techo V1: ${vela_actual['close']:.2f}")
+
         return
 
-    # ── Techo al cierre exacto de la vela ───────────────
-    cierre_vela  = ahora_est.replace(minute=0, second=0, microsecond=0)
-    techo        = calcular_techo(cierre_vela)
-    piso, mitad, distancia = calcular_piso_y_mitad(cierre_vela)
+    # ── VELAS 2-7 — evaluar estrategias ──────────────────
+    v1_close = estado_dia["v1_close"]
+    v1_open  = estado_dia["v1_open"]
 
-    if techo is None:
-        return
+    # Vela alcista estricta AXIS
+    cuerpo    = vela_actual["close"] - vela_actual["open"]
+    mecha_sup = vela_actual["high"] - max(vela_actual["close"], vela_actual["open"])
+    rango     = vela_actual["high"] - vela_actual["low"]
+    v_alcista = (
+        vela_actual["close"] > vela_actual["open"] and
+        (cuerpo / rango >= 0.15 if rango > 0 else False) and
+        (mecha_sup / cuerpo <= 0.30 if cuerpo > 0 else False)
+    )
+    v_roja = vela_actual["close"] < vela_actual["open"]
 
-    # ── Analisis de la vela ──────────────────────────────
-    vela_verde   = vela["close"] > vela["open"]
-    rango        = vela["high"] - vela["low"]
-    mecha_sup    = vela["high"] - max(vela["close"], vela["open"])
-    mecha_pct    = (mecha_sup / rango * 100) if rango > 0 else 0
-    mecha_ok     = mecha_pct <= MECHA_MAX
-    cierre_rompe = vela["close"] > techo
+    # RPG — vela roja cierra bajo piso
+    if RPG_ON and estado_dia["rpg_activo"] and not estado_dia["rpg_fired"]:
+        piso_rpg = estado_dia["rpg_piso"]
+        if v_roja and piso_rpg and vela_actual["close"] < piso_rpg:
+            estado_dia["rpg_fired"]  = True
+            estado_dia["rpg_activo"] = False
+            enviar_telegram(
+                f"🟣 <b>RPG — RUPTURA PISO GAP</b>\n"
+                f"<b>Hora:</b> {hora}:00 EST\n"
+                f"<b>Piso V1:</b> ${piso_rpg:.2f}\n"
+                f"<b>Cierre:</b> ${vela_actual['close']:.2f}\n"
+                f"⚠️ <b>PUT — Evaluar entrada</b>"
+            )
 
-    if cierre_rompe and vela_verde and mecha_ok:
-        enviar_telegram(
-            f"🟢 <b>BREAKOUT SENTINEL — RUPTURA ALCISTA</b>\n"
-            f"<b>Hora:</b> {hora_label} — Vela {vela_num}{nota_vela}\n\n"
-            f"<b>Techo:</b> ${techo:.2f}\n"
-            f"<b>Mitad:</b> ${mitad:.2f}\n"
-            f"<b>Piso:</b> ${piso:.2f}\n"
-            f"<b>Cierre:</b> ${vela['close']:.2f}\n"
-            f"<b>High:</b> ${vela['high']:.2f}\n"
-            f"<b>Mecha sup:</b> {mecha_pct:.0f}%\n"
-            f"<b>Fuente:</b> {fuente}\n\n"
-            f"⚡ <b>EVALUAR ENTRADA CALL</b>"
-        )
+    # GNA — vela alcista cierra sobre cierre V1
+    if GNA_ON and estado_dia["gna_activo"] and not estado_dia["gna_fired"] and v1_close:
+        if v_alcista and vela_actual["close"] > v1_close:
+            estado_dia["gna_fired"]  = True
+            estado_dia["gna_activo"] = False
+            tipo = "GNA" if hora == 11 else "GNA+2"
+            enviar_telegram(
+                f"🟢 <b>{tipo} — GAP NORMAL ALZA</b>\n"
+                f"<b>Hora:</b> {hora}:00 EST\n"
+                f"<b>Techo V1:</b> ${v1_close:.2f}\n"
+                f"<b>Cierre:</b> ${vela_actual['close']:.2f}\n"
+                f"📈 <b>CALL — Evaluar entrada</b>"
+            )
 
-    elif cierre_rompe:
-        razon = []
-        if not vela_verde: razon.append("vela roja")
-        if not mecha_ok:   razon.append(f"mecha {mecha_pct:.0f}% > {MECHA_MAX}%")
-        enviar_telegram(
-            f"⚠️ <b>BREAKOUT SENTINEL — RUPTURA SIN CONFIRMACION</b>\n"
-            f"<b>Hora:</b> {hora_label} — Vela {vela_num}{nota_vela}\n\n"
-            f"<b>Techo:</b> ${techo:.2f}\n"
-            f"<b>Mitad:</b> ${mitad:.2f}\n"
-            f"<b>Piso:</b> ${piso:.2f}\n"
-            f"<b>Cierre:</b> ${vela['close']:.2f}\n"
-            f"<b>High:</b> ${vela['high']:.2f}\n"
-            f"<b>Razon:</b> {', '.join(razon)}\n"
-            f"<b>Fuente:</b> {fuente}\n\n"
-            f"❌ <b>NO ENTRAR — vigilar proxima vela</b>"
-        )
+    # GBA — vela alcista cierra sobre cierre V1
+    if GBA_ON and estado_dia["gba_activo"] and not estado_dia["gba_fired"] and v1_close:
+        if v_alcista and vela_actual["close"] > v1_close:
+            estado_dia["gba_fired"]  = True
+            estado_dia["gba_activo"] = False
+            tipo = "GBA" if hora == 11 else "GBA+2"
+            enviar_telegram(
+                f"🔵 <b>{tipo} — GAP BAJISTA ALZA</b>\n"
+                f"<b>Hora:</b> {hora}:00 EST\n"
+                f"<b>Techo V1:</b> ${v1_close:.2f}\n"
+                f"<b>Cierre:</b> ${vela_actual['close']:.2f}\n"
+                f"📈 <b>CALL — Evaluar entrada</b>"
+            )
 
-    else:
-        razon = []
-        if not vela_verde:   razon.append("vela roja")
-        if not cierre_rompe: razon.append(f"cierre ${vela['close']:.2f} bajo techo ${techo:.2f}")
-        enviar_telegram(
-            f"🔴 <b>Breakout Sentinel — Sin ruptura</b>\n"
-            f"<b>Hora:</b> {hora_label} — Vela {vela_num}{nota_vela}\n\n"
-            f"<b>Techo:</b> ${techo:.2f}\n"
-            f"<b>Mitad:</b> ${mitad:.2f}\n"
-            f"<b>Piso:</b> ${piso:.2f}\n"
-            f"<b>Cierre:</b> ${vela['close']:.2f}\n"
-            f"<b>Vela:</b> {'Verde' if vela_verde else 'Roja'} | Mecha: {mecha_pct:.0f}%\n"
-            f"<b>Razon:</b> {', '.join(razon)}\n"
-            f"<b>Fuente:</b> {fuente}\n\n"
-            f"Sistema activo — proxima: {proxima}"
-        )
+    # RCB/CNF — canal activo
+    if CANAL_ON and CANAL_ACTIVO:
+        techo = calcular_techo()
+        piso, mitad = calcular_piso_mitad()
+        if techo and vela_actual["close"] > techo and v_alcista:
+            tipo_canal = "RCB" if PISO else "CNF"
+            enviar_telegram(
+                f"🟠 <b>{tipo_canal} — RUPTURA CANAL</b>\n"
+                f"<b>Hora:</b> {hora}:00 EST\n"
+                f"<b>Techo:</b> ${techo:.2f}\n"
+                f"<b>Cierre:</b> ${vela_actual['close']:.2f}\n"
+                f"📈 <b>CALL — Evaluar entrada</b>"
+            )
+
+    print(f"Vela {hora}:00 — Close: ${vela_actual['close']:.2f} | RPG: {estado_dia['rpg_activo']} | GNA: {estado_dia['gna_activo']} | GBA: {estado_dia['gba_activo']}")
 
 # ═══════════════════════════════════════════════════════════
 # LOOP
 # ═══════════════════════════════════════════════════════════
 def monitor_loop():
-    print("Breakout Sentinel v6.9 iniciado...")
+    print("Breakout Sentinel v7.0 iniciado...")
     while True:
         ahora = datetime.now(EST)
         minutos_hasta_01 = (1 - ahora.minute) % 60
@@ -487,7 +419,7 @@ def monitor_loop():
         print(f"Proximo chequeo en {minutos_hasta_01} min | {ahora.strftime('%A %H:%M EST')}")
         time.sleep(segundos_espera)
         ahora = datetime.now(EST)
-        if es_dia_mercado(ahora) and es_hora_reporte(ahora.hour):
+        if es_dia_mercado(ahora) and ahora.hour in HORAS_REPORTE:
             reporte_horario()
         else:
             print(f"No toca reporte: {ahora.strftime('%A %H:%M EST')}")
@@ -498,46 +430,27 @@ def monitor_loop():
 @app.route("/", methods=["GET"])
 def home():
     ahora = datetime.now(EST)
-    cierre_vela = ahora.replace(minute=0, second=0, microsecond=0)
-    techo = calcular_techo(cierre_vela)
-    piso, mitad, distancia = calcular_piso_y_mitad(cierre_vela)
     return jsonify({
-        "sistema":      "Breakout Sentinel v6.9",
-        "estado":       "activo" if SISTEMA_ACTIVO else "apagado",
-        "canal_activo": CANAL_ACTIVO,
-        "hora_est":     ahora.strftime("%A %H:%M EST"),
-        "mercado":      "abierto" if es_dia_mercado(ahora) else "cerrado",
-        "P1":           P1,
-        "P2":           P2,
-        "techo_actual": techo,
-        "piso_actual":  piso,
-        "mitad_canal":  mitad,
+        "sistema":    "Breakout Sentinel v7.0",
+        "estado":     "activo" if SISTEMA_ACTIVO else "apagado",
+        "hora_est":   ahora.strftime("%A %H:%M EST"),
+        "mercado":    "abierto" if es_dia_mercado(ahora) else "cerrado",
+        "estrategias": {"1VR": VR1_ON, "RPG": RPG_ON, "GNA": GNA_ON, "GBA": GBA_ON, "CANAL": CANAL_ON},
+        "estado_dia": estado_dia,
     }), 200
 
 @app.route("/test", methods=["GET"])
 def test():
     ahora = datetime.now(EST)
-    cierre_vela = ahora.replace(minute=0, second=0, microsecond=0)
-    techo = calcular_techo(cierre_vela)
-    piso, mitad, distancia = calcular_piso_y_mitad(cierre_vela)
-    canal_info = ""
-    if CANAL_ACTIVO and techo:
-        canal_info = (
-            f"\n<b>P1:</b> ${P1['high']:.2f} ({P1['fecha']})\n"
-            f"<b>P2:</b> ${P2['high']:.2f} ({P2['fecha']})\n"
-            f"<b>Techo ahora:</b> ${techo:.2f}\n"
-            f"<b>Mitad canal:</b> ${mitad:.2f}\n"
-            f"<b>Piso:</b> ${piso:.2f}"
-        )
-    else:
-        canal_info = "\n<b>Canal:</b> Sin activar — usar /activar para definir P1, P2 y Piso"
     enviar_telegram(
-        f"✅ <b>Breakout Sentinel v6.9</b>\n"
-        f"Estado: {'Activo' if SISTEMA_ACTIVO else 'Apagado'}\n"
-        f"Canal: {'Activo' if CANAL_ACTIVO else 'Sin activar'}\n"
-        f"Hora: {ahora.strftime('%A %d/%m/%Y %H:%M EST')}\n"
-        f"Mercado: {'Abierto' if es_dia_mercado(ahora) else 'Cerrado'}"
-        f"{canal_info}"
+        f"✅ <b>Breakout Sentinel v7.0</b>\n"
+        f"<b>Hora:</b> {ahora.strftime('%A %d/%m/%Y %H:%M EST')}\n"
+        f"<b>Mercado:</b> {'Abierto' if es_dia_mercado(ahora) else 'Cerrado'}\n"
+        f"<b>1VR:</b> {'ON' if VR1_ON else 'OFF'} | "
+        f"<b>RPG:</b> {'ON' if RPG_ON else 'OFF'} | "
+        f"<b>GNA:</b> {'ON' if GNA_ON else 'OFF'} | "
+        f"<b>GBA:</b> {'ON' if GBA_ON else 'OFF'}\n"
+        f"<b>Canal:</b> {'Activo' if CANAL_ACTIVO else 'Sin activar'}"
     )
     return jsonify({"status": "ok"}), 200
 
@@ -546,119 +459,60 @@ def reporte_manual():
     reporte_horario()
     return jsonify({"status": "reporte enviado"}), 200
 
-@app.route("/apagar", methods=["GET"])
-def apagar_manual():
-    apagar_sistema("Apagado manualmente por el operador.")
-    return jsonify({"status": "sistema apagado"}), 200
-
-@app.route("/piso", methods=["GET"])
-def actualizar_piso():
-    """Actualiza el piso del canal sin tocar P1/P2.
-    Uso: /piso?fecha=2026-03-30&vela=6&low=629.48
-    """
-    global PISO
-    if not CANAL_ACTIVO:
-        return jsonify({"error": "Canal no activo. Usar /activar primero."}), 400
-    try:
-        vela_num = int(request.args["vela"])
-        hora_map = {1:10, 2:11, 3:12, 4:13, 5:14, 6:15, 7:16}
-        PISO = {
-            "fecha":    request.args["fecha"],
-            "hora_est": hora_map[vela_num],
-            "low":      float(request.args["low"]),
-        }
-        techo = calcular_techo()
-        piso, mitad, distancia = calcular_piso_y_mitad()
-        enviar_telegram(
-            f"📐 <b>Piso del canal actualizado</b>\n\n"
-            f"<b>Fecha piso:</b> {PISO['fecha']} Vela {vela_num}\n"
-            f"<b>Low piso:</b> ${PISO['low']:.2f}\n"
-            f"<b>Distancia canal:</b> ${distancia:.2f}\n\n"
-            f"<b>Techo ahora:</b> ${techo:.2f}\n"
-            f"<b>Mitad canal:</b> ${mitad:.2f}\n"
-            f"<b>Piso ahora:</b> ${piso:.2f}"
-        )
-        return jsonify({"status": "piso actualizado", "piso": PISO, "mitad": mitad, "distancia": distancia}), 200
-    except Exception as e:
-        return jsonify({"error": str(e)}), 400
-
 @app.route("/activar", methods=["GET"])
 def activar():
-    """Activa el canal con P1, P2 y Piso definidos por el operador.
-    Uso: /activar?p1_fecha=2026-02-26&p1_hora=10&p1_high=693.29
-                 &p2_fecha=2026-04-08&p2_hora=10&p2_high=XXX.XX
-                 &piso_fecha=2026-03-30&piso_vela=6&piso_low=629.48
-    p1_hora y p2_hora = hora final AXIS (10=Vela1, 11=Vela2, etc.)
-    piso_vela = numero de vela 1-7
-    """
-    global P1, P2, PISO, CANAL_ACTIVO, SISTEMA_ACTIVO
+    global P1, P2, PISO, CANAL_ACTIVO, CANAL_ON
     try:
-        P1 = {
-            "fecha":    request.args["p1_fecha"],
-            "hora_est": int(request.args["p1_hora"]),
-            "high":     float(request.args["p1_high"]),
-        }
-        P2 = {
-            "fecha":    request.args["p2_fecha"],
-            "hora_est": int(request.args["p2_hora"]),
-            "high":     float(request.args["p2_high"]),
-        }
-        vela_map  = {1:10, 2:11, 3:12, 4:13, 5:14, 6:15, 7:16}
-        piso_vela = int(request.args["piso_vela"])
-        PISO = {
-            "fecha":    request.args["piso_fecha"],
-            "hora_est": vela_map[piso_vela],
-            "low":      float(request.args["piso_low"]),
-        }
-        CANAL_ACTIVO   = True
-        SISTEMA_ACTIVO = True
-
+        P1 = {"fecha": request.args["p1_fecha"], "hora_est": int(request.args["p1_hora"]), "high": float(request.args["p1_high"])}
+        P2 = {"fecha": request.args["p2_fecha"], "hora_est": int(request.args["p2_hora"]), "high": float(request.args["p2_high"])}
+        vela_map = {1:10, 2:11, 3:12, 4:13, 5:14, 6:15, 7:16}
+        piso_vela = int(request.args.get("piso_vela", 0))
+        if piso_vela > 0 and "piso_low" in request.args:
+            PISO = {"fecha": request.args["piso_fecha"], "hora_est": vela_map[piso_vela], "low": float(request.args["piso_low"])}
+        CANAL_ACTIVO = True
+        CANAL_ON     = True
         techo = calcular_techo()
-        piso, mitad, distancia = calcular_piso_y_mitad()
-
+        piso, mitad = calcular_piso_mitad()
         enviar_telegram(
-            f"✅ <b>AXIS — Canal Activado</b>\n\n"
-            f"<b>P1:</b> ${P1['high']:.2f} — {P1['fecha']} {P1['hora_est']}:00 EST\n"
-            f"<b>P2:</b> ${P2['high']:.2f} — {P2['fecha']} {P2['hora_est']}:00 EST\n"
-            f"<b>Piso:</b> ${PISO['low']:.2f} — {PISO['fecha']} Vela {piso_vela}\n"
-            f"<b>Distancia canal:</b> ${distancia:.2f}\n\n"
-            f"<b>Techo ahora:</b> ${techo:.2f}\n"
-            f"<b>Mitad canal:</b> ${mitad:.2f}\n"
-            f"<b>Piso ahora:</b> ${piso:.2f}\n\n"
-            f"Sistema activo — monitoreando canal bajista."
+            f"✅ <b>Canal Activado</b>\n"
+            f"<b>P1:</b> ${P1['high']:.2f} — {P1['fecha']}\n"
+            f"<b>P2:</b> ${P2['high']:.2f} — {P2['fecha']}\n"
+            + (f"<b>Piso:</b> ${PISO['low']:.2f} — {PISO['fecha']}\n" if PISO else "<b>Tipo:</b> CNF — sin piso\n") +
+            (f"<b>Techo ahora:</b> ${techo:.2f}\n<b>Mitad:</b> ${mitad:.2f}\n<b>Piso ahora:</b> ${piso:.2f}" if techo and piso else "")
         )
-        return jsonify({"status": "canal activado", "P1": P1, "P2": P2, "PISO": PISO}), 200
+        return jsonify({"status": "canal activado"}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 400
+
+@app.route("/apagar", methods=["GET"])
+def apagar():
+    global SISTEMA_ACTIVO
+    SISTEMA_ACTIVO = False
+    enviar_telegram("🏁 <b>Sistema apagado manualmente.</b>")
+    return jsonify({"status": "apagado"}), 200
 
 @app.route("/estrategia", methods=["GET"])
 def estrategia():
-    """Activa o desactiva estrategias individuales.
-    Uso: /estrategia?bs=true&vr1=false&rpg=true
-    """
-    global BS_ON, VR1_ON, RPG_ON
-    try:
-        if "bs"  in request.args: BS_ON  = request.args["bs"].lower()  == "true"
-        if "vr1" in request.args: VR1_ON = request.args["vr1"].lower() == "true"
-        if "rpg" in request.args: RPG_ON = request.args["rpg"].lower() == "true"
-        enviar_telegram(
-            f"⚙️ <b>Estrategias actualizadas</b>\n\n"
-            f"<b>BS:</b>  {'ON ✅' if BS_ON  else 'OFF ❌'}\n"
-            f"<b>1VR:</b> {'ON ✅' if VR1_ON else 'OFF ❌'}\n"
-            f"<b>RPG:</b> {'ON ✅' if RPG_ON else 'OFF ❌'}"
-        )
-        return jsonify({"BS": BS_ON, "1VR": VR1_ON, "RPG": RPG_ON}), 200
-    except Exception as e:
-        return jsonify({"error": str(e)}), 400
+    global VR1_ON, RPG_ON, GNA_ON, GBA_ON, CANAL_ON
+    if "vr1" in request.args: VR1_ON  = request.args["vr1"].lower()  == "true"
+    if "rpg" in request.args: RPG_ON  = request.args["rpg"].lower()  == "true"
+    if "gna" in request.args: GNA_ON  = request.args["gna"].lower()  == "true"
+    if "gba" in request.args: GBA_ON  = request.args["gba"].lower()  == "true"
+    if "canal" in request.args: CANAL_ON = request.args["canal"].lower() == "true"
+    enviar_telegram(
+        f"⚙️ <b>Estrategias</b>\n"
+        f"1VR: {'ON' if VR1_ON else 'OFF'} | RPG: {'ON' if RPG_ON else 'OFF'}\n"
+        f"GNA: {'ON' if GNA_ON else 'OFF'} | GBA: {'ON' if GBA_ON else 'OFF'}\n"
+        f"Canal: {'ON' if CANAL_ON else 'OFF'}"
+    )
+    return jsonify({"VR1": VR1_ON, "RPG": RPG_ON, "GNA": GNA_ON, "GBA": GBA_ON, "CANAL": CANAL_ON}), 200
 
 # ═══════════════════════════════════════════════════════════
-# ARRANQUE DEL MONITOR — funciona con gunicorn Y python directo
-# Delay de 5 segundos para que Flask responda primero al health check
+# ARRANQUE
 # ═══════════════════════════════════════════════════════════
 def arrancar_monitor():
     time.sleep(5)
-    thread = threading.Thread(target=monitor_loop, daemon=True)
-    thread.start()
+    threading.Thread(target=monitor_loop, daemon=True).start()
 
 threading.Thread(target=arrancar_monitor, daemon=True).start()
 
