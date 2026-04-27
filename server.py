@@ -29,7 +29,7 @@ app = Flask(__name__)
 # ═══════════════════════════════════════════════════════════
 # CONFIGURACION
 # ═══════════════════════════════════════════════════════════
-TELEGRAM_TOKEN    = "8668514895:AAG5HKGmDLr6_SM1rz3gwC6uk1Ue9iepN70"
+TELEGRAM_TOKEN    = "8668514895:AAGWRxFmA9c8tZKIe-5i9tJ31RQtzi1-NYs"
 TELEGRAM_CHAT_ID  = "-5010153427"
 TWELVEDATA_KEY    = "66dd71373a884f7bb7da8e6e5e469571"
 FINNHUB_KEY       = "d71aocpr01qot5jcnohgd71aocpr01qot5jcnoi0"
