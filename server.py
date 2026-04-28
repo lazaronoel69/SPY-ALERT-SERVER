@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v8.0
+AXIS Breakout Sentinel v8.1
 Estrategias: 1VR | RPG | GNA | GBA | RCB/CNF
 Multi-activo: SPY, AAPL, BA, GLD
 Auto-P2 | Apagado automatico si nuevo P2 >= P1
@@ -286,6 +286,48 @@ def evaluar_activo(simbolo, velas, ahora):
         reset_diario_activo(simbolo, fecha_hoy, v7_ayer)
         ed = estado_dia[simbolo]
 
+        # Reconstruir estado del dia desde historico
+        # Si V1 ya cerro, recuperar sus valores para que las estrategias funcionen
+        for v in velas:
+            dt_v = datetime.strptime(v["datetime"], "%Y-%m-%d %H:%M:%S")
+            if dt_v.strftime("%Y-%m-%d") == fecha_hoy and dt_v.hour == 9:
+                v1_open_r  = float(v["open"])
+                v1_close_r = float(v["close"])
+                v1_low_r   = float(v["low"])
+                ed["v1_close"] = v1_close_r
+                ed["v1_open"]  = v1_open_r
+                ed["v1_low"]   = v1_low_r
+                v7_c = ed["v7_ayer_close"]
+
+                # 1VR ya ocurrio — marcar como fired para no disparar de nuevo
+                if VR1_ON and v1_close_r < v1_open_r:
+                    ed["vr1_fired"] = True
+
+                # Reconstruir RPG
+                if RPG_ON and v7_c and v1_close_r > v1_open_r:
+                    gap = abs(v1_open_r - v7_c) / v7_c * 100
+                    if gap >= 0.5:
+                        ed["rpg_activo"] = True
+                        ed["rpg_piso"]   = v1_low_r
+
+                # Reconstruir GNA
+                if GNA_ON and v7_c and v1_close_r > v1_open_r:
+                    gap_alza = (v1_open_r - v7_c) / v7_c * 100
+                    if gap_alza >= 0.1:
+                        sma20 = calcular_sma(velas, 20)
+                        sma40 = calcular_sma(velas, 40)
+                        if sma20 and sma40 and sma20 > sma40:
+                            ed["gna_activo"] = True
+
+                # Reconstruir GBA
+                if GBA_ON and v7_c and v1_close_r > v1_open_r:
+                    gap_baja = (v7_c - v1_open_r) / v7_c * 100
+                    if gap_baja >= 0.1:
+                        ed["gba_activo"] = True
+
+                print(f"{simbolo} estado reconstruido — V1 O:{v1_open_r:.2f} C:{v1_close_r:.2f}")
+                break
+
     # Vela alcista estricta AXIS
     cuerpo    = v_close - v_open
     mecha_sup = v_high - max(v_close, v_open)
@@ -484,7 +526,7 @@ def reporte_horario():
 # LOOP PRINCIPAL
 # ═══════════════════════════════════════════════════════════
 def monitor_loop():
-    print("AXIS Breakout Sentinel v8.0 iniciado...")
+    print("AXIS Breakout Sentinel v8.1 iniciado...")
     while True:
         ahora = datetime.now(EST)
         minutos_hasta_01 = (1 - ahora.minute) % 60
@@ -516,7 +558,7 @@ def home():
             "tipo":    "RCB" if c["p3"] else "CNF" if c["on"] else "OFF",
         }
     return jsonify({
-        "sistema":    "AXIS Breakout Sentinel v8.0",
+        "sistema":    "AXIS Breakout Sentinel v8.1",
         "estado":     "activo" if SISTEMA_ACTIVO else "apagado",
         "hora_est":   ahora.strftime("%A %H:%M EST"),
         "mercado":    "abierto" if es_dia_mercado(ahora) else "cerrado",
@@ -539,7 +581,7 @@ def test():
         else:
             lineas_canal.append(f"  {a}: OFF")
     enviar_telegram(
-        f"✅ <b>AXIS Breakout Sentinel v8.0</b>\n"
+        f"✅ <b>AXIS Breakout Sentinel v8.1</b>\n"
         f"<b>Hora:</b> {ahora.strftime('%A %d/%m/%Y %H:%M EST')}\n"
         f"<b>Mercado:</b> {'Abierto' if es_dia_mercado(ahora) else 'Cerrado'}\n"
         f"<b>1VR:</b> {'ON' if VR1_ON else 'OFF'} | "
