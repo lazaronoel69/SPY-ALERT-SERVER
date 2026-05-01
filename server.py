@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v8.1
+AXIS Breakout Sentinel v8.2
 Estrategias: 1VR | RPG | GNA | GBA | RCB/CNF
 Multi-activo: SPY, AAPL, BA, GLD
 Auto-P2 | Apagado automatico si nuevo P2 >= P1
+Fix v8.2: 1VR envia alerta durante reconstruccion antes de marcar vr1_fired
 """
 
 import requests
@@ -36,7 +37,6 @@ GBA_ON  = True
 
 # ═══════════════════════════════════════════════════════════
 # ESTADO POR ACTIVO
-# Cada activo tiene su propio estado diario y canal — completamente independiente
 # ═══════════════════════════════════════════════════════════
 def estado_diario_vacio():
     return {
@@ -58,16 +58,15 @@ def estado_diario_vacio():
 def canal_vacio():
     return {
         "on":             False,
-        "p1":             None,   # {"fecha": "2026-04-17", "hora_est": 10, "high": 448.69}
-        "p2":             None,   # {"fecha": "2026-04-24", "hora_est": 16, "high": 433.48}
-        "p3":             None,   # {"fecha": "2026-04-28", "hora_est": 11, "low": 418.0} o None = CNF
-        "p2_actual_high": None,   # se actualiza con Auto-P2
-        "p2_actual_ts":   None,   # timestamp del P2 actual
-        "v1_candidato":   None,   # high de V1 si rompio techo
+        "p1":             None,
+        "p2":             None,
+        "p3":             None,
+        "p2_actual_high": None,
+        "p2_actual_ts":   None,
+        "v1_candidato":   None,
         "apagado":        False,
     }
 
-# Diccionarios globales — clave = simbolo del activo
 estado_dia = {a: estado_diario_vacio() for a in ACTIVOS}
 canal      = {a: canal_vacio()         for a in ACTIVOS}
 
@@ -145,7 +144,7 @@ def enviar_telegram(mensaje):
         print(f"Error Telegram: {e}")
 
 # ═══════════════════════════════════════════════════════════
-# TWELVE DATA — velas historicas por activo
+# TWELVE DATA
 # ═══════════════════════════════════════════════════════════
 def get_velas(simbolo, outputsize=50):
     try:
@@ -161,7 +160,7 @@ def get_velas(simbolo, outputsize=50):
         if data.get("status") == "error" or "values" not in data:
             print(f"TwelveData error {simbolo}: {data.get('message', data)}")
             return None
-        return data["values"]  # mas reciente primero
+        return data["values"]
     except Exception as e:
         print(f"Error TwelveData {simbolo}: {e}")
         return None
@@ -179,12 +178,10 @@ def calcular_sma(velas, periodo):
 # CANAL — CALCULOS
 # ═══════════════════════════════════════════════════════════
 def ts_a_datetime(fecha_str, hora_est):
-    """Convierte fecha string + hora EST a datetime con timezone."""
     dt = datetime.strptime(f"{fecha_str} {hora_est:02d}:00:00", "%Y-%m-%d %H:%M:%S")
     return EST.localize(dt)
 
 def calcular_techo_canal(simbolo, ahora_dt):
-    """Calcula el techo del canal en el momento actual usando slope P1-P2."""
     c = canal[simbolo]
     if not c["on"] or c["apagado"] or not c["p1"] or not c["p2_actual_high"] or not c["p2_actual_ts"]:
         return None
@@ -202,7 +199,6 @@ def calcular_techo_canal(simbolo, ahora_dt):
         return None
 
 def calcular_piso_mitad_canal(simbolo, ahora_dt):
-    """Calcula piso y mitad del canal si hay P3 (RCB). Si no hay P3 es CNF."""
     c = canal[simbolo]
     if not c["p3"]:
         return None, None
@@ -249,14 +245,10 @@ def reset_diario_activo(simbolo, fecha_hoy, v7_ayer_close):
 # EVALUAR VELA POR ACTIVO
 # ═══════════════════════════════════════════════════════════
 def evaluar_activo(simbolo, velas, ahora):
-    """Evalua todas las estrategias para un activo en la vela actual."""
     hora = ahora.hour
     ed   = estado_dia[simbolo]
     c    = canal[simbolo]
 
-    # Vela actual = velas[0] (la mas reciente, ya cerrada)
-    # Necesitamos la vela que cerro hace 1 hora (hora actual - 1)
-    # TwelveData: velas[0] es la mas reciente
     vela_actual = None
     for v in velas:
         dt_v = datetime.strptime(v["datetime"], "%Y-%m-%d %H:%M:%S")
@@ -276,7 +268,6 @@ def evaluar_activo(simbolo, velas, ahora):
 
     # Reset diario si es nueva fecha
     if ed["fecha"] != fecha_hoy:
-        # Buscar V7 de ayer — vela con hora 15 del dia anterior
         v7_ayer = None
         for v in velas[1:]:
             dt_v = datetime.strptime(v["datetime"], "%Y-%m-%d %H:%M:%S")
@@ -286,8 +277,7 @@ def evaluar_activo(simbolo, velas, ahora):
         reset_diario_activo(simbolo, fecha_hoy, v7_ayer)
         ed = estado_dia[simbolo]
 
-        # Reconstruir estado del dia desde historico
-        # Si V1 ya cerro, recuperar sus valores para que las estrategias funcionen
+        # Reconstruir estado desde historico
         for v in velas:
             dt_v = datetime.strptime(v["datetime"], "%Y-%m-%d %H:%M:%S")
             if dt_v.strftime("%Y-%m-%d") == fecha_hoy and dt_v.hour == 9:
@@ -299,8 +289,18 @@ def evaluar_activo(simbolo, velas, ahora):
                 ed["v1_low"]   = v1_low_r
                 v7_c = ed["v7_ayer_close"]
 
-                # 1VR ya ocurrio — marcar como fired para no disparar de nuevo
-                if VR1_ON and v1_close_r < v1_open_r:
+                # ── FIX v8.2: 1VR — enviar alerta ANTES de marcar fired ──
+                # Solo envia si Railway llego a tiempo (hora == 10, es la evaluacion de V1)
+                # Si llego tarde (hora > 10), NO envia — no queremos retroactivos
+                if VR1_ON and v1_close_r < v1_open_r and not ed["vr1_fired"]:
+                    if hora == 10:
+                        enviar_telegram(
+                            f"🔴 <b>1VR — PRIMERA VELA ROJA</b>\n"
+                            f"<b>Activo:</b> {simbolo}\n"
+                            f"<b>Hora:</b> 10:00 EST\n"
+                            f"<b>Open:</b> ${v1_open_r:.2f} | <b>Close:</b> ${v1_close_r:.2f}\n"
+                            f"⚠️ <b>PUT — Evaluar entrada</b>"
+                        )
                     ed["vr1_fired"] = True
 
                 # Reconstruir RPG
@@ -337,17 +337,17 @@ def evaluar_activo(simbolo, velas, ahora):
         (cuerpo / rango >= 0.15 if rango > 0 else False) and
         (mecha_sup / cuerpo <= 0.30 if cuerpo > 0 else False)
     )
-    v_roja   = v_close < v_open
-    v7_ayer  = ed["v7_ayer_close"]
-    hora_vela = hora - 1  # hora de la vela que acaba de cerrar
+    v_roja    = v_close < v_open
+    v7_ayer   = ed["v7_ayer_close"]
+    hora_vela = hora - 1
 
-    # ── VELA 1 (hora 9 para SPY = cierra a las 10, hora 9 para NYSE = cierra a las 10) ──
+    # ── VELA 1 ──
     if hora_vela == 9:
         ed["v1_close"] = v_close
         ed["v1_open"]  = v_open
         ed["v1_low"]   = v_low
 
-        # 1VR
+        # 1VR — en tiempo real (Railway estaba corriendo desde antes de las 10:01)
         if VR1_ON and v_roja and not ed["vr1_fired"]:
             ed["vr1_fired"] = True
             enviar_telegram(
@@ -358,7 +358,7 @@ def evaluar_activo(simbolo, velas, ahora):
                 f"⚠️ <b>PUT — Evaluar entrada</b>"
             )
 
-        # RPG — gap >= 0.5% + V1 verde
+        # RPG
         if RPG_ON and v7_ayer and v_close > v_open and not ed["rpg_fired"]:
             gap = abs(v_open - v7_ayer) / v7_ayer * 100
             if gap >= 0.5:
@@ -366,7 +366,7 @@ def evaluar_activo(simbolo, velas, ahora):
                 ed["rpg_piso"]   = v_low
                 print(f"{simbolo} RPG activado — piso: ${v_low:.2f}")
 
-        # GNA — gap alcista >= 0.1% + SMA20 > SMA40 + V1 verde
+        # GNA
         if GNA_ON and v7_ayer and v_close > v_open and not ed["gna_fired"]:
             gap_alza = (v_open - v7_ayer) / v7_ayer * 100
             if gap_alza >= 0.1:
@@ -376,14 +376,14 @@ def evaluar_activo(simbolo, velas, ahora):
                     ed["gna_activo"] = True
                     print(f"{simbolo} GNA activado — techo: ${v_close:.2f}")
 
-        # GBA — gap bajista >= 0.1% + V1 verde
+        # GBA
         if GBA_ON and v7_ayer and v_close > v_open and not ed["gba_fired"]:
             gap_baja = (v7_ayer - v_open) / v7_ayer * 100
             if gap_baja >= 0.1:
                 ed["gba_activo"] = True
                 print(f"{simbolo} GBA activado — techo: ${v_close:.2f}")
 
-        # Canal — V1 candidato Auto-P2
+        # Canal V1 candidato
         if c["on"] and not c["apagado"]:
             ahora_dt = EST.localize(datetime.strptime(vela_actual["datetime"], "%Y-%m-%d %H:%M:%S"))
             techo = calcular_techo_canal(simbolo, ahora_dt)
@@ -440,7 +440,7 @@ def evaluar_activo(simbolo, velas, ahora):
                 f"📈 <b>CALL — Evaluar entrada</b>"
             )
 
-    # RCB/CNF — canal + Auto-P2
+    # RCB/CNF
     if c["on"] and not c["apagado"]:
         ahora_dt = EST.localize(datetime.strptime(vela_actual["datetime"], "%Y-%m-%d %H:%M:%S"))
         techo = calcular_techo_canal(simbolo, ahora_dt)
@@ -448,10 +448,8 @@ def evaluar_activo(simbolo, velas, ahora):
         if techo:
             sobre_techo = v_close > techo
 
-            # Vela 2 — evaluar Auto-P2
             if hora_vela == 10:
                 if c["v1_candidato"]:
-                    # V1 rompio techo — calcular nuevo P2
                     nuevo_p2_high = max(c["v1_candidato"], v_high) if (v_alcista and sobre_techo) else c["v1_candidato"]
                     if nuevo_p2_high < c["p1"]["high"]:
                         c["p2_actual_high"] = nuevo_p2_high
@@ -467,7 +465,6 @@ def evaluar_activo(simbolo, velas, ahora):
                             f"📈 <b>CALL — Evaluar entrada</b>"
                         )
                     else:
-                        # Nuevo P2 >= P1 — apagar canal
                         c["apagado"] = True
                         enviar_telegram(
                             f"🔕 <b>Canal APAGADO — {simbolo}</b>\n"
@@ -476,7 +473,6 @@ def evaluar_activo(simbolo, velas, ahora):
                     c["v1_candidato"] = None
 
                 elif v_alcista and sobre_techo:
-                    # V1 no rompio pero V2 si — nuevo P2 directo
                     if v_high < c["p1"]["high"]:
                         c["p2_actual_high"] = v_high
                         c["p2_actual_ts"]   = ahora_dt
@@ -497,7 +493,6 @@ def evaluar_activo(simbolo, velas, ahora):
                             f"Nuevo P2 ${v_high:.2f} >= P1 ${c['p1']['high']:.2f}"
                         )
 
-            # Velas 3-7 — solo V1 candidato
             elif hora_vela > 10:
                 if v_alcista and sobre_techo:
                     c["v1_candidato"] = v_high
@@ -506,7 +501,7 @@ def evaluar_activo(simbolo, velas, ahora):
     print(f"{simbolo} V{hora_vela-8} {hora_vela+1}:00 — O:{v_open:.2f} C:{v_close:.2f} | RPG:{ed['rpg_activo']} GNA:{ed['gna_activo']} GBA:{ed['gba_activo']}")
 
 # ═══════════════════════════════════════════════════════════
-# REPORTE HORARIO — corre todos los activos
+# REPORTE HORARIO
 # ═══════════════════════════════════════════════════════════
 def reporte_horario():
     ahora = datetime.now(EST)
@@ -515,10 +510,11 @@ def reporte_horario():
         try:
             velas = get_velas(simbolo, outputsize=50)
             if velas:
+                print(f"Datos: TwelveData ✅")
                 evaluar_activo(simbolo, velas, ahora)
             else:
                 print(f"{simbolo}: sin datos")
-            time.sleep(2)  # pausa entre activos para no saturar API
+            time.sleep(2)
         except Exception as e:
             print(f"Error evaluando {simbolo}: {e}")
 
@@ -526,7 +522,7 @@ def reporte_horario():
 # LOOP PRINCIPAL
 # ═══════════════════════════════════════════════════════════
 def monitor_loop():
-    print("AXIS Breakout Sentinel v8.1 iniciado...")
+    print("AXIS Breakout Sentinel v8.2 iniciado...")
     while True:
         ahora = datetime.now(EST)
         minutos_hasta_01 = (1 - ahora.minute) % 60
@@ -558,13 +554,13 @@ def home():
             "tipo":    "RCB" if c["p3"] else "CNF" if c["on"] else "OFF",
         }
     return jsonify({
-        "sistema":    "AXIS Breakout Sentinel v8.1",
-        "estado":     "activo" if SISTEMA_ACTIVO else "apagado",
-        "hora_est":   ahora.strftime("%A %H:%M EST"),
-        "mercado":    "abierto" if es_dia_mercado(ahora) else "cerrado",
+        "sistema":     "AXIS Breakout Sentinel v8.2",
+        "estado":      "activo" if SISTEMA_ACTIVO else "apagado",
+        "hora_est":    ahora.strftime("%A %H:%M EST"),
+        "mercado":     "abierto" if es_dia_mercado(ahora) else "cerrado",
         "estrategias": {"1VR": VR1_ON, "RPG": RPG_ON, "GNA": GNA_ON, "GBA": GBA_ON},
-        "canales":    canales,
-        "estado_dia": {a: estado_dia[a] for a in ACTIVOS},
+        "canales":     canales,
+        "estado_dia":  {a: estado_dia[a] for a in ACTIVOS},
     }), 200
 
 @app.route("/test", methods=["GET"])
@@ -581,7 +577,7 @@ def test():
         else:
             lineas_canal.append(f"  {a}: OFF")
     enviar_telegram(
-        f"✅ <b>AXIS Breakout Sentinel v8.1</b>\n"
+        f"✅ <b>AXIS Breakout Sentinel v8.2</b>\n"
         f"<b>Hora:</b> {ahora.strftime('%A %d/%m/%Y %H:%M EST')}\n"
         f"<b>Mercado:</b> {'Abierto' if es_dia_mercado(ahora) else 'Cerrado'}\n"
         f"<b>1VR:</b> {'ON' if VR1_ON else 'OFF'} | "
@@ -599,12 +595,6 @@ def reporte_manual():
 
 @app.route("/activar", methods=["GET"])
 def activar():
-    """
-    Activa canal por activo.
-    Params: activo, p1_fecha, p1_hora, p1_high, p2_fecha, p2_hora, p2_high
-    Opcional P3: piso_fecha, piso_hora, piso_low
-    Ejemplo: /activar?activo=GLD&p1_fecha=2026-04-17&p1_hora=10&p1_high=448.69&p2_fecha=2026-04-24&p2_hora=16&p2_high=433.48
-    """
     simbolo = request.args.get("activo", "SPY").upper()
     if simbolo not in ACTIVOS:
         return jsonify({"error": f"Activo {simbolo} no reconocido. Opciones: {ACTIVOS}"}), 400
@@ -623,7 +613,6 @@ def activar():
         }
         canal[simbolo]["p2_actual_high"] = p2_high
         canal[simbolo]["p2_actual_ts"]   = ts_a_datetime(request.args["p2_fecha"], int(request.args["p2_hora"]))
-        # P3 opcional
         if "piso_low" in request.args and float(request.args["piso_low"]) > 0:
             canal[simbolo]["p3"] = {
                 "fecha":    request.args["piso_fecha"],
@@ -655,7 +644,6 @@ def activar():
 
 @app.route("/desactivar", methods=["GET"])
 def desactivar():
-    """Desactiva canal de un activo manualmente. Param: activo"""
     simbolo = request.args.get("activo", "SPY").upper()
     if simbolo not in ACTIVOS:
         return jsonify({"error": f"Activo {simbolo} no reconocido"}), 400
