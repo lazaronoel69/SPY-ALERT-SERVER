@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v8.2
-Estrategias: 1VR | RPG | GNA | GBA | RCB/CNF
+AXIS Breakout Sentinel v8.3
+Estrategias: 1VR | 1VR+ | RPG | GNA | GBA | RCB/CNF
 Multi-activo: SPY, AAPL, BA, GLD
 Auto-P2 | Apagado automatico si nuevo P2 >= P1
 Fix v8.2: 1VR envia alerta durante reconstruccion antes de marcar vr1_fired
+v8.3: 1VR+ — si V1 roja cae dentro de canal RCB entre techo y media, alerta dice 1VR+
 """
 
 import requests
@@ -289,16 +290,26 @@ def evaluar_activo(simbolo, velas, ahora):
                 ed["v1_low"]   = v1_low_r
                 v7_c = ed["v7_ayer_close"]
 
-                # ── FIX v8.2: 1VR — enviar alerta ANTES de marcar fired ──
-                # Solo envia si Railway llego a tiempo (hora == 10, es la evaluacion de V1)
-                # Si llego tarde (hora > 10), NO envia — no queremos retroactivos
+                # ── v8.3: 1VR / 1VR+ — enviar ANTES de marcar fired, sin retroactivos ──
                 if VR1_ON and v1_close_r < v1_open_r and not ed["vr1_fired"]:
                     if hora == 10:
+                        ahora_dt_r = EST.localize(datetime.strptime(v["datetime"], "%Y-%m-%d %H:%M:%S"))
+                        techo_r = calcular_techo_canal(simbolo, ahora_dt_r)
+                        _, mitad_r = calcular_piso_mitad_canal(simbolo, ahora_dt_r)
+                        c_r = canal[simbolo]
+                        en_canal_rcb = (
+                            c_r["on"] and not c_r["apagado"] and c_r["p3"] is not None
+                            and techo_r is not None and mitad_r is not None
+                            and mitad_r <= v1_close_r <= techo_r
+                        )
+                        label = "1VR+" if en_canal_rcb else "1VR"
+                        extra = f"<b>Canal RCB:</b> Techo ${techo_r:.2f} | Mitad ${mitad_r:.2f}\n" if en_canal_rcb else ""
                         enviar_telegram(
-                            f"🔴 <b>1VR — PRIMERA VELA ROJA</b>\n"
+                            f"🔴 <b>{label} — PRIMERA VELA ROJA</b>\n"
                             f"<b>Activo:</b> {simbolo}\n"
                             f"<b>Hora:</b> 10:00 EST\n"
                             f"<b>Open:</b> ${v1_open_r:.2f} | <b>Close:</b> ${v1_close_r:.2f}\n"
+                            f"{extra}"
                             f"⚠️ <b>PUT — Evaluar entrada</b>"
                         )
                     ed["vr1_fired"] = True
@@ -347,14 +358,26 @@ def evaluar_activo(simbolo, velas, ahora):
         ed["v1_open"]  = v_open
         ed["v1_low"]   = v_low
 
-        # 1VR — en tiempo real (Railway estaba corriendo desde antes de las 10:01)
+        # ── v8.3: 1VR / 1VR+ — tiempo real ──
         if VR1_ON and v_roja and not ed["vr1_fired"]:
+            ahora_dt_vr = EST.localize(datetime.strptime(vela_actual["datetime"], "%Y-%m-%d %H:%M:%S"))
+            techo_vr = calcular_techo_canal(simbolo, ahora_dt_vr)
+            _, mitad_vr = calcular_piso_mitad_canal(simbolo, ahora_dt_vr)
+            c_vr = canal[simbolo]
+            en_canal_rcb_vr = (
+                c_vr["on"] and not c_vr["apagado"] and c_vr["p3"] is not None
+                and techo_vr is not None and mitad_vr is not None
+                and mitad_vr <= v_close <= techo_vr
+            )
+            label_vr = "1VR+" if en_canal_rcb_vr else "1VR"
+            extra_vr = f"<b>Canal RCB:</b> Techo ${techo_vr:.2f} | Mitad ${mitad_vr:.2f}\n" if en_canal_rcb_vr else ""
             ed["vr1_fired"] = True
             enviar_telegram(
-                f"🔴 <b>1VR — PRIMERA VELA ROJA</b>\n"
+                f"🔴 <b>{label_vr} — PRIMERA VELA ROJA</b>\n"
                 f"<b>Activo:</b> {simbolo}\n"
                 f"<b>Hora:</b> 10:00 EST\n"
                 f"<b>Open:</b> ${v_open:.2f} | <b>Close:</b> ${v_close:.2f}\n"
+                f"{extra_vr}"
                 f"⚠️ <b>PUT — Evaluar entrada</b>"
             )
 
@@ -522,7 +545,7 @@ def reporte_horario():
 # LOOP PRINCIPAL
 # ═══════════════════════════════════════════════════════════
 def monitor_loop():
-    print("AXIS Breakout Sentinel v8.2 iniciado...")
+    print("AXIS Breakout Sentinel v8.3 iniciado...")
     while True:
         ahora = datetime.now(EST)
         minutos_hasta_01 = (1 - ahora.minute) % 60
@@ -554,7 +577,7 @@ def home():
             "tipo":    "RCB" if c["p3"] else "CNF" if c["on"] else "OFF",
         }
     return jsonify({
-        "sistema":     "AXIS Breakout Sentinel v8.2",
+        "sistema":     "AXIS Breakout Sentinel v8.3",
         "estado":      "activo" if SISTEMA_ACTIVO else "apagado",
         "hora_est":    ahora.strftime("%A %H:%M EST"),
         "mercado":     "abierto" if es_dia_mercado(ahora) else "cerrado",
@@ -577,7 +600,7 @@ def test():
         else:
             lineas_canal.append(f"  {a}: OFF")
     enviar_telegram(
-        f"✅ <b>AXIS Breakout Sentinel v8.2</b>\n"
+        f"✅ <b>AXIS Breakout Sentinel v8.3</b>\n"
         f"<b>Hora:</b> {ahora.strftime('%A %d/%m/%Y %H:%M EST')}\n"
         f"<b>Mercado:</b> {'Abierto' if es_dia_mercado(ahora) else 'Cerrado'}\n"
         f"<b>1VR:</b> {'ON' if VR1_ON else 'OFF'} | "
