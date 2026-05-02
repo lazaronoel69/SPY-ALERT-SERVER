@@ -889,6 +889,20 @@ def estrategia():
     return jsonify({"VR1": VR1_ON, "RPG": RPG_ON, "GNA": GNA_ON, "GBA": GBA_ON}), 200
 
 
+
+# ═══════════════════════════════════════════════════════════
+# APP WEB — servida desde Railway
+# ═══════════════════════════════════════════════════════════
+@app.route("/app", methods=["GET"])
+def serve_app():
+    from flask import Response
+    import os
+    html_path = os.path.join(os.path.dirname(__file__), "axis_app.html")
+    if os.path.exists(html_path):
+        with open(html_path, "r") as f:
+            return Response(f.read(), mimetype="text/html")
+    return Response("<h1>App no encontrada</h1>", mimetype="text/html"), 404
+
 # ═══════════════════════════════════════════════════════════
 # TELEGRAM WEBHOOK — recibe botones EJECUTAR / IGNORAR
 # ═══════════════════════════════════════════════════════════
