@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v8.4
+AXIS Breakout Sentinel v8.5
 Estrategias: 1VR | 1VR+ | RPG | GNA | GBA | RCB/CNF
 Multi-activo: SPY, AAPL, BA, GLD
 Auto-P2 | Apagado automatico si nuevo P2 >= P1
 Fix v8.2: 1VR envia alerta durante reconstruccion antes de marcar vr1_fired
 v8.3: 1VR+
-v8.4: CORS headers para app web — si V1 roja cae dentro de canal RCB entre techo y media, alerta dice 1VR+
+v8.4: CORS headers para app web
+v8.5: Tradier sandbox + botones Telegram EJECUTAR/IGNORAR
+v8.5: RPG umbral bajado de 0.5% a 0.2% — si V1 roja cae dentro de canal RCB entre techo y media, alerta dice 1VR+
 """
 
 import requests
@@ -40,6 +42,19 @@ TELEGRAM_CHAT_ID = "-5010153427"
 TWELVEDATA_KEY   = "66dd71373a884f7bb7da8e6e5e469571"
 FINNHUB_KEY      = "d71aocpr01qot5jcnohgd71aocpr01qot5jcnoi0"
 EST              = pytz.timezone("America/New_York")
+
+# ── TRADIER SANDBOX ──
+import os
+TRADIER_TOKEN   = os.environ.get("TRADIER_TOKEN", "")
+TRADIER_ACCOUNT = os.environ.get("TRADIER_ACCOUNT", "")
+TRADIER_BASE    = "https://sandbox.tradier.com/v1"
+TRADIER_HEADERS = {
+    "Authorization": f"Bearer {TRADIER_TOKEN}",
+    "Accept":        "application/json",
+}
+
+# Ordenes pendientes de confirmacion — clave: callback_query_id
+ordenes_pendientes = {}
 
 ACTIVOS          = ["SPY", "AAPL", "BA", "GLD"]
 HORAS_REPORTE    = [10, 11, 12, 13, 14, 15, 16]
@@ -332,7 +347,7 @@ def evaluar_activo(simbolo, velas, ahora):
                 # Reconstruir RPG
                 if RPG_ON and v7_c and v1_close_r > v1_open_r:
                     gap = abs(v1_open_r - v7_c) / v7_c * 100
-                    if gap >= 0.5:
+                    if gap >= 0.2:
                         ed["rpg_activo"] = True
                         ed["rpg_piso"]   = v1_low_r
 
@@ -387,19 +402,16 @@ def evaluar_activo(simbolo, velas, ahora):
             label_vr = "1VR+" if en_canal_rcb_vr else "1VR"
             extra_vr = f"<b>Canal RCB:</b> Techo ${techo_vr:.2f} | Mitad ${mitad_vr:.2f}\n" if en_canal_rcb_vr else ""
             ed["vr1_fired"] = True
-            enviar_telegram(
-                f"🔴 <b>{label_vr} — PRIMERA VELA ROJA</b>\n"
-                f"<b>Activo:</b> {simbolo}\n"
-                f"<b>Hora:</b> 10:00 EST\n"
-                f"<b>Open:</b> ${v_open:.2f} | <b>Close:</b> ${v_close:.2f}\n"
-                f"{extra_vr}"
-                f"⚠️ <b>PUT — Evaluar entrada</b>"
+            enviar_senal_con_botones(
+                simbolo, f"{label_vr} — PRIMERA VELA ROJA",
+                "10:00 EST", v_close, "PUT",
+                f"<b>Open:</b> ${v_open:.2f} | <b>Close:</b> ${v_close:.2f}\n{extra_vr}"
             )
 
         # RPG
         if RPG_ON and v7_ayer and v_close > v_open and not ed["rpg_fired"]:
             gap = abs(v_open - v7_ayer) / v7_ayer * 100
-            if gap >= 0.5:
+            if gap >= 0.2:
                 ed["rpg_activo"] = True
                 ed["rpg_piso"]   = v_low
                 print(f"{simbolo} RPG activado — piso: ${v_low:.2f}")
@@ -439,13 +451,10 @@ def evaluar_activo(simbolo, velas, ahora):
         if v_roja and v_close < ed["rpg_piso"]:
             ed["rpg_fired"]  = True
             ed["rpg_activo"] = False
-            enviar_telegram(
-                f"🟣 <b>RPG — RUPTURA PISO GAP</b>\n"
-                f"<b>Activo:</b> {simbolo}\n"
-                f"<b>Hora:</b> {hora_vela+1}:00 EST\n"
-                f"<b>Piso V1:</b> ${ed['rpg_piso']:.2f}\n"
-                f"<b>Cierre:</b> ${v_close:.2f}\n"
-                f"⚠️ <b>PUT — Evaluar entrada</b>"
+            enviar_senal_con_botones(
+                simbolo, "RPG — RUPTURA PISO GAP",
+                f"{hora_vela+1}:00 EST", v_close, "PUT",
+                f"<b>Piso V1:</b> ${ed['rpg_piso']:.2f} | <b>Cierre:</b> ${v_close:.2f}\n"
             )
 
     # GNA
@@ -454,13 +463,10 @@ def evaluar_activo(simbolo, velas, ahora):
             ed["gna_fired"]  = True
             ed["gna_activo"] = False
             tipo = "GNA" if hora_vela == 10 else "GNA+2"
-            enviar_telegram(
-                f"🟢 <b>{tipo} — GAP NORMAL ALZA</b>\n"
-                f"<b>Activo:</b> {simbolo}\n"
-                f"<b>Hora:</b> {hora_vela+1}:00 EST\n"
-                f"<b>Techo V1:</b> ${v1_close:.2f}\n"
-                f"<b>Cierre:</b> ${v_close:.2f}\n"
-                f"📈 <b>CALL — Evaluar entrada</b>"
+            enviar_senal_con_botones(
+                simbolo, f"{tipo} — GAP NORMAL ALZA",
+                f"{hora_vela+1}:00 EST", v_close, "CALL",
+                f"<b>Techo V1:</b> ${v1_close:.2f} | <b>Cierre:</b> ${v_close:.2f}\n"
             )
 
     # GBA
@@ -469,13 +475,10 @@ def evaluar_activo(simbolo, velas, ahora):
             ed["gba_fired"]  = True
             ed["gba_activo"] = False
             tipo = "GBA" if hora_vela == 10 else "GBA+2"
-            enviar_telegram(
-                f"🔵 <b>{tipo} — GAP BAJISTA ALZA</b>\n"
-                f"<b>Activo:</b> {simbolo}\n"
-                f"<b>Hora:</b> {hora_vela+1}:00 EST\n"
-                f"<b>Techo V1:</b> ${v1_close:.2f}\n"
-                f"<b>Cierre:</b> ${v_close:.2f}\n"
-                f"📈 <b>CALL — Evaluar entrada</b>"
+            enviar_senal_con_botones(
+                simbolo, f"{tipo} — GAP BAJISTA ALZA",
+                f"{hora_vela+1}:00 EST", v_close, "CALL",
+                f"<b>Techo V1:</b> ${v1_close:.2f} | <b>Cierre:</b> ${v_close:.2f}\n"
             )
 
     # RCB/CNF
@@ -538,6 +541,181 @@ def evaluar_activo(simbolo, velas, ahora):
 
     print(f"{simbolo} V{hora_vela-8} {hora_vela+1}:00 — O:{v_open:.2f} C:{v_close:.2f} | RPG:{ed['rpg_activo']} GNA:{ed['gna_activo']} GBA:{ed['gba_activo']}")
 
+
+# ═══════════════════════════════════════════════════════════
+# TRADIER — PRECIO ACTUAL
+# ═══════════════════════════════════════════════════════════
+def get_precio_tradier(simbolo):
+    try:
+        r = requests.get(
+            f"{TRADIER_BASE}/markets/quotes",
+            headers=TRADIER_HEADERS,
+            params={"symbols": simbolo},
+            timeout=10
+        )
+        data = r.json()
+        return float(data["quotes"]["quote"]["last"])
+    except Exception as e:
+        print(f"Error precio Tradier {simbolo}: {e}")
+        return None
+
+# ═══════════════════════════════════════════════════════════
+# TRADIER — BUSCAR OPCION
+# ═══════════════════════════════════════════════════════════
+def get_opcion_tradier(simbolo, tipo, precio_actual):
+    """
+    tipo: 'call' o 'put'
+    Busca el contrato con strike precio+-3, vencimiento minimo 4 dias
+    """
+    try:
+        from datetime import date, timedelta
+        hoy = date.today()
+        # Buscar vencimientos disponibles
+        r = requests.get(
+            f"{TRADIER_BASE}/markets/options/expirations",
+            headers=TRADIER_HEADERS,
+            params={"symbol": simbolo, "includeAllRoots": "true"},
+            timeout=10
+        )
+        data = r.json()
+        fechas = data.get("expirations", {}).get("date", [])
+        if isinstance(fechas, str):
+            fechas = [fechas]
+
+        # Primer vencimiento con al menos 4 dias calendario
+        vencimiento = None
+        for f in sorted(fechas):
+            fd = date.fromisoformat(f)
+            if (fd - hoy).days >= 4:
+                vencimiento = f
+                break
+
+        if not vencimiento:
+            print(f"Sin vencimiento disponible para {simbolo}")
+            return None
+
+        # Strike objetivo
+        strike_obj = precio_actual + 3 if tipo == 'call' else precio_actual - 3
+        strike_obj = round(strike_obj)
+
+        # Buscar cadena de opciones
+        r2 = requests.get(
+            f"{TRADIER_BASE}/markets/options/chains",
+            headers=TRADIER_HEADERS,
+            params={"symbol": simbolo, "expiration": vencimiento, "greeks": "false"},
+            timeout=10
+        )
+        data2 = r2.json()
+        opciones = data2.get("options", {}).get("option", [])
+        if not opciones:
+            return None
+
+        # Filtrar por tipo y buscar strike mas cercano
+        filtradas = [o for o in opciones if o.get("option_type") == tipo]
+        if not filtradas:
+            return None
+
+        mejor = min(filtradas, key=lambda o: abs(float(o.get("strike", 0)) - strike_obj))
+        return {
+            "symbol":      mejor.get("symbol"),
+            "strike":      float(mejor.get("strike", 0)),
+            "expiration":  vencimiento,
+            "tipo":        tipo.upper(),
+            "ask":         float(mejor.get("ask", 0)),
+            "bid":         float(mejor.get("bid", 0)),
+        }
+    except Exception as e:
+        print(f"Error opcion Tradier {simbolo}: {e}")
+        return None
+
+# ═══════════════════════════════════════════════════════════
+# TRADIER — EJECUTAR ORDEN
+# ═══════════════════════════════════════════════════════════
+def ejecutar_orden_tradier(opcion):
+    try:
+        payload = {
+            "class":        "option",
+            "symbol":       opcion["subyacente"],
+            "option_symbol": opcion["symbol"],
+            "side":         "buy_to_open",
+            "quantity":     "1",
+            "type":         "market",
+            "duration":     "day",
+        }
+        r = requests.post(
+            f"{TRADIER_BASE}/accounts/{TRADIER_ACCOUNT}/orders",
+            headers=TRADIER_HEADERS,
+            data=payload,
+            timeout=10
+        )
+        data = r.json()
+        orden_id = data.get("order", {}).get("id")
+        status   = data.get("order", {}).get("status", "unknown")
+        return {"ok": True, "id": orden_id, "status": status}
+    except Exception as e:
+        print(f"Error ejecutar orden Tradier: {e}")
+        return {"ok": False, "error": str(e)}
+
+# ═══════════════════════════════════════════════════════════
+# TELEGRAM — ENVIAR MENSAJE CON BOTONES
+# ═══════════════════════════════════════════════════════════
+def enviar_telegram_botones(mensaje, orden_id):
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    payload = {
+        "chat_id":    TELEGRAM_CHAT_ID,
+        "text":       mensaje,
+        "parse_mode": "HTML",
+        "reply_markup": {
+            "inline_keyboard": [[
+                {"text": "✅ EJECUTAR", "callback_data": f"exec:{orden_id}"},
+                {"text": "❌ IGNORAR",  "callback_data": f"skip:{orden_id}"},
+            ]]
+        }
+    }
+    try:
+        r = requests.post(url, json=payload, timeout=10)
+        print(f"Telegram botones: {r.status_code}")
+    except Exception as e:
+        print(f"Error Telegram botones: {e}")
+
+# ═══════════════════════════════════════════════════════════
+# PREPARAR Y ENVIAR SEÑAL CON BOTONES
+# ═══════════════════════════════════════════════════════════
+def enviar_senal_con_botones(simbolo, estrategia, hora_label, precio_vela, tipo_opcion, extra=""):
+    precio = get_precio_tradier(simbolo)
+    if not precio:
+        precio = precio_vela  # fallback al precio de la vela
+
+    opcion = get_opcion_tradier(simbolo, tipo_opcion.lower(), precio)
+
+    import uuid
+    orden_id = str(uuid.uuid4())[:8]
+
+    if opcion:
+        opcion["subyacente"] = simbolo
+        ordenes_pendientes[orden_id] = opcion
+        msg = (
+            f"{'🔴' if tipo_opcion=='PUT' else '🟢'} <b>{estrategia}</b>\n"
+            f"<b>Activo:</b> {simbolo}\n"
+            f"<b>Hora:</b> {hora_label}\n"
+            f"<b>Precio:</b> ${precio:.2f}\n"
+            f"{extra}"
+            f"<b>Opcion:</b> {opcion['tipo']} ${opcion['strike']:.0f} exp {opcion['expiration']}\n"
+            f"<b>Ask:</b> ${opcion['ask']:.2f} | <b>Bid:</b> ${opcion['bid']:.2f}\n"
+            f"⚠️ <b>{tipo_opcion} — ¿Ejecutar?</b>"
+        )
+        enviar_telegram_botones(msg, orden_id)
+    else:
+        # Sin opcion disponible — alerta simple sin botones
+        enviar_telegram(
+            f"{'🔴' if tipo_opcion=='PUT' else '🟢'} <b>{estrategia}</b>\n"
+            f"<b>Activo:</b> {simbolo}\n"
+            f"<b>Hora:</b> {hora_label}\n"
+            f"<b>Precio:</b> ${precio:.2f}\n"
+            f"{extra}"
+            f"⚠️ <b>{tipo_opcion} — Sin opcion disponible en Tradier</b>"
+        )
+
 # ═══════════════════════════════════════════════════════════
 # REPORTE HORARIO
 # ═══════════════════════════════════════════════════════════
@@ -560,7 +738,7 @@ def reporte_horario():
 # LOOP PRINCIPAL
 # ═══════════════════════════════════════════════════════════
 def monitor_loop():
-    print("AXIS Breakout Sentinel v8.4 iniciado...")
+    print("AXIS Breakout Sentinel v8.5 iniciado...")
     while True:
         ahora = datetime.now(EST)
         minutos_hasta_01 = (1 - ahora.minute) % 60
@@ -592,7 +770,7 @@ def home():
             "tipo":    "RCB" if c["p3"] else "CNF" if c["on"] else "OFF",
         }
     return jsonify({
-        "sistema":     "AXIS Breakout Sentinel v8.4",
+        "sistema":     "AXIS Breakout Sentinel v8.5",
         "estado":      "activo" if SISTEMA_ACTIVO else "apagado",
         "hora_est":    ahora.strftime("%A %H:%M EST"),
         "mercado":     "abierto" if es_dia_mercado(ahora) else "cerrado",
@@ -615,7 +793,7 @@ def test():
         else:
             lineas_canal.append(f"  {a}: OFF")
     enviar_telegram(
-        f"✅ <b>AXIS Breakout Sentinel v8.4</b>\n"
+        f"✅ <b>AXIS Breakout Sentinel v8.5</b>\n"
         f"<b>Hora:</b> {ahora.strftime('%A %d/%m/%Y %H:%M EST')}\n"
         f"<b>Mercado:</b> {'Abierto' if es_dia_mercado(ahora) else 'Cerrado'}\n"
         f"<b>1VR:</b> {'ON' if VR1_ON else 'OFF'} | "
@@ -709,6 +887,85 @@ def estrategia():
         f"GNA: {'ON' if GNA_ON else 'OFF'} | GBA: {'ON' if GBA_ON else 'OFF'}"
     )
     return jsonify({"VR1": VR1_ON, "RPG": RPG_ON, "GNA": GNA_ON, "GBA": GBA_ON}), 200
+
+
+# ═══════════════════════════════════════════════════════════
+# TELEGRAM WEBHOOK — recibe botones EJECUTAR / IGNORAR
+# ═══════════════════════════════════════════════════════════
+@app.route("/telegram_webhook", methods=["POST"])
+def telegram_webhook():
+    try:
+        data = request.get_json(silent=True)
+        if not data:
+            return jsonify({"ok": True}), 200
+
+        callback = data.get("callback_query")
+        if not callback:
+            return jsonify({"ok": True}), 200
+
+        callback_id  = callback.get("id")
+        callback_data = callback.get("data", "")
+        message_id   = callback.get("message", {}).get("message_id")
+        chat_id      = callback.get("message", {}).get("chat", {}).get("id")
+
+        partes = callback_data.split(":")
+        if len(partes) != 2:
+            return jsonify({"ok": True}), 200
+
+        accion, orden_id = partes[0], partes[1]
+
+        # Responder al callback para quitar el "loading" del boton
+        requests.post(
+            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/answerCallbackQuery",
+            json={"callback_query_id": callback_id},
+            timeout=5
+        )
+
+        # Editar mensaje original para quitar botones
+        def editar_mensaje(texto):
+            requests.post(
+                f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/editMessageText",
+                json={
+                    "chat_id":    chat_id,
+                    "message_id": message_id,
+                    "text":       texto,
+                    "parse_mode": "HTML",
+                },
+                timeout=5
+            )
+
+        if accion == "exec":
+            opcion = ordenes_pendientes.pop(orden_id, None)
+            if not opcion:
+                editar_mensaje("⚠️ <b>Orden expirada o ya procesada.</b>")
+                return jsonify({"ok": True}), 200
+
+            resultado = ejecutar_orden_tradier(opcion)
+            if resultado["ok"]:
+                editar_mensaje(
+                    f"✅ <b>ORDEN EJECUTADA</b>\n"
+                    f"<b>Opcion:</b> {opcion['tipo']} ${opcion['strike']:.0f} exp {opcion['expiration']}\n"
+                    f"<b>Cantidad:</b> 1 contrato\n"
+                    f"<b>ID Orden:</b> {resultado['id']}\n"
+                    f"<b>Status:</b> {resultado['status']}"
+                )
+                print(f"Orden ejecutada — ID: {resultado['id']} | {opcion}")
+            else:
+                editar_mensaje(
+                    f"❌ <b>ERROR AL EJECUTAR</b>\n"
+                    f"{resultado.get('error', 'Error desconocido')}"
+                )
+                print(f"Error ejecutando orden: {resultado}")
+
+        elif accion == "skip":
+            ordenes_pendientes.pop(orden_id, None)
+            editar_mensaje("❌ <b>Orden ignorada.</b>")
+            print(f"Orden ignorada — ID: {orden_id}")
+
+    except Exception as e:
+        print(f"Error webhook: {e}")
+
+    return jsonify({"ok": True}), 200
 
 # ═══════════════════════════════════════════════════════════
 # ARRANQUE
