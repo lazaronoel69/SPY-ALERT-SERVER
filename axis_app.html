@@ -901,6 +901,23 @@ function seleccionarActivo(activo, btn) {
   document.querySelectorAll('.activo-btn').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
   document.getElementById('panel-title').textContent = `CANAL — ${activo}`;
+  // Limpiar campos de P's al cambiar activo
+  limpiarFormulario();
+}
+
+function limpiarFormulario() {
+  const hoy = new Date().toISOString().split('T')[0];
+  document.getElementById('p1-fecha').value = hoy;
+  document.getElementById('p1-vela').value = 1;
+  document.getElementById('p1-high').value = '';
+  document.getElementById('p2-fecha').value = hoy;
+  document.getElementById('p2-vela').value = 1;
+  document.getElementById('p2-high').value = '';
+  document.getElementById('p3-fecha').value = hoy;
+  document.getElementById('p3-vela').value = 1;
+  document.getElementById('p3-low').value = '';
+  // Resetear tipo a CNF
+  setTipo('CNF');
 }
 
 // ══════════════════════════════════════════
@@ -947,7 +964,6 @@ async function activarCanal() {
   }
 
   let url = `${getURL()}/activar?activo=${activoSel}`
-    + `&p1_fecha=${p1f}&p1_hora=${velaAHora(p1v)}&p1_high=${p1f}`
     + `&p1_fecha=${p1f}&p1_hora=${velaAHora(p1v)}&p1_high=${p1h}`
     + `&p2_fecha=${p2f}&p2_hora=${velaAHora(p2v)}&p2_high=${p2h}`;
 
@@ -959,18 +975,6 @@ async function activarCanal() {
       showToast('Completa P3 para RCB', true);
       return;
     }
-    url += `&piso_fecha=${p3f}&piso_hora=${velaAHora(p3v)}&piso_low=${p3l}`;
-  }
-
-  // Reconstruir URL correcta
-  url = `${getURL()}/activar?activo=${activoSel}`
-    + `&p1_fecha=${p1f}&p1_hora=${velaAHora(p1v)}&p1_high=${p1h}`
-    + `&p2_fecha=${p2f}&p2_hora=${velaAHora(p2v)}&p2_high=${p2h}`;
-
-  if (tipoCanal === 'RCB') {
-    const p3f = document.getElementById('p3-fecha').value;
-    const p3v = document.getElementById('p3-vela').value;
-    const p3l = document.getElementById('p3-low').value;
     url += `&piso_fecha=${p3f}&piso_hora=${velaAHora(p3v)}&piso_low=${p3l}`;
   }
 
