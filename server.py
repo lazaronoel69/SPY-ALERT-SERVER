@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v8.5
+AXIS Breakout Sentinel v8.6
 Estrategias: 1VR | 1VR+ | RPG | GNA | GBA | RCB/CNF
 Multi-activo: SPY, AAPL, BA, GLD
 Auto-P2 | Apagado automatico si nuevo P2 >= P1
@@ -8,7 +8,8 @@ Fix v8.2: 1VR envia alerta durante reconstruccion antes de marcar vr1_fired
 v8.3: 1VR+
 v8.4: CORS headers para app web
 v8.5: Tradier sandbox + botones Telegram EJECUTAR/IGNORAR
-v8.5: RPG umbral bajado de 0.5% a 0.2% — si V1 roja cae dentro de canal RCB entre techo y media, alerta dice 1VR+
+v8.5: RPG umbral bajado de 0.5% a 0.2%
+v8.6: Manejo robusto error Tradier — alerta llega siempre aunque Tradier falle — si V1 roja cae dentro de canal RCB entre techo y media, alerta dice 1VR+
 """
 
 import requests
@@ -682,20 +683,30 @@ def enviar_telegram_botones(mensaje, orden_id):
 # PREPARAR Y ENVIAR SEÑAL CON BOTONES
 # ═══════════════════════════════════════════════════════════
 def enviar_senal_con_botones(simbolo, estrategia, hora_label, precio_vela, tipo_opcion, extra=""):
-    precio = get_precio_tradier(simbolo)
-    if not precio:
-        precio = precio_vela  # fallback al precio de la vela
+    try:
+        precio = get_precio_tradier(simbolo)
+        if not precio:
+            print(f"{simbolo}: precio Tradier no disponible — usando precio vela ${precio_vela:.2f}")
+            precio = precio_vela
+    except Exception as e:
+        print(f"{simbolo}: error obteniendo precio Tradier: {e}")
+        precio = precio_vela
 
-    opcion = get_opcion_tradier(simbolo, tipo_opcion.lower(), precio)
+    try:
+        opcion = get_opcion_tradier(simbolo, tipo_opcion.lower(), precio)
+    except Exception as e:
+        print(f"{simbolo}: error obteniendo opcion Tradier: {e}")
+        opcion = None
 
     import uuid
     orden_id = str(uuid.uuid4())[:8]
+    emoji = '🔴' if tipo_opcion == 'PUT' else '🟢'
 
     if opcion:
         opcion["subyacente"] = simbolo
         ordenes_pendientes[orden_id] = opcion
         msg = (
-            f"{'🔴' if tipo_opcion=='PUT' else '🟢'} <b>{estrategia}</b>\n"
+            f"{emoji} <b>{estrategia}</b>\n"
             f"<b>Activo:</b> {simbolo}\n"
             f"<b>Hora:</b> {hora_label}\n"
             f"<b>Precio:</b> ${precio:.2f}\n"
@@ -705,16 +716,18 @@ def enviar_senal_con_botones(simbolo, estrategia, hora_label, precio_vela, tipo_
             f"⚠️ <b>{tipo_opcion} — ¿Ejecutar?</b>"
         )
         enviar_telegram_botones(msg, orden_id)
+        print(f"{simbolo}: señal enviada con botones — {estrategia} | opcion {opcion['tipo']} ${opcion['strike']:.0f}")
     else:
-        # Sin opcion disponible — alerta simple sin botones
+        # Tradier no disponible — alerta simple sin botones pero con toda la info
         enviar_telegram(
-            f"{'🔴' if tipo_opcion=='PUT' else '🟢'} <b>{estrategia}</b>\n"
+            f"{emoji} <b>{estrategia}</b>\n"
             f"<b>Activo:</b> {simbolo}\n"
             f"<b>Hora:</b> {hora_label}\n"
             f"<b>Precio:</b> ${precio:.2f}\n"
             f"{extra}"
-            f"⚠️ <b>{tipo_opcion} — Sin opcion disponible en Tradier</b>"
+            f"⚠️ <b>{tipo_opcion} — Tradier sin datos, evaluar manualmente</b>"
         )
+        print(f"{simbolo}: señal enviada SIN botones — Tradier no disponible")
 
 # ═══════════════════════════════════════════════════════════
 # REPORTE HORARIO
@@ -738,7 +751,7 @@ def reporte_horario():
 # LOOP PRINCIPAL
 # ═══════════════════════════════════════════════════════════
 def monitor_loop():
-    print("AXIS Breakout Sentinel v8.5 iniciado...")
+    print("AXIS Breakout Sentinel v8.6 iniciado...")
     while True:
         ahora = datetime.now(EST)
         minutos_hasta_01 = (1 - ahora.minute) % 60
@@ -770,7 +783,7 @@ def home():
             "tipo":    "RCB" if c["p3"] else "CNF" if c["on"] else "OFF",
         }
     return jsonify({
-        "sistema":     "AXIS Breakout Sentinel v8.5",
+        "sistema":     "AXIS Breakout Sentinel v8.6",
         "estado":      "activo" if SISTEMA_ACTIVO else "apagado",
         "hora_est":    ahora.strftime("%A %H:%M EST"),
         "mercado":     "abierto" if es_dia_mercado(ahora) else "cerrado",
@@ -793,7 +806,7 @@ def test():
         else:
             lineas_canal.append(f"  {a}: OFF")
     enviar_telegram(
-        f"✅ <b>AXIS Breakout Sentinel v8.5</b>\n"
+        f"✅ <b>AXIS Breakout Sentinel v8.6</b>\n"
         f"<b>Hora:</b> {ahora.strftime('%A %d/%m/%Y %H:%M EST')}\n"
         f"<b>Mercado:</b> {'Abierto' if es_dia_mercado(ahora) else 'Cerrado'}\n"
         f"<b>1VR:</b> {'ON' if VR1_ON else 'OFF'} | "
