@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v8.7
+AXIS Breakout Sentinel v8.8
 Estrategias: 1VR | 1VR+ | RPG | GNA | GBA | RCB/CNF
 Multi-activo: SPY, AAPL, BA, GLD
 Auto-P2 | Apagado automatico si nuevo P2 >= P1
@@ -10,7 +10,8 @@ v8.4: CORS headers para app web
 v8.5: Tradier sandbox + botones Telegram EJECUTAR/IGNORAR
 v8.5: RPG umbral bajado de 0.5% a 0.2%
 v8.6: Manejo robusto error Tradier — alerta llega siempre aunque Tradier falle
-v8.7: 1VR reconstruccion ahora usa enviar_senal_con_botones — botones EJECUTAR/IGNORAR — si V1 roja cae dentro de canal RCB entre techo y media, alerta dice 1VR+
+v8.7: 1VR reconstruccion ahora usa enviar_senal_con_botones — botones EJECUTAR/IGNORAR
+v8.8: Ruta /tradier_test para diagnosticar token y conexion — si V1 roja cae dentro de canal RCB entre techo y media, alerta dice 1VR+
 """
 
 import requests
@@ -749,7 +750,7 @@ def reporte_horario():
 # LOOP PRINCIPAL
 # ═══════════════════════════════════════════════════════════
 def monitor_loop():
-    print("AXIS Breakout Sentinel v8.7 iniciado...")
+    print("AXIS Breakout Sentinel v8.8 iniciado...")
     while True:
         ahora = datetime.now(EST)
         minutos_hasta_01 = (1 - ahora.minute) % 60
@@ -781,7 +782,7 @@ def home():
             "tipo":    "RCB" if c["p3"] else "CNF" if c["on"] else "OFF",
         }
     return jsonify({
-        "sistema":     "AXIS Breakout Sentinel v8.7",
+        "sistema":     "AXIS Breakout Sentinel v8.8",
         "estado":      "activo" if SISTEMA_ACTIVO else "apagado",
         "hora_est":    ahora.strftime("%A %H:%M EST"),
         "mercado":     "abierto" if es_dia_mercado(ahora) else "cerrado",
@@ -804,7 +805,7 @@ def test():
         else:
             lineas_canal.append(f"  {a}: OFF")
     enviar_telegram(
-        f"✅ <b>AXIS Breakout Sentinel v8.7</b>\n"
+        f"✅ <b>AXIS Breakout Sentinel v8.8</b>\n"
         f"<b>Hora:</b> {ahora.strftime('%A %d/%m/%Y %H:%M EST')}\n"
         f"<b>Mercado:</b> {'Abierto' if es_dia_mercado(ahora) else 'Cerrado'}\n"
         f"<b>1VR:</b> {'ON' if VR1_ON else 'OFF'} | "
@@ -900,6 +901,70 @@ def estrategia():
     return jsonify({"VR1": VR1_ON, "RPG": RPG_ON, "GNA": GNA_ON, "GBA": GBA_ON}), 200
 
 
+
+
+# ═══════════════════════════════════════════════════════════
+# TRADIER TEST — verifica token y conexion
+# ═══════════════════════════════════════════════════════════
+@app.route("/tradier_test", methods=["GET"])
+def tradier_test():
+    resultados = {}
+    
+    # Test 1 — precio SPY
+    try:
+        r = requests.get(
+            f"{TRADIER_BASE}/markets/quotes",
+            headers=TRADIER_HEADERS,
+            params={"symbols": "SPY"},
+            timeout=10
+        )
+        resultados["precio_status"] = r.status_code
+        resultados["precio_response"] = r.text[:200]
+        if r.status_code == 200:
+            data = r.json()
+            precio = data.get("quotes", {}).get("quote", {}).get("last")
+            resultados["SPY_precio"] = precio
+    except Exception as e:
+        resultados["precio_error"] = str(e)
+
+    # Test 2 — vencimientos SPY
+    try:
+        r2 = requests.get(
+            f"{TRADIER_BASE}/markets/options/expirations",
+            headers=TRADIER_HEADERS,
+            params={"symbol": "SPY"},
+            timeout=10
+        )
+        resultados["vencimientos_status"] = r2.status_code
+        resultados["vencimientos_response"] = r2.text[:200]
+    except Exception as e:
+        resultados["vencimientos_error"] = str(e)
+
+    # Test 3 — cuenta
+    try:
+        r3 = requests.get(
+            f"{TRADIER_BASE}/accounts/{TRADIER_ACCOUNT}/balances",
+            headers=TRADIER_HEADERS,
+            timeout=10
+        )
+        resultados["cuenta_status"] = r3.status_code
+        resultados["cuenta_response"] = r3.text[:200]
+    except Exception as e:
+        resultados["cuenta_error"] = str(e)
+
+    # Enviar resumen a Telegram
+    msg = (
+        f"🔧 <b>Tradier Test</b>\n"
+        f"<b>Token:</b> {'OK' if resultados.get('precio_status') == 200 else 'ERROR'}\n"
+        f"<b>Precio SPY:</b> {resultados.get('SPY_precio', 'N/A')}\n"
+        f"<b>Status precio:</b> {resultados.get('precio_status', 'N/A')}\n"
+        f"<b>Status vencimientos:</b> {resultados.get('vencimientos_status', 'N/A')}\n"
+        f"<b>Status cuenta:</b> {resultados.get('cuenta_status', 'N/A')}\n"
+        f"<b>Resp precio:</b> {resultados.get('precio_response', resultados.get('precio_error', 'N/A'))[:100]}"
+    )
+    enviar_telegram(msg)
+    
+    return jsonify(resultados), 200
 
 # ═══════════════════════════════════════════════════════════
 # APP WEB — servida desde Railway
