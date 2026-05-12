@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v8.19
+AXIS Breakout Sentinel v8.20
 Estrategias: 1VR | 1VR+ | RPG | GNA | GBA | RCB/CNF
 Multi-activo: SPY, AAPL, BA, GLD
 Auto-P2 | Apagado automatico si nuevo P2 >= P1
@@ -865,7 +865,7 @@ def reporte_horario():
 # LOOP PRINCIPAL
 # ═══════════════════════════════════════════════════════════
 def monitor_loop():
-    print("AXIS Breakout Sentinel v8.19 iniciado...")
+    print("AXIS Breakout Sentinel v8.20 iniciado...")
     while True:
         ahora = datetime.now(EST)
         minutos_hasta_01 = (1 - ahora.minute) % 60
@@ -897,7 +897,7 @@ def home():
             "tipo":    "RCB" if c["p3"] else "CNF" if c["on"] else "OFF",
         }
     return jsonify({
-        "sistema":     "AXIS Breakout Sentinel v8.19",
+        "sistema":     "AXIS Breakout Sentinel v8.20",
         "estado":      "activo" if SISTEMA_ACTIVO else "apagado",
         "hora_est":    ahora.strftime("%A %H:%M EST"),
         "mercado":     "abierto" if es_dia_mercado(ahora) else "cerrado",
@@ -920,7 +920,7 @@ def test():
         else:
             lineas_canal.append(f"  {a}: OFF")
     enviar_telegram(
-        f"✅ <b>AXIS Breakout Sentinel v8.19</b>\n"
+        f"✅ <b>AXIS Breakout Sentinel v8.20</b>\n"
         f"<b>Hora:</b> {ahora.strftime('%A %d/%m/%Y %H:%M EST')}\n"
         f"<b>Mercado:</b> {'Abierto' if es_dia_mercado(ahora) else 'Cerrado'}\n"
         f"<b>1VR:</b> {'ON' if VR1_ON else 'OFF'} | "
@@ -1838,6 +1838,65 @@ def ruta_velas():
         "total":   len(velas),
         "velas":   velas,
     }), 200
+
+# ═══════════════════════════════════════════════════════════
+# TEST RANGO — v8.20
+# Prueba diferentes rangos de fechas en Tradier timesales
+# para encontrar el limite exacto de datos disponibles
+# ═══════════════════════════════════════════════════════════
+@app.route("/test_rango", methods=["GET"])
+def test_rango():
+    from datetime import date
+
+    SIMBOLO  = "SPY"
+    fecha_fin = date.today()
+    resultado = {}
+
+    def restar_habiles(fecha, dias):
+        actual = fecha
+        contados = 0
+        while contados < dias:
+            actual -= timedelta(days=1)
+            if actual.weekday() < 5:
+                contados += 1
+        return actual
+
+    # Probar rangos: 20, 30, 40, 45, 50, 60 dias habiles
+    for dias in [20, 30, 40, 45, 50, 60]:
+        fecha_ini = restar_habiles(fecha_fin, dias)
+        try:
+            r = requests.get(
+                f"{TRADIER_BASE_REAL}/markets/timesales",
+                headers=TRADIER_HEADERS_REAL,
+                params={
+                    "symbol":         SIMBOLO,
+                    "interval":       "15min",
+                    "start":          f"{fecha_ini.strftime('%Y-%m-%d')} 09:00",
+                    "end":            f"{fecha_fin.strftime('%Y-%m-%d')} 16:30",
+                    "session_filter": "open",
+                },
+                timeout=30
+            )
+            data   = r.json()
+            series = data.get("series")
+            if series and series != "null":
+                barras = series.get("data", [])
+                if isinstance(barras, dict): barras = [barras]
+                resultado[f"{dias}_dias_habiles"] = {
+                    "estado":    "✅ OK",
+                    "barras":    len(barras),
+                    "desde":     fecha_ini.strftime("%Y-%m-%d"),
+                    "primera":   barras[-1]["time"] if barras else None,
+                }
+            else:
+                resultado[f"{dias}_dias_habiles"] = {
+                    "estado": "❌ series null",
+                    "desde":  fecha_ini.strftime("%Y-%m-%d"),
+                }
+        except Exception as e:
+            resultado[f"{dias}_dias_habiles"] = {"estado": f"❌ error: {str(e)}"}
+
+    return jsonify(resultado), 200
 
 # ═══════════════════════════════════════════════════════════
 # ARRANQUE
