@@ -209,44 +209,49 @@ def get_velas(simbolo, outputsize=50):
         from datetime import date, datetime as dt2
         from collections import defaultdict
 
-        # Pedir los ultimos dias necesarios segun outputsize
-        # Tradier tiene limite de datos — maximos 45 dias calendario
-        dias = min(45, max(5, outputsize // 7 + 3))
-        fecha_fin   = date.today().strftime("%Y-%m-%d")
-        fecha_ini   = (date.today() - timedelta(days=dias)).strftime("%Y-%m-%d")
+        fecha_fin  = date.today()
+        fecha_mid  = fecha_fin  - timedelta(days=45)
+        fecha_ini  = fecha_fin  - timedelta(days=90)
 
-        r = requests.get(
-            f"{TRADIER_BASE_REAL}/markets/timesales",
-            headers=TRADIER_HEADERS_REAL,
-            params={
-                "symbol":         simbolo,
-                "interval":       "15min",
-                "start":          f"{fecha_ini} 09:00",
-                "end":            f"{fecha_fin} 16:30",
-                "session_filter": "open",
-            },
-            timeout=30
-        )
+        todas_barras = []
 
-        if r.status_code != 200:
-            print(f"Tradier error {simbolo}: HTTP {r.status_code}")
-            return None
+        for (f_ini, f_fin) in [
+            (fecha_ini.strftime("%Y-%m-%d"), fecha_mid.strftime("%Y-%m-%d")),
+            (fecha_mid.strftime("%Y-%m-%d"), fecha_fin.strftime("%Y-%m-%d")),
+        ]:
+            r = requests.get(
+                f"{TRADIER_BASE_REAL}/markets/timesales",
+                headers=TRADIER_HEADERS_REAL,
+                params={
+                    "symbol":         simbolo,
+                    "interval":       "15min",
+                    "start":          f"{f_ini} 09:00",
+                    "end":            f"{f_fin} 16:30",
+                    "session_filter": "open",
+                },
+                timeout=30
+            )
+            if r.status_code != 200:
+                print(f"Tradier error {simbolo} {f_ini}-{f_fin}: HTTP {r.status_code}")
+                continue
+            data   = r.json()
+            series = data.get("series")
+            if not series or series == "null":
+                continue
+            barras = series.get("data", [])
+            if isinstance(barras, dict):
+                barras = [barras]
+            todas_barras.extend(barras)
 
-        data   = r.json()
-        series = data.get("series")
-        if not series or series == "null":
+        if not todas_barras:
             print(f"Tradier sin datos {simbolo}")
             return None
-
-        barras = series.get("data", [])
-        if isinstance(barras, dict):
-            barras = [barras]
 
         # Agrupar barras por fecha y vela AXIS
         # Estructura: { "2026-05-12": { "V1": [barras], ... }, ... }
         dias_dict = defaultdict(lambda: defaultdict(list))
 
-        for b in barras:
+        for b in todas_barras:
             ts_str = b["time"].replace("T", " ")
             bdt    = dt2.strptime(ts_str, "%Y-%m-%d %H:%M:%S")
             fecha  = bdt.strftime("%Y-%m-%d")
