@@ -1,0 +1,799 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AXIS — Charts</title>
+<script src="https://cdn.jsdelivr.net/npm/lightweight-charts@3.9.0/dist/lightweight-charts.standalone.production.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;600;700&family=Bebas+Neue&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:        #080b0f;
+    --surface:   #0d1117;
+    --surface2:  #161b22;
+    --border:    #21262d;
+    --accent:    #f0b429;
+    --green:     #3fb950;
+    --red:       #f85149;
+    --cyan:      #58a6ff;
+    --muted:     #484f58;
+    --text:      #c9d1d9;
+    --text-dim:  #6e7681;
+    --font-mono: 'JetBrains Mono', monospace;
+    --font-disp: 'Bebas Neue', sans-serif;
+
+    /* colores estrategias */
+    --c-1vr:  #f85149;
+    --c-rpg:  #bc8cff;
+    --c-gna:  #3fb950;
+    --c-gba:  #58a6ff;
+    --c-rcb:  #f0b429;
+    --c-pm40: #00d4c8;
+    --c-sma20: #f0b429;
+    --c-sma40: #e05c1a;
+    --c-sma100:#58a6ff;
+    --c-sma200:#bc8cff;
+  }
+
+  * { margin:0; padding:0; box-sizing:border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-mono);
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* ── HEADER ── */
+  header {
+    display: flex;
+    align-items: center;
+    gap: 24px;
+    padding: 10px 20px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+
+  .logo {
+    font-family: var(--font-disp);
+    font-size: 26px;
+    letter-spacing: 3px;
+    color: var(--accent);
+    line-height: 1;
+  }
+
+  .logo span { color: var(--text-dim); font-size: 13px; font-family: var(--font-mono); letter-spacing: 1px; display: block; margin-top: 2px; }
+
+  .asset-tabs {
+    display: flex;
+    gap: 4px;
+  }
+
+  .asset-tab {
+    padding: 6px 16px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text-dim);
+    font-family: var(--font-mono);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    border-radius: 4px;
+    transition: all 0.15s;
+    letter-spacing: 1px;
+  }
+
+  .asset-tab:hover { border-color: var(--accent); color: var(--text); }
+  .asset-tab.active { background: var(--accent); border-color: var(--accent); color: #000; }
+
+  .price-display {
+    margin-left: auto;
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+  }
+
+  .price-current {
+    font-size: 24px;
+    font-weight: 700;
+    color: var(--text);
+    letter-spacing: -0.5px;
+  }
+
+  .price-change {
+    font-size: 13px;
+    font-weight: 600;
+  }
+
+  .price-change.up   { color: var(--green); }
+  .price-change.down { color: var(--red); }
+
+  .header-status {
+    font-size: 11px;
+    color: var(--text-dim);
+    padding: 4px 10px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+  }
+
+  /* ── TOOLBAR ── */
+  .toolbar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 20px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+
+  .toolbar-group {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding-right: 12px;
+    border-right: 1px solid var(--border);
+  }
+
+  .toolbar-group:last-child { border-right: none; padding-right: 0; }
+
+  .toolbar-label {
+    font-size: 10px;
+    color: var(--text-dim);
+    letter-spacing: 1px;
+    text-transform: uppercase;
+  }
+
+  .toggle-btn {
+    padding: 3px 10px;
+    border: 1px solid var(--border);
+    background: transparent;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    border-radius: 3px;
+    transition: all 0.15s;
+    letter-spacing: 0.5px;
+  }
+
+  .toggle-btn.sma20  { color: var(--c-sma20);  border-color: var(--c-sma20); }
+  .toggle-btn.sma40  { color: var(--c-sma40);  border-color: var(--c-sma40); }
+  .toggle-btn.sma100 { color: var(--c-sma100); border-color: var(--c-sma100); }
+  .toggle-btn.sma200 { color: var(--c-sma200); border-color: var(--c-sma200); }
+  .toggle-btn.canal  { color: var(--c-rcb);    border-color: var(--c-rcb); }
+
+  .toggle-btn.off { opacity: 0.3; }
+
+  .toggle-btn:hover { opacity: 1; }
+  .toggle-btn.sma20.on  { background: var(--c-sma20);  color: #000; }
+  .toggle-btn.sma40.on  { background: var(--c-sma40);  color: #fff; }
+  .toggle-btn.sma100.on { background: var(--c-sma100); color: #000; }
+  .toggle-btn.sma200.on { background: var(--c-sma200); color: #000; }
+  .toggle-btn.canal.on  { background: var(--c-rcb);    color: #000; }
+
+  .draw-btn {
+    padding: 4px 12px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text-dim);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    border-radius: 3px;
+    transition: all 0.15s;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .draw-btn.active { border-color: var(--cyan); color: var(--cyan); background: rgba(88,166,255,0.1); }
+  .draw-btn:hover  { border-color: var(--cyan); color: var(--cyan); }
+
+  .draw-btn svg { width: 13px; height: 13px; }
+
+  .clear-btn {
+    padding: 4px 10px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text-dim);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    cursor: pointer;
+    border-radius: 3px;
+    transition: all 0.15s;
+  }
+
+  .clear-btn:hover { border-color: var(--red); color: var(--red); }
+
+  .loading-bar {
+    margin-left: auto;
+    font-size: 11px;
+    color: var(--text-dim);
+  }
+
+  /* ── CHART CONTAINER ── */
+  .chart-wrap {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+  }
+
+  #chart {
+    width: 100%;
+    height: 100%;
+  }
+
+  /* canvas de dibujo encima del chart */
+  #draw-canvas {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    pointer-events: none;
+    z-index: 10;
+  }
+
+  #draw-canvas.draw-mode { pointer-events: all; cursor: crosshair; }
+
+  /* ── LEYENDA ESTRATEGIAS ── */
+  .legend {
+    position: absolute;
+    top: 12px;
+    left: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    z-index: 5;
+    pointer-events: none;
+  }
+
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 10px;
+    color: var(--text-dim);
+    letter-spacing: 0.5px;
+  }
+
+  .legend-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  /* ── CROSSHAIR INFO ── */
+  .crosshair-info {
+    position: absolute;
+    top: 12px;
+    right: 16px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 12px;
+    font-size: 11px;
+    z-index: 5;
+    pointer-events: none;
+    min-width: 160px;
+  }
+
+  .crosshair-info .ci-time { color: var(--text-dim); margin-bottom: 4px; font-size: 10px; }
+  .crosshair-info .ci-row  { display: flex; justify-content: space-between; gap: 12px; }
+  .crosshair-info .ci-lbl  { color: var(--text-dim); }
+  .crosshair-info .ci-val  { color: var(--text); font-weight: 600; }
+  .crosshair-info .ci-up   { color: var(--green); }
+  .crosshair-info .ci-dn   { color: var(--red); }
+
+  /* ── TOAST ── */
+  .toast {
+    position: fixed;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 8px 20px;
+    border-radius: 6px;
+    font-size: 12px;
+    z-index: 100;
+    opacity: 0;
+    transition: opacity 0.3s;
+    pointer-events: none;
+  }
+
+  .toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+
+<!-- ── HEADER ── -->
+<header>
+  <div class="logo">AXIS<span>CHARTS v1.0</span></div>
+
+  <div class="asset-tabs">
+    <button class="asset-tab active" onclick="cambiarActivo('SPY')">SPY</button>
+    <button class="asset-tab" onclick="cambiarActivo('AAPL')">AAPL</button>
+    <button class="asset-tab" onclick="cambiarActivo('BA')">BA</button>
+    <button class="asset-tab" onclick="cambiarActivo('GLD')">GLD</button>
+  </div>
+
+  <div class="price-display">
+    <span class="price-current" id="precio-actual">—</span>
+    <span class="price-change" id="precio-cambio"></span>
+  </div>
+
+  <div class="header-status" id="header-status">3 meses · Velas AXIS 1h</div>
+</header>
+
+<!-- ── TOOLBAR ── -->
+<div class="toolbar">
+  <div class="toolbar-group">
+    <span class="toolbar-label">SMA</span>
+    <button class="toggle-btn sma20 on"  id="btn-sma20"  onclick="toggleSMA('sma20')">20</button>
+    <button class="toggle-btn sma40 on"  id="btn-sma40"  onclick="toggleSMA('sma40')">40</button>
+    <button class="toggle-btn sma100 on" id="btn-sma100" onclick="toggleSMA('sma100')">100</button>
+    <button class="toggle-btn sma200 on" id="btn-sma200" onclick="toggleSMA('sma200')">200</button>
+  </div>
+
+  <div class="toolbar-group">
+    <span class="toolbar-label">Canal</span>
+    <button class="toggle-btn canal on" id="btn-canal" onclick="toggleCanal()">P1 · P2 · P3</button>
+  </div>
+
+  <div class="toolbar-group">
+    <span class="toolbar-label">Dibujo</span>
+    <button class="draw-btn" id="btn-draw" onclick="toggleDraw()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <line x1="5" y1="19" x2="19" y2="5"/>
+        <polyline points="15 5 19 5 19 9"/>
+      </svg>
+      Línea
+    </button>
+    <button class="clear-btn" onclick="clearLines()">Limpiar</button>
+  </div>
+
+  <div class="loading-bar" id="loading-bar">Cargando datos...</div>
+</div>
+
+<!-- ── CHART ── -->
+<div class="chart-wrap">
+  <div id="chart"></div>
+  <canvas id="draw-canvas"></canvas>
+
+  <div class="legend">
+    <div class="legend-item"><div class="legend-dot" style="background:var(--c-1vr)"></div>1VR / 1VR+</div>
+    <div class="legend-item"><div class="legend-dot" style="background:var(--c-rpg)"></div>RPG</div>
+    <div class="legend-item"><div class="legend-dot" style="background:var(--c-gna)"></div>GNA</div>
+    <div class="legend-item"><div class="legend-dot" style="background:var(--c-gba)"></div>GBA</div>
+    <div class="legend-item"><div class="legend-dot" style="background:var(--c-rcb)"></div>RCB / CNF</div>
+    <div class="legend-item"><div class="legend-dot" style="background:var(--c-pm40)"></div>PM40</div>
+  </div>
+
+  <div class="crosshair-info" id="crosshair-info" style="display:none">
+    <div class="ci-time" id="ci-time"></div>
+    <div class="ci-row"><span class="ci-lbl">O</span><span class="ci-val" id="ci-o"></span></div>
+    <div class="ci-row"><span class="ci-lbl">H</span><span class="ci-val" id="ci-h"></span></div>
+    <div class="ci-row"><span class="ci-lbl">L</span><span class="ci-val" id="ci-l"></span></div>
+    <div class="ci-row"><span class="ci-lbl">C</span><span class="ci-val" id="ci-c"></span></div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ═══════════════════════════════════════════════
+// CONFIGURACION
+// ═══════════════════════════════════════════════
+const TWELVEDATA_KEY = '66dd71373a884f7bb7da8e6e5e469571';
+const RAILWAY_URL    = 'https://web-production-bf9d0.up.railway.app';
+const OUTPUTSIZE     = 500; // ~3 meses de velas 1h (7h/dia x 5 dias x 13 semanas ≈ 455)
+
+// Estado global
+let activoActual  = 'SPY';
+let chart         = null;
+let serieVelas    = null;
+let seriesSMA     = {};
+let seriesCanal   = [];
+let todasLasVelas = [];
+let estadoSMA     = { sma20: true, sma40: true, sma100: true, sma200: true };
+let canalVisible  = true;
+
+// Dibujo de líneas
+let drawMode      = false;
+let dibujando     = false;
+let lineaActual   = null;
+let lineasUsuario = {}; // por activo
+let puntoInicio   = null;
+const canvas      = document.getElementById('draw-canvas');
+const ctx         = canvas.getContext('2d');
+
+// ═══════════════════════════════════════════════
+// INIT CHART
+// ═══════════════════════════════════════════════
+function initChart() {
+  const container = document.getElementById('chart');
+  chart = LightweightCharts.createChart(container, {
+    autoSize: true,
+    layout: {
+      background: { color: '#080b0f' },
+      textColor:  '#6e7681',
+      fontFamily: "'JetBrains Mono', monospace",
+      fontSize:   11,
+    },
+    grid: {
+      vertLines: { color: '#161b22' },
+      horzLines: { color: '#161b22' },
+    },
+    crosshair: {
+      mode: LightweightCharts.CrosshairMode.Normal,
+      vertLine: { color: '#484f58', style: 1, width: 1 },
+      horzLine: { color: '#484f58', style: 1, width: 1 },
+    },
+    rightPriceScale: {
+      borderColor: '#21262d',
+      scaleMargins: { top: 0.08, bottom: 0.08 },
+    },
+    timeScale: {
+      borderColor:     '#21262d',
+      timeVisible:     true,
+      secondsVisible:  false,
+      tickMarkFormatter: (time) => {
+        const d = new Date(time * 1000);
+        return d.toLocaleString('en-US', {
+          month: 'short', day: 'numeric',
+          hour: '2-digit', minute: '2-digit',
+          hour12: false, timeZone: 'America/New_York'
+        });
+      },
+    },
+  });
+
+  serieVelas = chart.addCandlestickSeries({
+    upColor:          '#3fb950',
+    downColor:        '#f85149',
+    borderUpColor:    '#3fb950',
+    borderDownColor:  '#f85149',
+    wickUpColor:      '#3fb950',
+    wickDownColor:    '#f85149',
+  });
+
+  // SMAs
+  const smaConfig = {
+    sma20:  { color: '#f0b429', lineWidth: 1 },
+    sma40:  { color: '#e05c1a', lineWidth: 1 },
+    sma100: { color: '#58a6ff', lineWidth: 1 },
+    sma200: { color: '#bc8cff', lineWidth: 1 },
+  };
+
+  for (const [key, cfg] of Object.entries(smaConfig)) {
+    seriesSMA[key] = chart.addLineSeries({
+      color:     cfg.color,
+      lineWidth: cfg.lineWidth,
+      priceLineVisible: false,
+      lastValueVisible: false,
+    });
+  }
+
+  // Crosshair
+  chart.subscribeCrosshairMove(param => {
+    if (!param.time || !param.seriesData.has(serieVelas)) {
+      document.getElementById('crosshair-info').style.display = 'none';
+      return;
+    }
+    const vela = param.seriesData.get(serieVelas);
+    const d    = new Date(param.time * 1000);
+    const hora = d.toLocaleString('en-US', {
+      month:'short', day:'numeric',
+      hour:'2-digit', minute:'2-digit',
+      hour12: false, timeZone: 'America/New_York'
+    });
+
+    document.getElementById('crosshair-info').style.display = 'block';
+    document.getElementById('ci-time').textContent = hora + ' EST';
+    document.getElementById('ci-o').textContent = '$' + vela.open.toFixed(2);
+    document.getElementById('ci-h').textContent = '$' + vela.high.toFixed(2);
+    document.getElementById('ci-l').textContent = '$' + vela.low.toFixed(2);
+
+    const ciC = document.getElementById('ci-c');
+    ciC.textContent = '$' + vela.close.toFixed(2);
+    ciC.className   = 'ci-val ' + (vela.close >= vela.open ? 'ci-up' : 'ci-dn');
+  });
+
+  // Resize canvas cuando cambia ventana
+  window.addEventListener('resize', () => {
+    resizeCanvas();
+    redibujarLineas();
+  });
+
+  resizeCanvas();
+}
+
+// ═══════════════════════════════════════════════
+// CARGAR DATOS
+// ═══════════════════════════════════════════════
+async function cargarDatos(simbolo) {
+  document.getElementById('loading-bar').textContent = `Cargando ${simbolo}...`;
+
+  try {
+    // 1 — Velas TwelveData
+    const url = `https://api.twelvedata.com/time_series?symbol=${simbolo}&interval=1h&outputsize=${OUTPUTSIZE}&timezone=America/New_York&apikey=${TWELVEDATA_KEY}`;
+    const res  = await fetch(url);
+    const data = await res.json();
+
+    if (!data.values || data.status === 'error') {
+      mostrarToast(`Error TwelveData: ${data.message || 'sin datos'}`);
+      document.getElementById('loading-bar').textContent = 'Error al cargar';
+      return;
+    }
+
+    // Filtrar solo horas AXIS (9-15 EST = cierre 10:00-16:00)
+    const velasAxis = data.values
+      .filter(v => {
+        const hora = parseInt(v.datetime.substring(11, 13));
+        return hora >= 9 && hora <= 15;
+      })
+      .reverse()
+      .map(v => {
+        const dt  = new Date(v.datetime.replace(' ', 'T') + '-04:00');
+        const ts  = Math.floor(dt.getTime() / 1000);
+        const hora = parseInt(v.datetime.substring(11, 13));
+        return {
+          time:  ts,
+          open:  parseFloat(v.open),
+          high:  parseFloat(v.high),
+          low:   parseFloat(v.low),
+          close: parseFloat(v.close),
+          hora:  hora,
+          datetime: v.datetime,
+        };
+      });
+
+    todasLasVelas = velasAxis;
+    serieVelas.setData(velasAxis);
+
+    // 2 — SMAs
+    calcularYSetearSMAs(velasAxis);
+
+    // 3 — Canal desde Railway
+    await cargarCanal(simbolo, velasAxis);
+
+    // 4 — Precio actual
+    actualizarPrecio(velasAxis);
+
+    // 5 — Redibujar líneas del usuario
+    redibujarLineas();
+
+    const desde = new Date(velasAxis[0].time * 1000).toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' });
+    document.getElementById('loading-bar').textContent = `${velasAxis.length} velas · desde ${desde}`;
+    document.getElementById('header-status').textContent = `3 meses · Velas AXIS 1h`;
+
+  } catch(e) {
+    mostrarToast('Error de red: ' + e.message);
+    document.getElementById('loading-bar').textContent = 'Error de red';
+    console.error(e);
+  }
+}
+
+// ═══════════════════════════════════════════════
+// SMAs
+// ═══════════════════════════════════════════════
+function calcularYSetearSMAs(velas) {
+  const periodos = { sma20: 20, sma40: 40, sma100: 100, sma200: 200 };
+  for (const [key, periodo] of Object.entries(periodos)) {
+    const datos = [];
+    for (let i = periodo - 1; i < velas.length; i++) {
+      const slice = velas.slice(i - periodo + 1, i + 1);
+      const avg   = slice.reduce((s, v) => s + v.close, 0) / periodo;
+      datos.push({ time: velas[i].time, value: avg });
+    }
+    seriesSMA[key].setData(datos);
+    seriesSMA[key].applyOptions({ visible: estadoSMA[key] });
+  }
+}
+
+function toggleSMA(key) {
+  estadoSMA[key] = !estadoSMA[key];
+  seriesSMA[key].applyOptions({ visible: estadoSMA[key] });
+  const btn = document.getElementById(`btn-${key}`);
+  btn.classList.toggle('on',  estadoSMA[key]);
+  btn.classList.toggle('off', !estadoSMA[key]);
+}
+
+// ═══════════════════════════════════════════════
+// CANAL — techo, media, piso desde Railway
+// ═══════════════════════════════════════════════
+async function cargarCanal(simbolo, velas) {
+  // Limpiar series de canal anteriores
+  seriesCanal.forEach(s => chart.removeSeries(s));
+  seriesCanal = [];
+
+  try {
+    const res  = await fetch(`${RAILWAY_URL}/`);
+    const data = await res.json();
+    const c    = data.canales?.[simbolo];
+
+    if (!c || !c.on || c.apagado || !c.p1 || !c.p2) return;
+
+    // Calcular línea de techo entre P1 y P2 proyectada hacia el futuro
+    const p1High = c.p1;
+    const p2High = c.p2;
+
+    // Buscar timestamps de P1 y P2 — usamos las velas disponibles para encontrar los puntos más cercanos
+    // Como Railway no devuelve los timestamps exactos de P1/P2 en /,
+    // dibujamos el techo como línea horizontal en el precio P1 y P2 visibles
+    // En versiones futuras se agregarán timestamps al endpoint /
+
+    const sTecho = chart.addLineSeries({
+      color: '#f0b429', lineWidth: 1, lineStyle: 0,
+      priceLineVisible: false, lastValueVisible: false,
+    });
+
+    // Techo como línea desde primera vela hasta última con slope aproximado
+    if (velas.length > 1) {
+      const tsInicio = velas[0].time;
+      const tsFin    = velas[velas.length - 1].time;
+      sTecho.setData([
+        { time: tsInicio, value: p1High },
+        { time: tsFin,    value: p2High },
+      ]);
+      seriesCanal.push(sTecho);
+    }
+
+    if (!canalVisible) sTecho.applyOptions({ visible: false });
+
+  } catch(e) {
+    console.log('Canal no disponible:', e.message);
+  }
+}
+
+function toggleCanal() {
+  canalVisible = !canalVisible;
+  seriesCanal.forEach(s => s.applyOptions({ visible: canalVisible }));
+  const btn = document.getElementById('btn-canal');
+  btn.classList.toggle('on',  canalVisible);
+  btn.classList.toggle('off', !canalVisible);
+}
+
+// ═══════════════════════════════════════════════
+// PRECIO ACTUAL
+// ═══════════════════════════════════════════════
+function actualizarPrecio(velas) {
+  if (!velas.length) return;
+  const ultima    = velas[velas.length - 1];
+  const penultima = velas[velas.length - 2];
+
+  document.getElementById('precio-actual').textContent = '$' + ultima.close.toFixed(2);
+
+  if (penultima) {
+    const diff = ultima.close - penultima.close;
+    const pct  = (diff / penultima.close * 100).toFixed(2);
+    const el   = document.getElementById('precio-cambio');
+    el.textContent = (diff >= 0 ? '+' : '') + diff.toFixed(2) + ' (' + pct + '%)';
+    el.className   = 'price-change ' + (diff >= 0 ? 'up' : 'down');
+  }
+}
+
+// ═══════════════════════════════════════════════
+// CAMBIAR ACTIVO
+// ═══════════════════════════════════════════════
+function cambiarActivo(simbolo) {
+  activoActual = simbolo;
+  document.querySelectorAll('.asset-tab').forEach(b => {
+    b.classList.toggle('active', b.textContent === simbolo);
+  });
+  cargarDatos(simbolo);
+}
+
+// ═══════════════════════════════════════════════
+// DIBUJO DE LINEAS MANUALES
+// ═══════════════════════════════════════════════
+function resizeCanvas() {
+  const wrap  = document.querySelector('.chart-wrap');
+  canvas.width  = wrap.clientWidth;
+  canvas.height = wrap.clientHeight;
+}
+
+function toggleDraw() {
+  drawMode = !drawMode;
+  canvas.classList.toggle('draw-mode', drawMode);
+  const btn = document.getElementById('btn-draw');
+  btn.classList.toggle('active', drawMode);
+  mostrarToast(drawMode ? 'Modo dibujo ON — haz click y arrastra' : 'Modo dibujo OFF');
+}
+
+function clearLines() {
+  lineasUsuario[activoActual] = [];
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  mostrarToast('Líneas eliminadas');
+}
+
+function redibujarLineas() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  const lineas = lineasUsuario[activoActual] || [];
+  lineas.forEach(l => dibujarLinea(l.x1, l.y1, l.x2, l.y2, false));
+}
+
+function dibujarLinea(x1, y1, x2, y2, esPreview) {
+  ctx.beginPath();
+  ctx.moveTo(x1, y1);
+  ctx.lineTo(x2, y2);
+  ctx.strokeStyle = esPreview ? 'rgba(88,166,255,0.6)' : '#58a6ff';
+  ctx.lineWidth   = esPreview ? 1 : 1.5;
+  ctx.setLineDash(esPreview ? [4, 4] : []);
+  ctx.stroke();
+  ctx.setLineDash([]);
+}
+
+canvas.addEventListener('mousedown', e => {
+  if (!drawMode) return;
+  dibujando   = true;
+  puntoInicio = { x: e.offsetX, y: e.offsetY };
+});
+
+canvas.addEventListener('mousemove', e => {
+  if (!drawMode || !dibujando || !puntoInicio) return;
+  redibujarLineas();
+  dibujarLinea(puntoInicio.x, puntoInicio.y, e.offsetX, e.offsetY, true);
+});
+
+canvas.addEventListener('mouseup', e => {
+  if (!drawMode || !dibujando || !puntoInicio) return;
+  dibujando = false;
+
+  const dx = e.offsetX - puntoInicio.x;
+  const dy = e.offsetY - puntoInicio.y;
+  if (Math.sqrt(dx*dx + dy*dy) < 5) return; // ignorar clicks sin movimiento
+
+  if (!lineasUsuario[activoActual]) lineasUsuario[activoActual] = [];
+  lineasUsuario[activoActual].push({
+    x1: puntoInicio.x, y1: puntoInicio.y,
+    x2: e.offsetX,     y2: e.offsetY,
+  });
+  redibujarLineas();
+  puntoInicio = null;
+});
+
+canvas.addEventListener('mouseleave', () => {
+  if (dibujando) {
+    dibujando = false;
+    redibujarLineas();
+  }
+});
+
+// ═══════════════════════════════════════════════
+// TOAST
+// ═══════════════════════════════════════════════
+let toastTimer = null;
+function mostrarToast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 2500);
+}
+
+// ═══════════════════════════════════════════════
+// ARRANQUE — esperar que el DOM esté listo
+// ═══════════════════════════════════════════════
+window.addEventListener('load', () => {
+  if (typeof LightweightCharts === 'undefined') {
+    document.getElementById('loading-bar').textContent = 'Error: librería no cargó — verifica tu conexión a internet';
+    return;
+  }
+  try {
+    initChart();
+    cargarDatos('SPY');
+  } catch(e) {
+    document.getElementById('loading-bar').textContent = 'Error: ' + e.message;
+    console.error('Init error:', e);
+  }
+});
+</script>
+</body>
+</html>
