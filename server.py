@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v8.12
+AXIS Breakout Sentinel v8.13
 Estrategias: 1VR | 1VR+ | RPG | GNA | GBA | RCB/CNF
 Multi-activo: SPY, AAPL, BA, GLD
 Auto-P2 | Apagado automatico si nuevo P2 >= P1
@@ -16,6 +16,7 @@ v8.9: TRADIER_TOKEN_REAL para datos historicos — ruta /tradier_history_test ve
 v8.10: Ruta /verificar_velas — compara velas 1h TwelveData vs precio real Tradier para validar consistencia de datos
 v8.11: Thread independiente V7 anticipada — AAPL/BA/GLD evaluan V7 a las 3:58 EST y corrigen cierre real a las 4:00 EST sin alerta. SPY sin cambios.
 v8.12: Ruta /charts para servir axis_charts.html — dashboard de graficas AXIS
+v8.13: Ruta /test_tradier_30min — verifica si Tradier produccion tiene velas de 30min y construye velas AXIS de 1h para comparar vs TradingView
 """
 
 import requests
@@ -762,7 +763,7 @@ def reporte_horario():
 # LOOP PRINCIPAL
 # ═══════════════════════════════════════════════════════════
 def monitor_loop():
-    print("AXIS Breakout Sentinel v8.12 iniciado...")
+    print("AXIS Breakout Sentinel v8.13 iniciado...")
     while True:
         ahora = datetime.now(EST)
         minutos_hasta_01 = (1 - ahora.minute) % 60
@@ -794,7 +795,7 @@ def home():
             "tipo":    "RCB" if c["p3"] else "CNF" if c["on"] else "OFF",
         }
     return jsonify({
-        "sistema":     "AXIS Breakout Sentinel v8.12",
+        "sistema":     "AXIS Breakout Sentinel v8.13",
         "estado":      "activo" if SISTEMA_ACTIVO else "apagado",
         "hora_est":    ahora.strftime("%A %H:%M EST"),
         "mercado":     "abierto" if es_dia_mercado(ahora) else "cerrado",
@@ -817,7 +818,7 @@ def test():
         else:
             lineas_canal.append(f"  {a}: OFF")
     enviar_telegram(
-        f"✅ <b>AXIS Breakout Sentinel v8.12</b>\n"
+        f"✅ <b>AXIS Breakout Sentinel v8.13</b>\n"
         f"<b>Hora:</b> {ahora.strftime('%A %d/%m/%Y %H:%M EST')}\n"
         f"<b>Mercado:</b> {'Abierto' if es_dia_mercado(ahora) else 'Cerrado'}\n"
         f"<b>1VR:</b> {'ON' if VR1_ON else 'OFF'} | "
@@ -1403,6 +1404,149 @@ def loop_v7_anticipada():
         except Exception as e:
             print(f"Error loop V7 anticipada: {e}")
             time.sleep(30)
+
+# ═══════════════════════════════════════════════════════════
+# TEST TRADIER 30MIN — v8.13
+# Pide velas de 30min a Tradier produccion para SPY
+# Las une en pares para construir velas AXIS de 1h
+# Compara contra valores reales de TradingView
+# ═══════════════════════════════════════════════════════════
+@app.route("/test_tradier_30min", methods=["GET"])
+def test_tradier_30min():
+    FECHA   = "2026-05-11"
+    SIMBOLO = request.args.get("activo", "SPY").upper()
+    resultado = {"fecha": FECHA, "simbolo": SIMBOLO}
+
+    # Valores de referencia TV (Pine Script 30min) para SPY 05/11/2026
+    TV_REF = {
+        "V1": {"O":738.49, "H":739.21, "L":734.86, "C":735.10},
+        "V2": {"O":735.11, "H":736.36, "L":733.54, "C":733.80},
+        "V3": {"O":733.78, "H":734.04, "L":731.84, "C":732.49},
+        "V4": {"O":732.51, "H":733.48, "L":731.83, "C":732.10},
+        "V5": {"O":732.10, "H":735.20, "L":732.04, "C":735.07},
+        "V6": {"O":735.06, "H":736.56, "L":734.66, "C":735.99},
+        "V7": {"O":736.00, "H":738.84, "L":735.99, "C":738.14},
+    }
+
+    try:
+        # Pedir timesales de 15min (el intervalo mas fino disponible en Tradier)
+        # Intentamos 15min primero, luego 5min si falla
+        velas_raw = []
+        for intervalo in ["15min", "5min"]:
+            r = requests.get(
+                f"{TRADIER_BASE_REAL}/markets/timesales",
+                headers=TRADIER_HEADERS_REAL,
+                params={
+                    "symbol":         SIMBOLO,
+                    "interval":       intervalo,
+                    "start":          f"{FECHA} 09:00",
+                    "end":            f"{FECHA} 16:00",
+                    "session_filter": "open",
+                },
+                timeout=15
+            )
+            resultado[f"status_{intervalo}"] = r.status_code
+            resultado[f"raw_{intervalo}"]    = r.text[:200]
+
+            if r.status_code == 200:
+                data = r.json()
+                series = data.get("series")
+                if series and series != "null" and series is not None:
+                    velas_raw = series.get("data", [])
+                    if isinstance(velas_raw, dict):
+                        velas_raw = [velas_raw]
+                    resultado["intervalo_usado"] = intervalo
+                    resultado["total_barras"]    = len(velas_raw)
+                    resultado["muestra"]         = velas_raw[:3]
+                    break
+                else:
+                    resultado[f"nota_{intervalo}"] = "series null"
+
+        if not velas_raw:
+            resultado["error"] = "Tradier no devolvio datos intraday con ningun intervalo"
+            enviar_telegram(f"❌ <b>Test Tradier 30min</b>\nNo hay datos intraday para {SIMBOLO}")
+            return jsonify(resultado), 200
+
+        # Agrupar barras en velas AXIS de 1h
+        # Vela AXIS = todo lo que ocurre entre HH:00 y HH:59 EST
+        from collections import defaultdict
+        from datetime import datetime
+        import pytz
+
+        EST = pytz.timezone("America/New_York")
+        grupos = defaultdict(list)
+
+        for b in velas_raw:
+            try:
+                dt  = datetime.strptime(b["time"], "%Y-%m-%d %H:%M:%S")
+                dt  = EST.localize(dt)
+                h   = dt.hour
+                # Asignar a vela AXIS segun hora de cierre
+                if   h == 9:  grupos["V1"].append(b)
+                elif h == 10: grupos["V2"].append(b)
+                elif h == 11: grupos["V3"].append(b)
+                elif h == 12: grupos["V4"].append(b)
+                elif h == 13: grupos["V5"].append(b)
+                elif h == 14: grupos["V6"].append(b)
+                elif h == 15: grupos["V7"].append(b)
+            except Exception:
+                continue
+
+        # Construir velas AXIS de 1h
+        velas_axis = {}
+        for vela, barras in sorted(grupos.items()):
+            if not barras:
+                continue
+            o = float(barras[0]["open"])
+            h = max(float(b["high"])  for b in barras)
+            l = min(float(b["low"])   for b in barras)
+            c = float(barras[-1]["close"])
+            velas_axis[vela] = {"O":o, "H":h, "L":l, "C":c, "barras":len(barras)}
+
+        resultado["velas_axis"] = velas_axis
+
+        # Comparar contra TV
+        comparacion = {}
+        for vela, vals in velas_axis.items():
+            if vela not in TV_REF:
+                continue
+            ref = TV_REF[vela]
+            diffs = {
+                "dO": round(abs(vals["O"]-ref["O"]), 2),
+                "dH": round(abs(vals["H"]-ref["H"]), 2),
+                "dL": round(abs(vals["L"]-ref["L"]), 2),
+                "dC": round(abs(vals["C"]-ref["C"]), 2),
+            }
+            max_diff = max(diffs.values())
+            diffs["max_diff"] = max_diff
+            diffs["estado"]   = "✅ OK" if max_diff < 0.15 else ("⚠️ DIFF" if max_diff < 1.0 else "❌ ERROR")
+            comparacion[vela] = diffs
+
+        resultado["comparacion_vs_TV"] = comparacion
+
+        # Resumen Telegram
+        lineas = []
+        for vela in ["V1","V2","V3","V4","V5","V6","V7"]:
+            if vela in velas_axis:
+                v   = velas_axis[vela]
+                cmp = comparacion.get(vela, {})
+                lineas.append(
+                    f"<b>{vela}</b> O:{v['O']:.2f} H:{v['H']:.2f} L:{v['L']:.2f} C:{v['C']:.2f} "
+                    f"| Δmax:{cmp.get('max_diff','?')} {cmp.get('estado','')}"
+                )
+
+        enviar_telegram(
+            f"🔬 <b>Test Tradier 30min — {SIMBOLO} {FECHA}</b>\n"
+            f"<b>Intervalo:</b> {resultado.get('intervalo_usado','ninguno')}\n"
+            f"<b>Barras totales:</b> {resultado.get('total_barras',0)}\n\n" +
+            "\n".join(lineas)
+        )
+
+    except Exception as e:
+        resultado["error"] = str(e)
+        enviar_telegram(f"❌ <b>Test Tradier 30min error:</b> {str(e)}")
+
+    return jsonify(resultado), 200
 
 # ═══════════════════════════════════════════════════════════
 # ARRANQUE
