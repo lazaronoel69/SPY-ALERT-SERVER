@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v8.11
+AXIS Breakout Sentinel v8.12
 Estrategias: 1VR | 1VR+ | RPG | GNA | GBA | RCB/CNF
 Multi-activo: SPY, AAPL, BA, GLD
 Auto-P2 | Apagado automatico si nuevo P2 >= P1
@@ -15,6 +15,7 @@ v8.8: Ruta /tradier_test para diagnosticar token y conexion — si V1 roja cae d
 v8.9: TRADIER_TOKEN_REAL para datos historicos — ruta /tradier_history_test verifica velas 1h de produccion
 v8.10: Ruta /verificar_velas — compara velas 1h TwelveData vs precio real Tradier para validar consistencia de datos
 v8.11: Thread independiente V7 anticipada — AAPL/BA/GLD evaluan V7 a las 3:58 EST y corrigen cierre real a las 4:00 EST sin alerta. SPY sin cambios.
+v8.12: Ruta /charts para servir axis_charts.html — dashboard de graficas AXIS
 """
 
 import requests
@@ -761,7 +762,7 @@ def reporte_horario():
 # LOOP PRINCIPAL
 # ═══════════════════════════════════════════════════════════
 def monitor_loop():
-    print("AXIS Breakout Sentinel v8.11 iniciado...")
+    print("AXIS Breakout Sentinel v8.12 iniciado...")
     while True:
         ahora = datetime.now(EST)
         minutos_hasta_01 = (1 - ahora.minute) % 60
@@ -793,7 +794,7 @@ def home():
             "tipo":    "RCB" if c["p3"] else "CNF" if c["on"] else "OFF",
         }
     return jsonify({
-        "sistema":     "AXIS Breakout Sentinel v8.11",
+        "sistema":     "AXIS Breakout Sentinel v8.12",
         "estado":      "activo" if SISTEMA_ACTIVO else "apagado",
         "hora_est":    ahora.strftime("%A %H:%M EST"),
         "mercado":     "abierto" if es_dia_mercado(ahora) else "cerrado",
@@ -816,7 +817,7 @@ def test():
         else:
             lineas_canal.append(f"  {a}: OFF")
     enviar_telegram(
-        f"✅ <b>AXIS Breakout Sentinel v8.11</b>\n"
+        f"✅ <b>AXIS Breakout Sentinel v8.12</b>\n"
         f"<b>Hora:</b> {ahora.strftime('%A %d/%m/%Y %H:%M EST')}\n"
         f"<b>Mercado:</b> {'Abierto' if es_dia_mercado(ahora) else 'Cerrado'}\n"
         f"<b>1VR:</b> {'ON' if VR1_ON else 'OFF'} | "
@@ -980,6 +981,16 @@ def tradier_test():
 # ═══════════════════════════════════════════════════════════
 # APP WEB — servida desde Railway
 # ═══════════════════════════════════════════════════════════
+@app.route("/charts", methods=["GET"])
+def serve_charts():
+    from flask import Response
+    import os
+    html_path = os.path.join(os.path.dirname(__file__), "axis_charts.html")
+    if os.path.exists(html_path):
+        with open(html_path, "r") as f:
+            return Response(f.read(), mimetype="text/html")
+    return Response("<h1>axis_charts.html no encontrado</h1>", mimetype="text/html"), 404
+
 @app.route("/app", methods=["GET"])
 def serve_app():
     from flask import Response
