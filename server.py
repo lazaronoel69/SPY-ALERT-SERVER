@@ -210,10 +210,10 @@ def get_velas(simbolo, outputsize=50):
         from collections import defaultdict
 
         # Pedir los ultimos dias necesarios segun outputsize
-        # outputsize=50 → ~10 dias de mercado (7 velas AXIS/dia)
-        dias = max(5, outputsize // 7 + 3)
+        # Tradier tiene limite de datos — maximos 45 dias calendario
+        dias = min(45, max(5, outputsize // 7 + 3))
         fecha_fin   = date.today().strftime("%Y-%m-%d")
-        fecha_ini   = (date.today() - timedelta(days=dias*2)).strftime("%Y-%m-%d")
+        fecha_ini   = (date.today() - timedelta(days=dias)).strftime("%Y-%m-%d")
 
         r = requests.get(
             f"{TRADIER_BASE_REAL}/markets/timesales",
@@ -225,7 +225,7 @@ def get_velas(simbolo, outputsize=50):
                 "end":            f"{fecha_fin} 16:30",
                 "session_filter": "open",
             },
-            timeout=15
+            timeout=30
         )
 
         if r.status_code != 200:
