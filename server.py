@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v8.10
+AXIS Breakout Sentinel v8.11
 Estrategias: 1VR | 1VR+ | RPG | GNA | GBA | RCB/CNF
 Multi-activo: SPY, AAPL, BA, GLD
 Auto-P2 | Apagado automatico si nuevo P2 >= P1
@@ -14,6 +14,7 @@ v8.7: 1VR reconstruccion ahora usa enviar_senal_con_botones — botones EJECUTAR
 v8.8: Ruta /tradier_test para diagnosticar token y conexion — si V1 roja cae dentro de canal RCB entre techo y media, alerta dice 1VR+
 v8.9: TRADIER_TOKEN_REAL para datos historicos — ruta /tradier_history_test verifica velas 1h de produccion
 v8.10: Ruta /verificar_velas — compara velas 1h TwelveData vs precio real Tradier para validar consistencia de datos
+v8.11: Thread independiente V7 anticipada — AAPL/BA/GLD evaluan V7 a las 3:58 EST y corrigen cierre real a las 4:00 EST sin alerta. SPY sin cambios.
 """
 
 import requests
@@ -760,7 +761,7 @@ def reporte_horario():
 # LOOP PRINCIPAL
 # ═══════════════════════════════════════════════════════════
 def monitor_loop():
-    print("AXIS Breakout Sentinel v8.10 iniciado...")
+    print("AXIS Breakout Sentinel v8.11 iniciado...")
     while True:
         ahora = datetime.now(EST)
         minutos_hasta_01 = (1 - ahora.minute) % 60
@@ -792,7 +793,7 @@ def home():
             "tipo":    "RCB" if c["p3"] else "CNF" if c["on"] else "OFF",
         }
     return jsonify({
-        "sistema":     "AXIS Breakout Sentinel v8.10",
+        "sistema":     "AXIS Breakout Sentinel v8.11",
         "estado":      "activo" if SISTEMA_ACTIVO else "apagado",
         "hora_est":    ahora.strftime("%A %H:%M EST"),
         "mercado":     "abierto" if es_dia_mercado(ahora) else "cerrado",
@@ -815,7 +816,7 @@ def test():
         else:
             lineas_canal.append(f"  {a}: OFF")
     enviar_telegram(
-        f"✅ <b>AXIS Breakout Sentinel v8.10</b>\n"
+        f"✅ <b>AXIS Breakout Sentinel v8.11</b>\n"
         f"<b>Hora:</b> {ahora.strftime('%A %d/%m/%Y %H:%M EST')}\n"
         f"<b>Mercado:</b> {'Abierto' if es_dia_mercado(ahora) else 'Cerrado'}\n"
         f"<b>1VR:</b> {'ON' if VR1_ON else 'OFF'} | "
@@ -1304,11 +1305,101 @@ def verificar_velas():
     return jsonify(resultado), 200
 
 # ═══════════════════════════════════════════════════════════
+# V7 ANTICIPADA — AAPL, BA, GLD (v8.11)
+# -------------------------------------------------------
+# DECISION MVP: thread independiente para no tocar monitor_loop.
+# Logica:
+#   3:58 EST → evalua V7 con precio disponible → dispara alerta si hay señal
+#   4:00 EST → lee cierre real → corrige v7_close interno → sin alerta
+# SPY no aplica — sigue evaluandose en monitor_loop a las 4:01 EST
+# ═══════════════════════════════════════════════════════════
+ACTIVOS_V7_ANTICIPADA = ["AAPL", "BA", "GLD"]
+
+def evaluar_v7_anticipada(simbolo):
+    """Evalua V7 a las 3:58 EST para activos que cierran a las 4:00 EST."""
+    ahora = datetime.now(EST)
+    print(f"V7 anticipada {simbolo} — {ahora.strftime('%H:%M EST')}")
+    try:
+        velas = get_velas(simbolo, outputsize=50)
+        if velas:
+            evaluar_activo(simbolo, velas, ahora.replace(hour=16, minute=1))
+        else:
+            print(f"V7 anticipada {simbolo}: sin datos TwelveData")
+    except Exception as e:
+        print(f"Error V7 anticipada {simbolo}: {e}")
+
+def corregir_cierre_v7(simbolo):
+    """
+    A las 4:00 EST lee el cierre real y corrige v7_close interno.
+    Sin alerta — solo actualiza el estado para que el sistema
+    tenga el dato correcto si lo necesita en sesiones futuras.
+    """
+    print(f"Correccion cierre V7 {simbolo} — {datetime.now(EST).strftime('%H:%M EST')}")
+    try:
+        velas = get_velas(simbolo, outputsize=10)
+        if not velas:
+            return
+        fecha_hoy = datetime.now(EST).strftime("%Y-%m-%d")
+        for v in velas:
+            dt_str = v["datetime"]
+            if dt_str.startswith(fecha_hoy) and int(dt_str[11:13]) == 15:
+                cierre_real = float(v["close"])
+                # Actualizar v7_ayer_close para que mañana lo use correctamente
+                estado_dia[simbolo]["v7_ayer_close"] = cierre_real
+                print(f"Correccion V7 {simbolo}: cierre real ${cierre_real:.2f} registrado")
+                return
+        print(f"Correccion V7 {simbolo}: vela 15h no encontrada aun")
+    except Exception as e:
+        print(f"Error correccion V7 {simbolo}: {e}")
+
+def loop_v7_anticipada():
+    """
+    Thread independiente que vigila 3:58 y 4:00 EST
+    solo en dias de mercado para AAPL, BA, GLD.
+    """
+    print("Thread V7 anticipada iniciado...")
+    ejecutado_358 = set()   # activos evaluados a las 3:58 hoy
+    ejecutado_400 = set()   # activos corregidos a las 4:00 hoy
+    fecha_actual  = None
+
+    while True:
+        try:
+            ahora      = datetime.now(EST)
+            fecha_hoy  = ahora.strftime("%Y-%m-%d")
+
+            # Reset diario
+            if fecha_hoy != fecha_actual:
+                fecha_actual  = fecha_hoy
+                ejecutado_358 = set()
+                ejecutado_400 = set()
+
+            if es_dia_mercado(ahora):
+                # 3:58 EST — evaluacion anticipada V7
+                if ahora.hour == 15 and ahora.minute == 58:
+                    for simbolo in ACTIVOS_V7_ANTICIPADA:
+                        if simbolo not in ejecutado_358:
+                            evaluar_v7_anticipada(simbolo)
+                            ejecutado_358.add(simbolo)
+
+                # 4:00 EST — correccion cierre real sin alerta
+                if ahora.hour == 16 and ahora.minute == 0:
+                    for simbolo in ACTIVOS_V7_ANTICIPADA:
+                        if simbolo not in ejecutado_400:
+                            corregir_cierre_v7(simbolo)
+                            ejecutado_400.add(simbolo)
+
+            time.sleep(30)   # chequea cada 30 segundos — liviano y preciso
+        except Exception as e:
+            print(f"Error loop V7 anticipada: {e}")
+            time.sleep(30)
+
+# ═══════════════════════════════════════════════════════════
 # ARRANQUE
 # ═══════════════════════════════════════════════════════════
 def arrancar_monitor():
     time.sleep(5)
-    threading.Thread(target=monitor_loop, daemon=True).start()
+    threading.Thread(target=monitor_loop,        daemon=True).start()
+    threading.Thread(target=loop_v7_anticipada,  daemon=True).start()
 
 threading.Thread(target=arrancar_monitor, daemon=True).start()
 
