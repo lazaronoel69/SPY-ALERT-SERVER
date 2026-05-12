@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v8.9
+AXIS Breakout Sentinel v8.10
 Estrategias: 1VR | 1VR+ | RPG | GNA | GBA | RCB/CNF
 Multi-activo: SPY, AAPL, BA, GLD
 Auto-P2 | Apagado automatico si nuevo P2 >= P1
@@ -13,6 +13,7 @@ v8.6: Manejo robusto error Tradier — alerta llega siempre aunque Tradier falle
 v8.7: 1VR reconstruccion ahora usa enviar_senal_con_botones — botones EJECUTAR/IGNORAR
 v8.8: Ruta /tradier_test para diagnosticar token y conexion — si V1 roja cae dentro de canal RCB entre techo y media, alerta dice 1VR+
 v8.9: TRADIER_TOKEN_REAL para datos historicos — ruta /tradier_history_test verifica velas 1h de produccion
+v8.10: Ruta /verificar_velas — compara velas 1h TwelveData vs precio real Tradier para validar consistencia de datos
 """
 
 import requests
@@ -759,7 +760,7 @@ def reporte_horario():
 # LOOP PRINCIPAL
 # ═══════════════════════════════════════════════════════════
 def monitor_loop():
-    print("AXIS Breakout Sentinel v8.9 iniciado...")
+    print("AXIS Breakout Sentinel v8.10 iniciado...")
     while True:
         ahora = datetime.now(EST)
         minutos_hasta_01 = (1 - ahora.minute) % 60
@@ -791,7 +792,7 @@ def home():
             "tipo":    "RCB" if c["p3"] else "CNF" if c["on"] else "OFF",
         }
     return jsonify({
-        "sistema":     "AXIS Breakout Sentinel v8.9",
+        "sistema":     "AXIS Breakout Sentinel v8.10",
         "estado":      "activo" if SISTEMA_ACTIVO else "apagado",
         "hora_est":    ahora.strftime("%A %H:%M EST"),
         "mercado":     "abierto" if es_dia_mercado(ahora) else "cerrado",
@@ -814,7 +815,7 @@ def test():
         else:
             lineas_canal.append(f"  {a}: OFF")
     enviar_telegram(
-        f"✅ <b>AXIS Breakout Sentinel v8.9</b>\n"
+        f"✅ <b>AXIS Breakout Sentinel v8.10</b>\n"
         f"<b>Hora:</b> {ahora.strftime('%A %d/%m/%Y %H:%M EST')}\n"
         f"<b>Mercado:</b> {'Abierto' if es_dia_mercado(ahora) else 'Cerrado'}\n"
         f"<b>1VR:</b> {'ON' if VR1_ON else 'OFF'} | "
@@ -1176,6 +1177,131 @@ def tradier_history_test():
     )
 
     return jsonify(resultados), 200
+
+# ═══════════════════════════════════════════════════════════
+# VERIFICACION DE VELAS — TwelveData vs Tradier v8.10
+# Compara las 7 velas AXIS del lunes 2026-05-11 para SPY
+# ═══════════════════════════════════════════════════════════
+@app.route("/verificar_velas", methods=["GET"])
+def verificar_velas():
+    FECHA      = "2026-05-11"
+    SIMBOLO    = request.args.get("activo", "SPY").upper()
+    resultado  = {"fecha": FECHA, "simbolo": SIMBOLO}
+
+    # ── TWELVEDATA — velas 1h del dia ──
+    try:
+        r = requests.get(
+            "https://api.twelvedata.com/time_series",
+            params={
+                "symbol":     SIMBOLO,
+                "interval":   "1h",
+                "outputsize": 50,
+                "timezone":   "America/New_York",
+                "apikey":     TWELVEDATA_KEY,
+            },
+            timeout=15
+        )
+        data = r.json()
+        todas = data.get("values", [])
+
+        # Filtrar solo las 7 velas AXIS del 2026-05-11 (horas 9-15 EST = cierre 10:00-16:00)
+        velas_axis = []
+        for v in todas:
+            dt_str = v["datetime"]
+            if dt_str.startswith(FECHA):
+                hora = int(dt_str[11:13])
+                if 9 <= hora <= 15:
+                    velas_axis.append({
+                        "vela":        f"V{hora - 8}",
+                        "hora_cierre": f"{hora + 1}:00 EST",
+                        "open":        float(v["open"]),
+                        "high":        float(v["high"]),
+                        "low":         float(v["low"]),
+                        "close":       float(v["close"]),
+                    })
+
+        velas_axis.reverse()
+        resultado["twelvedata"] = {
+            "total_velas_dia": len(velas_axis),
+            "velas": velas_axis,
+        }
+    except Exception as e:
+        resultado["twelvedata"] = {"error": str(e)}
+
+    # ── TRADIER PRODUCCION — historial diario del mismo dia ──
+    try:
+        r2 = requests.get(
+            f"{TRADIER_BASE_REAL}/markets/history",
+            headers=TRADIER_HEADERS_REAL,
+            params={
+                "symbol":   SIMBOLO,
+                "interval": "daily",
+                "start":    FECHA,
+                "end":      FECHA,
+            },
+            timeout=15
+        )
+        data2 = r2.json()
+        hist  = data2.get("history", {})
+        dia   = hist.get("day", {}) if hist and hist != "null" else {}
+        if isinstance(dia, list):
+            dia = dia[0] if dia else {}
+        resultado["tradier"] = {
+            "fecha":  dia.get("date"),
+            "open":   float(dia.get("open",  0)) if dia else None,
+            "high":   float(dia.get("high",  0)) if dia else None,
+            "low":    float(dia.get("low",   0)) if dia else None,
+            "close":  float(dia.get("close", 0)) if dia else None,
+            "volume": dia.get("volume"),
+            "nota":   "Tradier solo da vela diaria — se compara open V1 y close V7 de TwelveData",
+        }
+    except Exception as e:
+        resultado["tradier"] = {"error": str(e)}
+
+    # ── COMPARACION DIRECTA ──
+    try:
+        td = resultado.get("twelvedata", {})
+        tr = resultado.get("tradier", {})
+        v1 = next((v for v in td.get("velas", []) if v["vela"] == "V1"), None)
+        v7 = next((v for v in td.get("velas", []) if v["vela"] == "V7"), None)
+
+        if v1 and v7 and tr.get("open"):
+            diff_open  = round(abs(v1["open"]  - tr["open"]),  2)
+            diff_close = round(abs(v7["close"] - tr["close"]), 2)
+            resultado["comparacion"] = {
+                "open_V1_twelve":        v1["open"],
+                "open_diario_tradier":   tr["open"],
+                "diferencia_open":       diff_open,
+                "close_V7_twelve":       v7["close"],
+                "close_diario_tradier":  tr["close"],
+                "diferencia_close":      diff_close,
+                "veredicto": "✅ DATOS CONSISTENTES" if diff_open < 0.10 and diff_close < 0.10 else "⚠️ REVISAR — diferencia mayor a $0.10",
+            }
+        else:
+            resultado["comparacion"] = {"nota": "Datos insuficientes para comparar"}
+    except Exception as e:
+        resultado["comparacion"] = {"error": str(e)}
+
+    # ── RESUMEN A TELEGRAM ──
+    try:
+        comp  = resultado.get("comparacion", {})
+        velas = resultado.get("twelvedata", {}).get("velas", [])
+        lineas = "\n".join(
+            f"  {v['vela']} {v['hora_cierre']} O:{v['open']:.2f} H:{v['high']:.2f} L:{v['low']:.2f} C:{v['close']:.2f}"
+            for v in velas
+        )
+        tr = resultado.get("tradier", {})
+        enviar_telegram(
+            f"🔍 <b>Verificación Velas {SIMBOLO} — {FECHA}</b>\n\n"
+            f"<b>TwelveData — 7 velas AXIS:</b>\n{lineas}\n\n"
+            f"<b>Tradier diario:</b> O:{tr.get('open')} H:{tr.get('high')} L:{tr.get('low')} C:{tr.get('close')}\n\n"
+            f"<b>Veredicto:</b> {comp.get('veredicto', comp.get('nota', 'sin datos'))}\n"
+            f"Δ Open: ${comp.get('diferencia_open', 'N/A')} | Δ Close: ${comp.get('diferencia_close', 'N/A')}"
+        )
+    except Exception as e:
+        print(f"Error Telegram verificar_velas: {e}")
+
+    return jsonify(resultado), 200
 
 # ═══════════════════════════════════════════════════════════
 # ARRANQUE
