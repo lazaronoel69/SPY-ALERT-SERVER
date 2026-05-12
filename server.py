@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v8.20
+AXIS Breakout Sentinel v8.21
 Estrategias: 1VR | 1VR+ | RPG | GNA | GBA | RCB/CNF
 Multi-activo: SPY, AAPL, BA, GLD
 Auto-P2 | Apagado automatico si nuevo P2 >= P1
@@ -220,9 +220,9 @@ def get_velas(simbolo, outputsize=50):
             return actual
 
         fecha_fin  = date.today()
-        fecha_mid2 = restar_dias_habiles(fecha_fin, 30)
-        fecha_mid1 = restar_dias_habiles(fecha_fin, 60)
-        fecha_ini  = restar_dias_habiles(fecha_fin, 90)
+        fecha_mid2 = restar_dias_habiles(fecha_fin, 40)
+        fecha_mid1 = restar_dias_habiles(fecha_fin, 80)
+        fecha_ini  = restar_dias_habiles(fecha_fin, 120)
 
         todas_barras = []
 
@@ -865,7 +865,7 @@ def reporte_horario():
 # LOOP PRINCIPAL
 # ═══════════════════════════════════════════════════════════
 def monitor_loop():
-    print("AXIS Breakout Sentinel v8.20 iniciado...")
+    print("AXIS Breakout Sentinel v8.21 iniciado...")
     while True:
         ahora = datetime.now(EST)
         minutos_hasta_01 = (1 - ahora.minute) % 60
@@ -897,7 +897,7 @@ def home():
             "tipo":    "RCB" if c["p3"] else "CNF" if c["on"] else "OFF",
         }
     return jsonify({
-        "sistema":     "AXIS Breakout Sentinel v8.20",
+        "sistema":     "AXIS Breakout Sentinel v8.21",
         "estado":      "activo" if SISTEMA_ACTIVO else "apagado",
         "hora_est":    ahora.strftime("%A %H:%M EST"),
         "mercado":     "abierto" if es_dia_mercado(ahora) else "cerrado",
@@ -920,7 +920,7 @@ def test():
         else:
             lineas_canal.append(f"  {a}: OFF")
     enviar_telegram(
-        f"✅ <b>AXIS Breakout Sentinel v8.20</b>\n"
+        f"✅ <b>AXIS Breakout Sentinel v8.21</b>\n"
         f"<b>Hora:</b> {ahora.strftime('%A %d/%m/%Y %H:%M EST')}\n"
         f"<b>Mercado:</b> {'Abierto' if es_dia_mercado(ahora) else 'Cerrado'}\n"
         f"<b>1VR:</b> {'ON' if VR1_ON else 'OFF'} | "
