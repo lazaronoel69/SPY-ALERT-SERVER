@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v8.14
+AXIS Breakout Sentinel v8.16
 Estrategias: 1VR | 1VR+ | RPG | GNA | GBA | RCB/CNF
 Multi-activo: SPY, AAPL, BA, GLD
 Auto-P2 | Apagado automatico si nuevo P2 >= P1
@@ -18,6 +18,8 @@ v8.11: Thread independiente V7 anticipada — AAPL/BA/GLD evaluan V7 a las 3:58 
 v8.12: Ruta /charts para servir axis_charts.html — dashboard de graficas AXIS
 v8.13: Ruta /test_tradier_30min — verifica si Tradier produccion tiene velas de 30min y construye velas AXIS de 1h para comparar vs TradingView
 v8.14: Fix parser timestamp ISO en test_tradier_30min — agrupacion correcta de barras 15min en velas AXIS de 1h
+v8.15: Fix agrupacion AXIS — ignorar barras pre-AXIS (9:30 y 9:45), V1 empieza en barra 10:00
+v8.16: Ruta /comparar_fuentes — compara TwelveData vs Tradier 15min para HOY, muestra OHLC lado a lado por vela AXIS
 """
 
 import requests
@@ -764,7 +766,7 @@ def reporte_horario():
 # LOOP PRINCIPAL
 # ═══════════════════════════════════════════════════════════
 def monitor_loop():
-    print("AXIS Breakout Sentinel v8.14 iniciado...")
+    print("AXIS Breakout Sentinel v8.16 iniciado...")
     while True:
         ahora = datetime.now(EST)
         minutos_hasta_01 = (1 - ahora.minute) % 60
@@ -796,7 +798,7 @@ def home():
             "tipo":    "RCB" if c["p3"] else "CNF" if c["on"] else "OFF",
         }
     return jsonify({
-        "sistema":     "AXIS Breakout Sentinel v8.14",
+        "sistema":     "AXIS Breakout Sentinel v8.16",
         "estado":      "activo" if SISTEMA_ACTIVO else "apagado",
         "hora_est":    ahora.strftime("%A %H:%M EST"),
         "mercado":     "abierto" if es_dia_mercado(ahora) else "cerrado",
@@ -819,7 +821,7 @@ def test():
         else:
             lineas_canal.append(f"  {a}: OFF")
     enviar_telegram(
-        f"✅ <b>AXIS Breakout Sentinel v8.14</b>\n"
+        f"✅ <b>AXIS Breakout Sentinel v8.16</b>\n"
         f"<b>Hora:</b> {ahora.strftime('%A %d/%m/%Y %H:%M EST')}\n"
         f"<b>Mercado:</b> {'Abierto' if es_dia_mercado(ahora) else 'Cerrado'}\n"
         f"<b>1VR:</b> {'ON' if VR1_ON else 'OFF'} | "
@@ -1468,39 +1470,37 @@ def test_tradier_30min():
             enviar_telegram(f"❌ <b>Test Tradier 30min</b>\nNo hay datos intraday para {SIMBOLO}")
             return jsonify(resultado), 200
 
-        # Agrupar barras en velas AXIS de 1h
-        # Tradier empieza a las 9:30 EST
-        # Cada vela AXIS = barras cuyo cierre cae dentro de la hora AXIS
-        # V1 cierra a las 10:00 → barras 9:30, 9:45, 10:00 (hora 9 y primera de hora 10 hasta :00)
-        # Regla simple: barra pertenece a la vela cuya hora de cierre AXIS es la proxima hora en punto
+        # ── Agrupacion correcta de barras 15min en velas AXIS ──
+        # AXIS empieza a las 10:00 EST — ignorar barras 9:30 y 9:45 (pre-AXIS)
+        # V1 = barras 10:00, 10:15, 10:30, 10:45 (la vela cierra cuando empieza V2)
+        # V2 = barras 11:00, 11:15, 11:30, 11:45
+        # ...
+        # V7 = barras 16:00 (solo el cierre final)
+        #
+        # Regla: barra de HH:MM pertenece a vela AXIS numero (HH - 9)
+        # Solo horas 10, 11, 12, 13, 14, 15 — ignorar hora 9 completa
         from collections import defaultdict
-        from datetime import datetime, timezone, timedelta
+        from datetime import datetime
 
         grupos = defaultdict(list)
 
         for b in velas_raw:
             try:
-                # Tradier devuelve ISO: "2026-05-11T09:30:00"
                 ts_str = b["time"].replace("T", " ")
                 dt = datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S")
                 h  = dt.hour
-                m  = dt.minute
 
-                # Determinar a qué vela AXIS pertenece esta barra
-                # La barra de HH:MM pertenece a la vela que cierra a las (HH+1):00
-                # Excepto si es exactamente :00 → pertenece a la vela que cierra esa misma hora
-                # Ej: 9:30, 9:45 → V1 (cierra 10:00)
-                #     10:00       → V1 (es el cierre de V1)
-                #     10:15, 10:30, 10:45 → V2 (cierra 11:00)
-                #     11:00       → V2
+                # Ignorar barras pre-AXIS (hora 9 = 9:30, 9:45)
+                if h < 10:
+                    continue
 
-                if m == 0:
-                    cierre_hora = h        # barra :00 cierra la vela anterior
-                else:
-                    cierre_hora = h + 1    # barra :15/:30/:45 va a la siguiente hora
+                # Ignorar barras post-AXIS (hora > 16)
+                if h > 16:
+                    continue
 
+                # Asignar vela AXIS — barra de hora H va a vela (H - 9)
                 vela_map = {10:"V1", 11:"V2", 12:"V3", 13:"V4", 14:"V5", 15:"V6", 16:"V7"}
-                vela = vela_map.get(cierre_hora)
+                vela = vela_map.get(h)
                 if vela:
                     grupos[vela].append(b)
             except Exception as ex:
@@ -1560,6 +1560,163 @@ def test_tradier_30min():
     except Exception as e:
         resultado["error"] = str(e)
         enviar_telegram(f"❌ <b>Test Tradier 30min error:</b> {str(e)}")
+
+    return jsonify(resultado), 200
+
+# ═══════════════════════════════════════════════════════════
+# COMPARAR FUENTES — v8.16
+# Compara TwelveData vs Tradier 15min para HOY
+# Muestra OHLC lado a lado por vela AXIS
+# ═══════════════════════════════════════════════════════════
+@app.route("/comparar_fuentes", methods=["GET"])
+def comparar_fuentes():
+    from datetime import date, datetime
+    from collections import defaultdict
+
+    SIMBOLO = request.args.get("activo", "SPY").upper()
+    FECHA   = date.today().strftime("%Y-%m-%d")
+    resultado = {"fecha": FECHA, "simbolo": SIMBOLO}
+
+    # ── 1. TwelveData — velas 1h de hoy ──
+    try:
+        r = requests.get(
+            "https://api.twelvedata.com/time_series",
+            params={
+                "symbol":     SIMBOLO,
+                "interval":   "1h",
+                "outputsize": 20,
+                "timezone":   "America/New_York",
+                "apikey":     TWELVEDATA_KEY,
+            },
+            timeout=15
+        )
+        data = r.json()
+        velas_td = {}
+        for v in data.get("values", []):
+            if not v["datetime"].startswith(FECHA):
+                continue
+            h = int(v["datetime"][11:13])
+            # TwelveData marca hora de apertura — mapeamos a vela AXIS
+            # h=9 → V1(9:30-10:00), h=10→V2, h=11→V3, h=12→V4, h=13→V5, h=14→V6, h=15→V7
+            vela_map = {9:"V1",10:"V2",11:"V3",12:"V4",13:"V5",14:"V6",15:"V7"}
+            vela = vela_map.get(h)
+            if vela:
+                velas_td[vela] = {
+                    "O": round(float(v["open"]),  2),
+                    "H": round(float(v["high"]),  2),
+                    "L": round(float(v["low"]),   2),
+                    "C": round(float(v["close"]), 2),
+                }
+        resultado["twelvedata"] = velas_td
+    except Exception as e:
+        resultado["twelvedata_error"] = str(e)
+
+    # ── 2. Tradier 15min — construir velas AXIS ──
+    try:
+        r2 = requests.get(
+            f"{TRADIER_BASE_REAL}/markets/timesales",
+            headers=TRADIER_HEADERS_REAL,
+            params={
+                "symbol":         SIMBOLO,
+                "interval":       "15min",
+                "start":          f"{FECHA} 09:00",
+                "end":            f"{FECHA} 16:30",
+                "session_filter": "open",
+            },
+            timeout=15
+        )
+        data2  = r2.json()
+        series = data2.get("series")
+        barras = []
+        if series and series != "null":
+            barras = series.get("data", [])
+            if isinstance(barras, dict):
+                barras = [barras]
+
+        # Agrupar barras en velas AXIS
+        # V1 = 9:30-10:00 (barras 9:30, 9:45)
+        # V2 = 10:00-11:00 (barras 10:00,10:15,10:30,10:45)
+        # V3-V7 = igual, cada hora completa
+        grupos = defaultdict(list)
+        for b in barras:
+            ts_str = b["time"].replace("T"," ")
+            dt = datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S")
+            h, m = dt.hour, dt.minute
+            if h == 9 and m in (30, 45):
+                grupos["V1"].append(b)
+            elif h == 10: grupos["V2"].append(b)
+            elif h == 11: grupos["V3"].append(b)
+            elif h == 12: grupos["V4"].append(b)
+            elif h == 13: grupos["V5"].append(b)
+            elif h == 14: grupos["V6"].append(b)
+            elif h == 15: grupos["V7"].append(b)
+
+        velas_tr = {}
+        for vela, bs in sorted(grupos.items()):
+            if not bs: continue
+            velas_tr[vela] = {
+                "O": round(float(bs[0]["open"]),              2),
+                "H": round(max(float(b["high"]) for b in bs), 2),
+                "L": round(min(float(b["low"])  for b in bs), 2),
+                "C": round(float(bs[-1]["close"]),            2),
+                "barras": len(bs),
+            }
+        resultado["tradier_15min"] = velas_tr
+    except Exception as e:
+        resultado["tradier_error"] = str(e)
+
+    # ── 3. Comparacion lado a lado ──
+    comparacion = {}
+    velas_td = resultado.get("twelvedata", {})
+    velas_tr = resultado.get("tradier_15min", {})
+    todas = sorted(set(list(velas_td.keys()) + list(velas_tr.keys())))
+
+    for vela in todas:
+        td = velas_td.get(vela)
+        tr = velas_tr.get(vela)
+        if not td or not tr:
+            comparacion[vela] = {"nota": "falta en una fuente"}
+            continue
+        diffs = {campo: round(abs(td[campo] - tr[campo]), 2) for campo in ["O","H","L","C"]}
+        max_d = max(diffs.values())
+        coinciden = max_d < 0.15
+        comparacion[vela] = {
+            "TD_O": td["O"], "TR_O": tr["O"], "dO": diffs["O"],
+            "TD_H": td["H"], "TR_H": tr["H"], "dH": diffs["H"],
+            "TD_L": td["L"], "TR_L": tr["L"], "dL": diffs["L"],
+            "TD_C": td["C"], "TR_C": tr["C"], "dC": diffs["C"],
+            "max_diff": max_d,
+            "estado": "✅ OK" if coinciden else ("⚠️ DIFF" if max_d < 1.0 else "❌ ERROR"),
+        }
+    resultado["comparacion"] = comparacion
+
+    # ── 4. Veredicto final ──
+    errores   = sum(1 for v in comparacion.values() if isinstance(v, dict) and v.get("estado","").startswith("❌"))
+    warnings  = sum(1 for v in comparacion.values() if isinstance(v, dict) and v.get("estado","").startswith("⚠️"))
+    oks       = sum(1 for v in comparacion.values() if isinstance(v, dict) and v.get("estado","").startswith("✅"))
+    resultado["veredicto"] = f"✅ {oks} OK | ⚠️ {warnings} DIFF | ❌ {errores} ERROR"
+
+    # ── 5. Telegram ──
+    lineas = []
+    for vela in todas:
+        c = comparacion.get(vela, {})
+        if "nota" in c:
+            lineas.append(f"<b>{vela}</b>: sin datos completos")
+            continue
+        td = velas_td.get(vela, {})
+        tr = velas_tr.get(vela, {})
+        lineas.append(
+            f"<b>{vela}</b> {c.get('estado','')}\n"
+            f"  TD: O{td['O']} H{td['H']} L{td['L']} C{td['C']}\n"
+            f"  TR: O{tr['O']} H{tr['H']} L{tr['L']} C{tr['C']}\n"
+            f"  Δmax: ${c.get('max_diff','?')}"
+        )
+
+    enviar_telegram(
+        f"🔬 <b>Comparacion Fuentes {SIMBOLO} — {FECHA}</b>\n"
+        f"<b>Resultado:</b> {resultado['veredicto']}\n\n" +
+        "\n".join(lineas)
+    )
 
     return jsonify(resultado), 200
 
