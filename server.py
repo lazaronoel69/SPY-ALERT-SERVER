@@ -195,29 +195,25 @@ def enviar_telegram(mensaje):
         print(f"Error Telegram: {e}")
 
 # ═══════════════════════════════════════════════════════════
-# TWELVE DATA
+# UTILIDAD — Dias habiles (funcion global)
 # ═══════════════════════════════════════════════════════════
+def restar_dias_habiles(fecha, dias):
+    actual = fecha
+    contados = 0
+    while contados < dias:
+        actual -= timedelta(days=1)
+        if actual.weekday() < 5:
+            contados += 1
+    return actual
+
 # ═══════════════════════════════════════════════════════════
 # GET_VELAS — Tradier produccion 15min → velas AXIS
-# Reemplaza TwelveData completamente desde v8.17
 # V1 = 9:30+9:45 | V2-V7 = 4 barras de 15min cada una
-# Retorna lista de dicts con keys: datetime, open, high, low, close
-# en el mismo formato que usaba TwelveData para compatibilidad
 # ═══════════════════════════════════════════════════════════
 def get_velas(simbolo, outputsize=50):
     try:
         from datetime import date, datetime as dt2
         from collections import defaultdict
-
-        # Calcular fecha inicio con dias habiles reales (sin numpy)
-        def restar_dias_habiles(fecha, dias):
-            actual = fecha
-            contados = 0
-            while contados < dias:
-                actual -= timedelta(days=1)
-                if actual.weekday() < 5:  # lunes=0 a viernes=4
-                    contados += 1
-            return actual
 
         fecha_fin  = date.today()
         fecha_mid2 = restar_dias_habiles(fecha_fin, 40)
