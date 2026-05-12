@@ -1824,18 +1824,40 @@ def comparar_fuentes():
 # ═══════════════════════════════════════════════════════════
 @app.route("/velas", methods=["GET"])
 def ruta_velas():
-    simbolo = request.args.get("simbolo", "SPY").upper()
-    dias    = int(request.args.get("dias", 90))
-    outputsize = dias * 7  # ~7 velas AXIS por dia
+    from datetime import date
 
-    velas = get_velas(simbolo, outputsize=outputsize)
+    simbolo = request.args.get("simbolo", "SPY").upper()
+
+    def restar_habiles(fecha, dias):
+        actual = fecha
+        contados = 0
+        while contados < dias:
+            actual -= timedelta(days=1)
+            if actual.weekday() < 5:
+                contados += 1
+        return actual
+
+    fecha_fin  = date.today()
+    fecha_mid2 = restar_habiles(fecha_fin, 40)
+    fecha_mid1 = restar_habiles(fecha_fin, 80)
+    fecha_ini  = restar_habiles(fecha_fin, 120)
+
+    debug_fechas = {
+        "fecha_ini":  fecha_ini.strftime("%Y-%m-%d"),
+        "fecha_mid1": fecha_mid1.strftime("%Y-%m-%d"),
+        "fecha_mid2": fecha_mid2.strftime("%Y-%m-%d"),
+        "fecha_fin":  fecha_fin.strftime("%Y-%m-%d"),
+    }
+
+    velas = get_velas(simbolo, outputsize=840)
     if not velas:
-        return jsonify({"error": f"Sin datos para {simbolo}"}), 500
+        return jsonify({"error": f"Sin datos para {simbolo}", "debug": debug_fechas}), 500
 
     return jsonify({
         "simbolo": simbolo,
         "fuente":  "Tradier 15min",
         "total":   len(velas),
+        "debug":   debug_fechas,
         "velas":   velas,
     }), 200
 
