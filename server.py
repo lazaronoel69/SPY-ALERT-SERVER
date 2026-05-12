@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v8.8
+AXIS Breakout Sentinel v8.9
 Estrategias: 1VR | 1VR+ | RPG | GNA | GBA | RCB/CNF
 Multi-activo: SPY, AAPL, BA, GLD
 Auto-P2 | Apagado automatico si nuevo P2 >= P1
@@ -12,6 +12,7 @@ v8.5: RPG umbral bajado de 0.5% a 0.2%
 v8.6: Manejo robusto error Tradier — alerta llega siempre aunque Tradier falle
 v8.7: 1VR reconstruccion ahora usa enviar_senal_con_botones — botones EJECUTAR/IGNORAR
 v8.8: Ruta /tradier_test para diagnosticar token y conexion — si V1 roja cae dentro de canal RCB entre techo y media, alerta dice 1VR+
+v8.9: TRADIER_TOKEN_REAL para datos historicos — ruta /tradier_history_test verifica velas 1h de produccion
 """
 
 import requests
@@ -46,13 +47,21 @@ TWELVEDATA_KEY   = "66dd71373a884f7bb7da8e6e5e469571"
 FINNHUB_KEY      = "d71aocpr01qot5jcnohgd71aocpr01qot5jcnoi0"
 EST              = pytz.timezone("America/New_York")
 
-# ── TRADIER SANDBOX ──
+# ── TRADIER SANDBOX (ordenes paper trading) ──
 import os
 TRADIER_TOKEN   = os.environ.get("TRADIER_TOKEN", "")
 TRADIER_ACCOUNT = os.environ.get("TRADIER_ACCOUNT", "")
 TRADIER_BASE    = "https://sandbox.tradier.com/v1"
 TRADIER_HEADERS = {
     "Authorization": f"Bearer {TRADIER_TOKEN}",
+    "Accept":        "application/json",
+}
+
+# ── TRADIER PRODUCCION (datos historicos de mercado) ──
+TRADIER_TOKEN_REAL   = os.environ.get("TRADIER_TOKEN_REAL", "")
+TRADIER_BASE_REAL    = "https://api.tradier.com/v1"
+TRADIER_HEADERS_REAL = {
+    "Authorization": f"Bearer {TRADIER_TOKEN_REAL}",
     "Accept":        "application/json",
 }
 
@@ -750,7 +759,7 @@ def reporte_horario():
 # LOOP PRINCIPAL
 # ═══════════════════════════════════════════════════════════
 def monitor_loop():
-    print("AXIS Breakout Sentinel v8.8 iniciado...")
+    print("AXIS Breakout Sentinel v8.9 iniciado...")
     while True:
         ahora = datetime.now(EST)
         minutos_hasta_01 = (1 - ahora.minute) % 60
@@ -782,7 +791,7 @@ def home():
             "tipo":    "RCB" if c["p3"] else "CNF" if c["on"] else "OFF",
         }
     return jsonify({
-        "sistema":     "AXIS Breakout Sentinel v8.8",
+        "sistema":     "AXIS Breakout Sentinel v8.9",
         "estado":      "activo" if SISTEMA_ACTIVO else "apagado",
         "hora_est":    ahora.strftime("%A %H:%M EST"),
         "mercado":     "abierto" if es_dia_mercado(ahora) else "cerrado",
@@ -805,7 +814,7 @@ def test():
         else:
             lineas_canal.append(f"  {a}: OFF")
     enviar_telegram(
-        f"✅ <b>AXIS Breakout Sentinel v8.8</b>\n"
+        f"✅ <b>AXIS Breakout Sentinel v8.9</b>\n"
         f"<b>Hora:</b> {ahora.strftime('%A %d/%m/%Y %H:%M EST')}\n"
         f"<b>Mercado:</b> {'Abierto' if es_dia_mercado(ahora) else 'Cerrado'}\n"
         f"<b>1VR:</b> {'ON' if VR1_ON else 'OFF'} | "
@@ -1056,6 +1065,117 @@ def telegram_webhook():
         print(f"Error webhook: {e}")
 
     return jsonify({"ok": True}), 200
+
+# ═══════════════════════════════════════════════════════════
+# TRADIER PRODUCCION — TEST DATOS HISTORICOS v8.9
+# ═══════════════════════════════════════════════════════════
+@app.route("/tradier_history_test", methods=["GET"])
+def tradier_history_test():
+    if not TRADIER_TOKEN_REAL:
+        return jsonify({"error": "TRADIER_TOKEN_REAL no configurado en Railway"}), 400
+
+    resultados = {}
+
+    # Test 1 — precio actual SPY (confirma que el token real funciona)
+    try:
+        r = requests.get(
+            f"{TRADIER_BASE_REAL}/markets/quotes",
+            headers=TRADIER_HEADERS_REAL,
+            params={"symbols": "SPY"},
+            timeout=10
+        )
+        resultados["precio_status"] = r.status_code
+        if r.status_code == 200:
+            precio = r.json().get("quotes", {}).get("quote", {}).get("last")
+            resultados["SPY_precio_real"] = precio
+        else:
+            resultados["precio_response"] = r.text[:300]
+    except Exception as e:
+        resultados["error_precio"] = str(e)
+
+    # Test 2 — velas 1h SPY ultimos 7 dias
+    try:
+        from datetime import date, timedelta
+        fecha_fin    = date.today().strftime("%Y-%m-%d")
+        fecha_inicio = (date.today() - timedelta(days=7)).strftime("%Y-%m-%d")
+
+        r2 = requests.get(
+            f"{TRADIER_BASE_REAL}/markets/timesales",
+            headers=TRADIER_HEADERS_REAL,
+            params={
+                "symbol":         "SPY",
+                "interval":       "60min",
+                "start":          f"{fecha_inicio} 09:00",
+                "end":            f"{fecha_fin} 16:00",
+                "session_filter": "open",
+            },
+            timeout=15
+        )
+        resultados["velas_status"] = r2.status_code
+        resultados["velas_raw_sample"] = r2.text[:400]
+
+        if r2.status_code == 200:
+            data2 = r2.json()
+            series = data2.get("series", {})
+            if series and series != "null" and series is not None:
+                velas = series.get("data", [])
+                if isinstance(velas, dict):
+                    velas = [velas]
+                resultados["total_velas"]   = len(velas)
+                resultados["primera_vela"]  = velas[0]  if velas else None
+                resultados["ultima_vela"]   = velas[-1] if velas else None
+                resultados["campos"]        = list(velas[0].keys()) if velas else []
+            else:
+                resultados["nota_velas"] = "series es null — endpoint timesales no disponible con este token"
+    except Exception as e:
+        resultados["error_velas"] = str(e)
+
+    # Test 3 — historial diario SPY (alternativa si timesales falla)
+    try:
+        from datetime import date, timedelta
+        r3 = requests.get(
+            f"{TRADIER_BASE_REAL}/markets/history",
+            headers=TRADIER_HEADERS_REAL,
+            params={
+                "symbol":   "SPY",
+                "interval": "daily",
+                "start":    (date.today() - timedelta(days=10)).strftime("%Y-%m-%d"),
+                "end":      date.today().strftime("%Y-%m-%d"),
+            },
+            timeout=15
+        )
+        resultados["history_status"] = r3.status_code
+        if r3.status_code == 200:
+            data3 = r3.json()
+            hist = data3.get("history", {})
+            if hist and hist != "null":
+                dias = hist.get("day", [])
+                if isinstance(dias, dict):
+                    dias = [dias]
+                resultados["history_dias"]    = len(dias)
+                resultados["history_sample"]  = dias[-1] if dias else None
+                resultados["history_campos"]  = list(dias[0].keys()) if dias else []
+            else:
+                resultados["nota_history"] = "history null"
+        else:
+            resultados["history_response"] = r3.text[:300]
+    except Exception as e:
+        resultados["error_history"] = str(e)
+
+    # Resumen a Telegram
+    token_ok  = resultados.get("precio_status") == 200
+    velas_ok  = resultados.get("total_velas", 0) > 0
+    hist_ok   = resultados.get("history_dias", 0) > 0
+    enviar_telegram(
+        f"🔬 <b>Tradier History Test v8.9</b>\n"
+        f"<b>Token real:</b> {'✅ OK' if token_ok else '❌ ERROR'}\n"
+        f"<b>SPY precio:</b> ${resultados.get('SPY_precio_real', 'N/A')}\n"
+        f"<b>Velas 1h (timesales):</b> {'✅ ' + str(resultados.get('total_velas')) + ' velas' if velas_ok else '❌ ' + str(resultados.get('nota_velas', resultados.get('error_velas', 'sin datos')))}\n"
+        f"<b>Historial diario:</b> {'✅ ' + str(resultados.get('history_dias')) + ' dias' if hist_ok else '❌ ' + str(resultados.get('nota_history', resultados.get('error_history', 'sin datos')))}\n"
+        f"<b>Campos vela:</b> {resultados.get('campos', resultados.get('history_campos', 'N/A'))}"
+    )
+
+    return jsonify(resultados), 200
 
 # ═══════════════════════════════════════════════════════════
 # ARRANQUE
