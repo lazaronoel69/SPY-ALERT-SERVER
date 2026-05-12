@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v8.13
+AXIS Breakout Sentinel v8.14
 Estrategias: 1VR | 1VR+ | RPG | GNA | GBA | RCB/CNF
 Multi-activo: SPY, AAPL, BA, GLD
 Auto-P2 | Apagado automatico si nuevo P2 >= P1
@@ -17,6 +17,7 @@ v8.10: Ruta /verificar_velas — compara velas 1h TwelveData vs precio real Trad
 v8.11: Thread independiente V7 anticipada — AAPL/BA/GLD evaluan V7 a las 3:58 EST y corrigen cierre real a las 4:00 EST sin alerta. SPY sin cambios.
 v8.12: Ruta /charts para servir axis_charts.html — dashboard de graficas AXIS
 v8.13: Ruta /test_tradier_30min — verifica si Tradier produccion tiene velas de 30min y construye velas AXIS de 1h para comparar vs TradingView
+v8.14: Fix parser timestamp ISO en test_tradier_30min — agrupacion correcta de barras 15min en velas AXIS de 1h
 """
 
 import requests
@@ -763,7 +764,7 @@ def reporte_horario():
 # LOOP PRINCIPAL
 # ═══════════════════════════════════════════════════════════
 def monitor_loop():
-    print("AXIS Breakout Sentinel v8.13 iniciado...")
+    print("AXIS Breakout Sentinel v8.14 iniciado...")
     while True:
         ahora = datetime.now(EST)
         minutos_hasta_01 = (1 - ahora.minute) % 60
@@ -795,7 +796,7 @@ def home():
             "tipo":    "RCB" if c["p3"] else "CNF" if c["on"] else "OFF",
         }
     return jsonify({
-        "sistema":     "AXIS Breakout Sentinel v8.13",
+        "sistema":     "AXIS Breakout Sentinel v8.14",
         "estado":      "activo" if SISTEMA_ACTIVO else "apagado",
         "hora_est":    ahora.strftime("%A %H:%M EST"),
         "mercado":     "abierto" if es_dia_mercado(ahora) else "cerrado",
@@ -818,7 +819,7 @@ def test():
         else:
             lineas_canal.append(f"  {a}: OFF")
     enviar_telegram(
-        f"✅ <b>AXIS Breakout Sentinel v8.13</b>\n"
+        f"✅ <b>AXIS Breakout Sentinel v8.14</b>\n"
         f"<b>Hora:</b> {ahora.strftime('%A %d/%m/%Y %H:%M EST')}\n"
         f"<b>Mercado:</b> {'Abierto' if es_dia_mercado(ahora) else 'Cerrado'}\n"
         f"<b>1VR:</b> {'ON' if VR1_ON else 'OFF'} | "
@@ -1468,28 +1469,42 @@ def test_tradier_30min():
             return jsonify(resultado), 200
 
         # Agrupar barras en velas AXIS de 1h
-        # Vela AXIS = todo lo que ocurre entre HH:00 y HH:59 EST
+        # Tradier empieza a las 9:30 EST
+        # Cada vela AXIS = barras cuyo cierre cae dentro de la hora AXIS
+        # V1 cierra a las 10:00 → barras 9:30, 9:45, 10:00 (hora 9 y primera de hora 10 hasta :00)
+        # Regla simple: barra pertenece a la vela cuya hora de cierre AXIS es la proxima hora en punto
         from collections import defaultdict
-        from datetime import datetime
-        import pytz
+        from datetime import datetime, timezone, timedelta
 
-        EST = pytz.timezone("America/New_York")
         grupos = defaultdict(list)
 
         for b in velas_raw:
             try:
-                dt  = datetime.strptime(b["time"], "%Y-%m-%d %H:%M:%S")
-                dt  = EST.localize(dt)
-                h   = dt.hour
-                # Asignar a vela AXIS segun hora de cierre
-                if   h == 9:  grupos["V1"].append(b)
-                elif h == 10: grupos["V2"].append(b)
-                elif h == 11: grupos["V3"].append(b)
-                elif h == 12: grupos["V4"].append(b)
-                elif h == 13: grupos["V5"].append(b)
-                elif h == 14: grupos["V6"].append(b)
-                elif h == 15: grupos["V7"].append(b)
-            except Exception:
+                # Tradier devuelve ISO: "2026-05-11T09:30:00"
+                ts_str = b["time"].replace("T", " ")
+                dt = datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S")
+                h  = dt.hour
+                m  = dt.minute
+
+                # Determinar a qué vela AXIS pertenece esta barra
+                # La barra de HH:MM pertenece a la vela que cierra a las (HH+1):00
+                # Excepto si es exactamente :00 → pertenece a la vela que cierra esa misma hora
+                # Ej: 9:30, 9:45 → V1 (cierra 10:00)
+                #     10:00       → V1 (es el cierre de V1)
+                #     10:15, 10:30, 10:45 → V2 (cierra 11:00)
+                #     11:00       → V2
+
+                if m == 0:
+                    cierre_hora = h        # barra :00 cierra la vela anterior
+                else:
+                    cierre_hora = h + 1    # barra :15/:30/:45 va a la siguiente hora
+
+                vela_map = {10:"V1", 11:"V2", 12:"V3", 13:"V4", 14:"V5", 15:"V6", 16:"V7"}
+                vela = vela_map.get(cierre_hora)
+                if vela:
+                    grupos[vela].append(b)
+            except Exception as ex:
+                resultado.setdefault("parse_errors", []).append(str(ex))
                 continue
 
         # Construir velas AXIS de 1h
