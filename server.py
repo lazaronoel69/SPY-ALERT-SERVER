@@ -208,26 +208,20 @@ def get_velas(simbolo, outputsize=50):
     try:
         from datetime import date, datetime as dt2
         from collections import defaultdict
-        import numpy as np
 
-        # Calcular fecha inicio usando dias habiles reales del mercado
-        # 90 dias habiles hacia atras desde hoy
+        # Calcular fecha inicio con dias habiles reales (sin numpy)
+        def restar_dias_habiles(fecha, dias):
+            actual = fecha
+            contados = 0
+            while contados < dias:
+                actual -= timedelta(days=1)
+                if actual.weekday() < 5:  # lunes=0 a viernes=4
+                    contados += 1
+            return actual
+
         fecha_fin = date.today()
-        fecha_ini = np.busday_offset(
-            fecha_fin.strftime("%Y-%m-%d"),
-            -90,
-            roll='backward',
-            weekmask='Mon Tue Wed Thu Fri'
-        )
-        fecha_ini = date.fromisoformat(str(fecha_ini))
-        fecha_mid = date.fromisoformat(str(
-            np.busday_offset(
-                fecha_fin.strftime("%Y-%m-%d"),
-                -45,
-                roll='backward',
-                weekmask='Mon Tue Wed Thu Fri'
-            )
-        ))
+        fecha_ini = restar_dias_habiles(fecha_fin, 90)
+        fecha_mid = restar_dias_habiles(fecha_fin, 45)
 
         todas_barras = []
 
