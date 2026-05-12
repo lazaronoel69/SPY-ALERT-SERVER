@@ -4,608 +4,610 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>AXIS — Charts</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/luxon/3.4.4/luxon.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-luxon@1.3.1/dist/chartjs-adapter-luxon.umd.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/chartjs-chart-financial@0.1.1/dist/chartjs-chart-financial.min.js"></script>
-<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;600;700&family=Bebas+Neue&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Bebas+Neue&display=swap" rel="stylesheet">
 <style>
   :root {
-    --bg:       #080b0f;
-    --surface:  #0d1117;
-    --surface2: #161b22;
-    --border:   #21262d;
-    --accent:   #f0b429;
-    --green:    #3fb950;
-    --red:      #f85149;
-    --cyan:     #58a6ff;
-    --text:     #c9d1d9;
-    --dim:      #6e7681;
-    --mono:     'JetBrains Mono', monospace;
-    --disp:     'Bebas Neue', sans-serif;
+    --bg:      #080b0f;
+    --surface: #0d1117;
+    --border:  #21262d;
+    --accent:  #f0b429;
+    --green:   #3fb950;
+    --red:     #f85149;
+    --cyan:    #58a6ff;
+    --text:    #c9d1d9;
+    --dim:     #6e7681;
+    --mono:    'JetBrains Mono', monospace;
+    --disp:    'Bebas Neue', sans-serif;
   }
   * { margin:0; padding:0; box-sizing:border-box; }
-  body {
-    background: var(--bg);
-    color: var(--text);
-    font-family: var(--mono);
-    height: 100vh;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-  }
+  body { background:var(--bg); color:var(--text); font-family:var(--mono); height:100vh; display:flex; flex-direction:column; overflow:hidden; }
+
   header {
-    display: flex;
-    align-items: center;
-    gap: 20px;
-    padding: 8px 20px;
-    background: var(--surface);
-    border-bottom: 1px solid var(--border);
-    flex-shrink: 0;
+    display:flex; align-items:center; gap:16px;
+    padding:8px 20px; background:var(--surface);
+    border-bottom:1px solid var(--border); flex-shrink:0;
   }
-  .logo { font-family: var(--disp); font-size: 24px; letter-spacing: 3px; color: var(--accent); }
-  .logo span { color: var(--dim); font-size: 11px; font-family: var(--mono); display: block; letter-spacing: 1px; }
-  .asset-tabs { display: flex; gap: 4px; }
-  .asset-tab {
-    padding: 5px 14px; border: 1px solid var(--border);
-    background: transparent; color: var(--dim);
-    font-family: var(--mono); font-size: 12px; font-weight: 600;
-    cursor: pointer; border-radius: 4px; transition: all 0.15s; letter-spacing: 1px;
+  .logo { font-family:var(--disp); font-size:24px; letter-spacing:3px; color:var(--accent); line-height:1; }
+  .logo small { display:block; font-family:var(--mono); font-size:10px; color:var(--dim); letter-spacing:1px; }
+
+  .tabs { display:flex; gap:4px; }
+  .tab {
+    padding:5px 14px; border:1px solid var(--border); background:transparent;
+    color:var(--dim); font-family:var(--mono); font-size:12px; font-weight:600;
+    cursor:pointer; border-radius:4px; transition:all 0.15s; letter-spacing:1px;
   }
-  .asset-tab:hover { border-color: var(--accent); color: var(--text); }
-  .asset-tab.active { background: var(--accent); border-color: var(--accent); color: #000; }
-  .price-box { margin-left: auto; display: flex; align-items: baseline; gap: 8px; }
-  .price-val { font-size: 22px; font-weight: 700; }
-  .price-chg { font-size: 12px; font-weight: 600; }
-  .up { color: var(--green); }
-  .dn { color: var(--red); }
-  .status-pill { font-size: 10px; color: var(--dim); padding: 3px 8px; border: 1px solid var(--border); border-radius: 4px; }
+  .tab:hover { border-color:var(--accent); color:var(--text); }
+  .tab.on { background:var(--accent); border-color:var(--accent); color:#000; }
+
+  .price-box { margin-left:auto; display:flex; align-items:baseline; gap:8px; }
+  .pval { font-size:22px; font-weight:700; }
+  .pchg { font-size:12px; font-weight:600; }
+  .up { color:var(--green); } .dn { color:var(--red); }
+
   .toolbar {
-    display: flex; align-items: center; gap: 10px;
-    padding: 6px 20px; background: var(--surface);
-    border-bottom: 1px solid var(--border); flex-shrink: 0;
+    display:flex; align-items:center; gap:8px;
+    padding:6px 20px; background:var(--surface);
+    border-bottom:1px solid var(--border); flex-shrink:0; flex-wrap:wrap;
   }
-  .tg { display: flex; align-items: center; gap: 5px; padding-right: 10px; border-right: 1px solid var(--border); }
-  .tg:last-child { border-right: none; margin-left: auto; }
-  .tlbl { font-size: 9px; color: var(--dim); letter-spacing: 1px; text-transform: uppercase; }
-  .tbtn {
-    padding: 3px 9px; border: 1px solid var(--border);
-    background: transparent; font-family: var(--mono);
-    font-size: 11px; font-weight: 600; cursor: pointer; border-radius: 3px; transition: all 0.15s;
+  .tg { display:flex; align-items:center; gap:5px; padding-right:10px; border-right:1px solid var(--border); }
+  .tg:last-child { border-right:none; margin-left:auto; }
+  .tlbl { font-size:9px; color:var(--dim); letter-spacing:1px; text-transform:uppercase; }
+
+  .btn {
+    padding:3px 9px; border:1px solid var(--border); background:transparent;
+    font-family:var(--mono); font-size:11px; font-weight:600;
+    cursor:pointer; border-radius:3px; transition:all 0.15s; color:var(--dim);
   }
-  .tbtn.s20  { color: #f0b429; border-color: #f0b429; }
-  .tbtn.s40  { color: #e05c1a; border-color: #e05c1a; }
-  .tbtn.s100 { color: #58a6ff; border-color: #58a6ff; }
-  .tbtn.s200 { color: #bc8cff; border-color: #bc8cff; }
-  .tbtn.on.s20  { background: #f0b429; color: #000; }
-  .tbtn.on.s40  { background: #e05c1a; color: #fff; }
-  .tbtn.on.s100 { background: #58a6ff; color: #000; }
-  .tbtn.on.s200 { background: #bc8cff; color: #000; }
-  .tbtn.off { opacity: 0.3; }
-  .dbtn {
-    padding: 4px 11px; border: 1px solid var(--border);
-    background: transparent; color: var(--dim);
-    font-family: var(--mono); font-size: 11px; font-weight: 600;
-    cursor: pointer; border-radius: 3px; transition: all 0.15s;
+  .btn:hover { border-color:var(--cyan); color:var(--cyan); }
+  .btn.s20  { color:#f0b429; border-color:#f0b429; }
+  .btn.s40  { color:#e05c1a; border-color:#e05c1a; }
+  .btn.s100 { color:#58a6ff; border-color:#58a6ff; }
+  .btn.s200 { color:#bc8cff; border-color:#bc8cff; }
+  .btn.on.s20  { background:#f0b429; color:#000; }
+  .btn.on.s40  { background:#e05c1a; color:#fff; }
+  .btn.on.s100 { background:#58a6ff; color:#000; }
+  .btn.on.s200 { background:#bc8cff; color:#000; }
+  .btn.off { opacity:0.3; }
+  .btn.draw-on { border-color:var(--cyan); color:var(--cyan); background:rgba(88,166,255,0.1); }
+  .btn.danger:hover { border-color:var(--red); color:var(--red); }
+
+  #info { font-size:11px; color:var(--dim); }
+
+  .chart-wrap { flex:1; position:relative; overflow:hidden; }
+  canvas { position:absolute; top:0; left:0; }
+  #chartCanvas { cursor:default; }
+  #drawCanvas  { pointer-events:none; z-index:5; }
+  #drawCanvas.draw-mode { pointer-events:all; cursor:crosshair; }
+
+  /* Tooltip */
+  #tooltip {
+    position:absolute; display:none;
+    background:#0d1117; border:1px solid #21262d;
+    border-radius:5px; padding:8px 12px;
+    font-size:11px; pointer-events:none; z-index:20;
+    min-width:190px;
   }
-  .dbtn.active { border-color: var(--cyan); color: var(--cyan); background: rgba(88,166,255,0.1); }
-  .dbtn:hover  { border-color: var(--cyan); color: var(--cyan); }
-  .dbtn.danger:hover { border-color: var(--red); color: var(--red); }
-  #loading { font-size: 11px; color: var(--dim); }
-  .chart-wrap { flex: 1; position: relative; padding: 12px 16px; overflow: hidden; }
-  #myChart { width: 100% !important; height: 100% !important; }
-  #drawCanvas {
-    position: absolute; top: 12px; left: 16px;
-    pointer-events: none; z-index: 10;
-  }
-  #drawCanvas.draw-mode { pointer-events: all; cursor: crosshair; }
+  #tooltip .tt-title { color:var(--accent); font-weight:700; margin-bottom:5px; font-size:11px; }
+  #tooltip .tt-row   { display:flex; justify-content:space-between; gap:14px; }
+  #tooltip .tt-lbl   { color:var(--dim); }
+  #tooltip .tt-val   { color:var(--text); font-weight:600; }
+
   .toast {
-    position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%);
-    background: var(--surface2); border: 1px solid var(--border);
-    color: var(--text); padding: 7px 18px; border-radius: 6px;
-    font-size: 12px; z-index: 200; opacity: 0; transition: opacity 0.3s; pointer-events: none;
+    position:fixed; bottom:18px; left:50%; transform:translateX(-50%);
+    background:#161b22; border:1px solid var(--border); color:var(--text);
+    padding:7px 18px; border-radius:6px; font-size:12px;
+    z-index:100; opacity:0; transition:opacity 0.3s; pointer-events:none;
   }
-  .toast.show { opacity: 1; }
+  .toast.show { opacity:1; }
 </style>
 </head>
 <body>
 
 <header>
-  <div class="logo">AXIS<span>CHARTS v1.0</span></div>
-  <div class="asset-tabs">
-    <button class="asset-tab active" onclick="cambiar('SPY')">SPY</button>
-    <button class="asset-tab" onclick="cambiar('AAPL')">AAPL</button>
-    <button class="asset-tab" onclick="cambiar('BA')">BA</button>
-    <button class="asset-tab" onclick="cambiar('GLD')">GLD</button>
+  <div class="logo">AXIS<small>CHARTS v1.1</small></div>
+  <div class="tabs">
+    <button class="tab on"  onclick="cambiar('SPY')">SPY</button>
+    <button class="tab"     onclick="cambiar('AAPL')">AAPL</button>
+    <button class="tab"     onclick="cambiar('BA')">BA</button>
+    <button class="tab"     onclick="cambiar('GLD')">GLD</button>
   </div>
   <div class="price-box">
-    <span class="price-val" id="pval">—</span>
-    <span class="price-chg" id="pchg"></span>
+    <span class="pval" id="pval">—</span>
+    <span class="pchg" id="pchg"></span>
   </div>
-  <div class="status-pill" id="spill">3 meses · Velas AXIS 1h</div>
 </header>
 
 <div class="toolbar">
   <div class="tg">
     <span class="tlbl">SMA</span>
-    <button class="tbtn s20 on"  id="b20"  onclick="togSMA(20)">20</button>
-    <button class="tbtn s40 on"  id="b40"  onclick="togSMA(40)">40</button>
-    <button class="tbtn s100 on" id="b100" onclick="togSMA(100)">100</button>
-    <button class="tbtn s200 on" id="b200" onclick="togSMA(200)">200</button>
-  </div>
-  <div class="tg">
-    <span class="tlbl">Dibujo</span>
-    <button class="dbtn" id="bdraw" onclick="togDraw()">✏ Línea</button>
-    <button class="dbtn danger" onclick="clearLines()">✕ Limpiar</button>
+    <button class="btn s20 on"  id="b20"  onclick="togSMA(20)">20</button>
+    <button class="btn s40 on"  id="b40"  onclick="togSMA(40)">40</button>
+    <button class="btn s100 on" id="b100" onclick="togSMA(100)">100</button>
+    <button class="btn s200 on" id="b200" onclick="togSMA(200)">200</button>
   </div>
   <div class="tg">
     <span class="tlbl">Vista</span>
-    <button class="dbtn" onclick="fitChart()">⊡ Fit</button>
+    <button class="btn" onclick="fitChart()">⊡ Fit</button>
   </div>
-  <div class="tg"><span id="loading">Cargando...</span></div>
+  <div class="tg">
+    <span class="tlbl">Dibujo</span>
+    <button class="btn" id="bdraw" onclick="togDraw()">✏ Línea</button>
+    <button class="btn danger" onclick="clearLines()">✕ Limpiar</button>
+  </div>
+  <div class="tg"><span id="info">Cargando...</span></div>
 </div>
 
-<div class="chart-wrap">
-  <canvas id="myChart"></canvas>
+<div class="chart-wrap" id="wrap">
+  <canvas id="chartCanvas"></canvas>
   <canvas id="drawCanvas"></canvas>
+  <div id="tooltip">
+    <div class="tt-title" id="tt-title"></div>
+    <div class="tt-row"><span class="tt-lbl">Open</span><span class="tt-val" id="tt-o"></span></div>
+    <div class="tt-row"><span class="tt-lbl">High</span><span class="tt-val" id="tt-h"></span></div>
+    <div class="tt-row"><span class="tt-lbl">Low</span> <span class="tt-val" id="tt-l"></span></div>
+    <div class="tt-row"><span class="tt-lbl">Close</span><span class="tt-val" id="tt-c" style="color:var(--green)"></span></div>
+  </div>
 </div>
 <div class="toast" id="toast"></div>
 
 <script>
-const TD_KEY     = '66dd71373a884f7bb7da8e6e5e469571';
+// ═══════════════════════════════════════
+// CONFIG
+// ═══════════════════════════════════════
+const TD_KEY    = '66dd71373a884f7bb7da8e6e5e469571';
 const OUTPUTSIZE = 500;
-const UNA_HORA   = 3600 * 1000;
+const H_OFFSET   = 3600000; // +1h timestamp apertura → cierre AXIS
 
+// Colores
+const C = {
+  up:'#3fb950', dn:'#f85149', wick:'#484f58',
+  sma:{ 20:'#f0b429', 40:'#e05c1a', 100:'#58a6ff', 200:'#bc8cff' },
+  grid:'rgba(255,255,255,0.05)', gridH:'rgba(255,255,255,0.08)',
+  dayLine:'rgba(240,180,41,0.3)', dayLabel:'#484f58',
+  forming:'rgba(88,166,255,0.6)',
+};
+
+// Estado
 let activo    = 'SPY';
-let myChart   = null;
+let allVelas  = [];
 let smaState  = { 20:true, 40:true, 100:true, 200:true };
 let drawMode  = false, drawing = false, p0 = null;
 let userLines = {};
-let zoomStart = null, zoomEnd = null;
-let allVelas  = [];
-
-// Pan (arrastrar gráfica)
-let panActive = false, panStartX = null, panStartZoom = null;
-
-// Auto-refresh
+let zoomStart = 0, zoomEnd = 0;
+let panActive = false, panX0 = null, panZ0 = null;
 let refreshTimer = null;
+let hoveredIdx = -1;
 
+// Canvas
+const wrap = document.getElementById('wrap');
+const cc   = document.getElementById('chartCanvas');
 const dc   = document.getElementById('drawCanvas');
+const ctx  = cc.getContext('2d');
 const dctx = dc.getContext('2d');
 
-// ── HELPERS ──
-function velaLabel(tsMs) {
-  const h = parseInt(new Date(tsMs).toLocaleString('en-US', { hour:'numeric', hour12:false, timeZone:'America/New_York' }));
-  const labels = { 10:'V1', 11:'V2', 12:'V3', 13:'V4', 14:'V5', 15:'V6', 16:'V7' };
-  return (labels[h] || 'V?') + ' · ' + h + ':00';
+// Márgenes del área de gráfica
+const M = { top:30, right:70, bottom:30, left:10 };
+
+// ═══════════════════════════════════════
+// UTILIDADES
+// ═══════════════════════════════════════
+function esMercadoAbierto() {
+  const est  = new Date(new Date().toLocaleString('en-US',{timeZone:'America/New_York'}));
+  const d = est.getDay(), h = est.getHours(), m = est.getMinutes();
+  const mins = h*60+m;
+  return d>=1 && d<=5 && mins>=600 && mins<961;
 }
 
-function esMercadoAbierto() {
-  const now  = new Date();
-  const est  = new Date(now.toLocaleString('en-US', { timeZone:'America/New_York' }));
-  const dia  = est.getDay();
-  const h    = est.getHours(), m = est.getMinutes();
-  const mins = h * 60 + m;
-  return dia >= 1 && dia <= 5 && mins >= 600 && mins < 961; // 10:00-16:01 EST
+function velaLabel(tsMs) {
+  const h = parseInt(new Date(tsMs).toLocaleString('en-US',{hour:'numeric',hour12:false,timeZone:'America/New_York'}));
+  return ({10:'V1',11:'V2',12:'V3',13:'V4',14:'V5',15:'V6',16:'V7'}[h]||'V?') + ' · ' + h + ':00 EST';
+}
+
+function fmtFecha(tsMs) {
+  return new Date(tsMs).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric',timeZone:'America/New_York'});
+}
+
+function fmtDia(tsMs) {
+  return new Date(tsMs).toLocaleDateString('en-US',{month:'short',day:'numeric',timeZone:'America/New_York'});
 }
 
 function calcSMA(velas, period) {
   return velas.map((v,i) => {
-    if (i < period-1) return { x:v.x, y:null };
-    const avg = velas.slice(i-period+1,i+1).reduce((s,c) => s+c.c, 0) / period;
-    return { x:v.x, y:avg };
+    if (i < period-1) return null;
+    return velas.slice(i-period+1,i+1).reduce((s,c)=>s+c.c,0)/period;
   });
 }
 
-// ── PLUGIN LINEAS DIA ──
-const pluginLineasDia = {
-  id: 'lineasDia',
-  afterDraw(chart) {
-    const { ctx, scales:{ x, y } } = chart;
-    if (!x || !y) return;
-    const velas = chart._axisVelas || [];
-    let fechaAnt = null;
-    ctx.save();
-    velas.forEach(v => {
-      const fecha = new Date(v.x).toLocaleDateString('en-US', { timeZone:'America/New_York' });
-      if (fecha !== fechaAnt) {
-        fechaAnt = fecha;
-        const px = x.getPixelForValue(v.x);
-        if (px < x.left || px > x.right) return;
-        ctx.beginPath();
-        ctx.moveTo(px, y.top); ctx.lineTo(px, y.bottom);
-        ctx.strokeStyle = 'rgba(240,180,41,0.25)';
-        ctx.lineWidth = 1; ctx.setLineDash([4,4]);
-        ctx.stroke(); ctx.setLineDash([]);
-        ctx.fillStyle = '#484f58'; ctx.font = '10px JetBrains Mono'; ctx.textAlign = 'left';
-        const lbl = new Date(v.x).toLocaleDateString('en-US',{month:'short',day:'numeric',timeZone:'America/New_York'});
-        ctx.fillText(lbl, px+3, y.top+12);
-      }
-    });
-    // Marcador vela en formación (última vela si mercado abierto)
-    if (esMercadoAbierto() && velas.length > 0) {
-      const ultima = velas[velas.length-1];
-      const px = x.getPixelForValue(ultima.x);
-      if (px >= x.left && px <= x.right) {
-        ctx.beginPath();
-        ctx.moveTo(px, y.top); ctx.lineTo(px, y.bottom);
-        ctx.strokeStyle = 'rgba(88,166,255,0.5)';
-        ctx.lineWidth = 1.5; ctx.setLineDash([2,2]);
-        ctx.stroke(); ctx.setLineDash([]);
-        ctx.fillStyle = '#58a6ff'; ctx.font = 'bold 10px JetBrains Mono'; ctx.textAlign = 'center';
-        ctx.fillText('EN FORMACIÓN', px, y.top + 24);
-      }
-    }
-    ctx.restore();
-  }
-};
+// ═══════════════════════════════════════
+// RESIZE
+// ═══════════════════════════════════════
+function resize() {
+  const w = wrap.clientWidth, h = wrap.clientHeight;
+  cc.width = w; cc.height = h;
+  dc.width = w; dc.height = h;
+  render();
+  redrawLines();
+}
 
-// ── CARGAR DATOS ──
+// ═══════════════════════════════════════
+// CARGAR DATOS
+// ═══════════════════════════════════════
 async function cargarDatos(sym, silencioso=false) {
-  if (!silencioso) document.getElementById('loading').textContent = `Cargando ${sym}...`;
+  if (!silencioso) document.getElementById('info').textContent = `Cargando ${sym}...`;
   try {
-    const url  = `https://api.twelvedata.com/time_series?symbol=${sym}&interval=1h&outputsize=${OUTPUTSIZE}&timezone=America/New_York&apikey=${TD_KEY}`;
-    const res  = await fetch(url);
+    const url = `https://api.twelvedata.com/time_series?symbol=${sym}&interval=1h&outputsize=${OUTPUTSIZE}&timezone=America/New_York&apikey=${TD_KEY}`;
+    const res = await fetch(url);
     const data = await res.json();
-    if (!data.values) throw new Error(data.message || 'Sin datos TwelveData');
+    if (!data.values) throw new Error(data.message||'Sin datos');
 
     const velas = data.values
-      .filter(v => { const h = parseInt(v.datetime.slice(11,13)); return h >= 9 && h <= 15; })
+      .filter(v => { const h=parseInt(v.datetime.slice(11,13)); return h>=9&&h<=15; })
       .reverse()
       .map(v => ({
-        x: new Date(v.datetime.replace(' ','T') + '-04:00').getTime() + UNA_HORA,
+        x: new Date(v.datetime.replace(' ','T')+'-04:00').getTime() + H_OFFSET,
         o: parseFloat(v.open),
         h: parseFloat(v.high),
         l: parseFloat(v.low),
         c: parseFloat(v.close),
       }));
 
-    const rangoActual = zoomEnd !== null ? zoomEnd - zoomStart : null;
-    allVelas  = velas;
-
-    if (rangoActual === null) {
-      // Primera carga — mostrar todo
-      zoomStart = 0;
-      zoomEnd   = velas.length - 1;
-      renderChart(velas, sym);
-    } else {
-      // Refresh silencioso — mantener zoom y pan
-      zoomEnd   = velas.length - 1;
-      zoomStart = Math.max(0, zoomEnd - rangoActual);
-      renderChart(allVelas.slice(zoomStart, zoomEnd+1), sym);
-    }
+    allVelas = velas;
+    if (!silencioso) { zoomStart=0; zoomEnd=velas.length-1; }
+    else { zoomEnd=velas.length-1; zoomStart=Math.max(0,zoomEnd-(panZ0?.rango||zoomEnd)); }
 
     updatePrecio(velas);
-    const desde = new Date(velas[0].x).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
-    const abierto = esMercadoAbierto() ? ' · 🟢 Auto-refresh 5min' : '';
-    document.getElementById('loading').textContent = `${velas.length} velas · desde ${desde}${abierto}`;
+    render();
 
-    // Auto-refresh solo cuando mercado abierto
+    const desde = fmtFecha(velas[0].x);
+    const auto  = esMercadoAbierto() ? ' · 🟢 auto 5min' : '';
+    document.getElementById('info').textContent = `${velas.length} velas · ${desde}${auto}`;
+
     clearTimeout(refreshTimer);
-    if (esMercadoAbierto()) {
-      refreshTimer = setTimeout(() => cargarDatos(activo, true), 5 * 60 * 1000);
-    }
+    if (esMercadoAbierto())
+      refreshTimer = setTimeout(()=>cargarDatos(activo,true), 5*60*1000);
 
   } catch(e) {
-    document.getElementById('loading').textContent = 'Error: ' + e.message;
-    toast('Error: ' + e.message);
+    document.getElementById('info').textContent = 'Error: '+e.message;
+    toast('Error: '+e.message);
   }
 }
 
-// ── RENDER ──
-function renderChart(velas, sym) {
-  const esRefresh = myChart !== null;
-  if (esRefresh) {
-    // Actualizar datos sin destruir el chart
-    myChart.data.datasets[0].data = velas.map(v => ({x:v.x,o:v.o,h:v.h,l:v.l,c:v.c}));
-    [20,40,100,200].forEach((p,i) => {
-      myChart.data.datasets[i+1].data = calcSMA(allVelas, p).slice(zoomStart, zoomEnd+1);
-    });
-    myChart._axisVelas = velas;
-    myChart.update('none');
-    return;
-  }
-
-  const ctx2 = document.getElementById('myChart').getContext('2d');
-  myChart = new Chart(ctx2, {
-    type: 'candlestick',
-    data: {
-      datasets: [
-        {
-          type:'candlestick', label:sym,
-          data: velas.map(v => ({x:v.x,o:v.o,h:v.h,l:v.l,c:v.c})),
-          color:{ up:'#3fb950', down:'#f85149', unchanged:'#c9d1d9' },
-          borderColor:{ up:'#3fb950', down:'#f85149', unchanged:'#c9d1d9' },
-        },
-        makeSMA(velas, 20,  '#f0b429'),
-        makeSMA(velas, 40,  '#e05c1a'),
-        makeSMA(velas, 100, '#58a6ff'),
-        makeSMA(velas, 200, '#bc8cff'),
-      ]
-    },
-    options: {
-      responsive:true, maintainAspectRatio:false, animation:false,
-      plugins: {
-        legend: { display:false },
-        tooltip: {
-          backgroundColor:'#0d1117', borderColor:'#21262d', borderWidth:1,
-          titleColor:'#f0b429', bodyColor:'#c9d1d9',
-          titleFont:{ family:'JetBrains Mono', size:11, weight:'bold' },
-          bodyFont: { family:'JetBrains Mono', size:11 },
-          callbacks: {
-            title: items => {
-              const ts = items[0].parsed.x;
-              const fecha = new Date(ts).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric',timeZone:'America/New_York'});
-              const enForm = esMercadoAbierto() && items[0].dataIndex === myChart.data.datasets[0].data.length-1;
-              return fecha + '  ' + velaLabel(ts) + (enForm ? '  ⚠ EN FORMACIÓN' : '');
-            },
-            label: item => {
-              if (item.dataset.type === 'candlestick') {
-                const r = item.raw;
-                return [`O: $${r.o?.toFixed(2)}   H: $${r.h?.toFixed(2)}`, `L: $${r.l?.toFixed(2)}   C: $${r.c?.toFixed(2)}`];
-              }
-              if (!item.dataset.hidden)
-                return `${item.dataset.label}: $${item.parsed.y?.toFixed(2) ?? '—'}`;
-              return null;
-            }
-          }
-        }
-      },
-      scales: {
-        x: {
-          type:'timeseries',
-          ticks:{ color:'#6e7681', font:{family:'JetBrains Mono',size:10}, maxRotation:0, maxTicksLimit:10,
-            callback(val) { return new Date(val).toLocaleDateString('en-US',{month:'short',day:'numeric',timeZone:'America/New_York'}); }
-          },
-          grid:{ color:'rgba(255,255,255,0.04)' }, border:{ color:'#21262d' },
-        },
-        y: {
-          position:'right',
-          ticks:{ color:'#6e7681', font:{family:'JetBrains Mono',size:10}, callback: v => '$'+v.toFixed(2) },
-          grid:{ color: c => c.index===0 ? '#21262d' : 'rgba(255,255,255,0.06)', lineWidth:1 },
-          border:{ color:'#21262d' },
-        },
-      },
-    },
-    plugins: [pluginLineasDia],
-  });
-
-  myChart._axisVelas = velas;
-  [20,40,100,200].forEach(p => {
-    const ds = myChart.data.datasets.find(d => d.label==='SMA'+p);
-    if (ds) ds.hidden = !smaState[p];
-  });
-  myChart.update('none');
-
-  // Eventos del canvas — zoom y pan
-  const canvasEl = document.getElementById('myChart');
-  canvasEl.addEventListener('wheel', onWheel, { passive:false });
-  canvasEl.addEventListener('mousedown', onPanStart);
-  canvasEl.addEventListener('mousemove', onPanMove);
-  canvasEl.addEventListener('mouseup',   onPanEnd);
-  canvasEl.addEventListener('mouseleave', onPanEnd);
-}
-
-// ── ZOOM ──
-function onWheel(e) {
-  e.preventDefault();
-  if (!myChart || !allVelas.length) return;
-  const total    = allVelas.length;
-  const rango    = zoomEnd - zoomStart;
-  const factor   = e.deltaY < 0 ? 0.85 : 1.15;
-  const nuevaLen = Math.round(rango * factor);
-  const clamped  = Math.max(7, Math.min(total, nuevaLen));
-  const rect     = myChart.canvas.getBoundingClientRect();
-  const relX     = (e.clientX - rect.left) / rect.width;
-  const centro   = Math.round(zoomStart + rango * relX);
-  const mitad    = Math.round(clamped / 2);
-  zoomStart      = Math.max(0, centro - mitad);
-  zoomEnd        = Math.min(total-1, zoomStart + clamped);
-  if (zoomEnd === total-1) zoomStart = Math.max(0, zoomEnd - clamped);
-  aplicarZoom();
-}
-
-// ── PAN (click y arrastra) ──
-function onPanStart(e) {
-  if (drawMode) return;
-  panActive    = true;
-  panStartX    = e.clientX;
-  panStartZoom = { start: zoomStart, end: zoomEnd };
-  e.target.style.cursor = 'grabbing';
-}
-
-function onPanMove(e) {
-  if (!panActive || !myChart || !allVelas.length) return;
-  const rect      = myChart.canvas.getBoundingClientRect();
-  const velasVis  = panStartZoom.end - panStartZoom.start;
-  const pxPorVela = rect.width / velasVis;
-  const deltaPx   = e.clientX - panStartX;
-  const deltaVelas = Math.round(deltaPx / pxPorVela);
-  const total     = allVelas.length;
-  let newStart    = panStartZoom.start - deltaVelas;
-  let newEnd      = panStartZoom.end   - deltaVelas;
-  if (newStart < 0)       { newEnd -= newStart; newStart = 0; }
-  if (newEnd > total-1)   { newStart -= (newEnd-(total-1)); newEnd = total-1; }
-  newStart = Math.max(0, newStart);
-  zoomStart = newStart;
-  zoomEnd   = newEnd;
-  aplicarZoom();
-}
-
-function onPanEnd(e) {
-  if (!panActive) return;
-  panActive = false;
-  if (e.target) e.target.style.cursor = 'default';
-}
-
-function aplicarZoom() {
-  if (!myChart || !allVelas.length) return;
-  const visible = allVelas.slice(zoomStart, zoomEnd+1);
-  myChart.data.datasets[0].data = visible.map(v => ({x:v.x,o:v.o,h:v.h,l:v.l,c:v.c}));
-  [20,40,100,200].forEach((p,i) => {
-    myChart.data.datasets[i+1].data = calcSMA(allVelas,p).slice(zoomStart, zoomEnd+1);
-  });
-  myChart._axisVelas = visible;
-  myChart.update('none');
-}
-
-function fitChart() {
+// ═══════════════════════════════════════
+// RENDER PRINCIPAL
+// ═══════════════════════════════════════
+function render() {
   if (!allVelas.length) return;
-  zoomStart = 0; zoomEnd = allVelas.length-1;
-  aplicarZoom();
-  toast('Vista completa');
-}
+  const W = cc.width, H = cc.height;
+  const gW = W - M.left - M.right;
+  const gH = H - M.top  - M.bottom;
 
-function makeSMA(velas, period, color) {
-  return {
-    type:'line', label:'SMA'+period,
-    data: calcSMA(velas, period),
-    borderColor:color, borderWidth:1,
-    pointRadius:0, tension:0,
-    parsing:{ xAxisKey:'x', yAxisKey:'y' },
-    hidden: !smaState[period],
-  };
-}
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle = '#080b0f';
+  ctx.fillRect(0,0,W,H);
 
-function updatePrecio(velas) {
-  if (!velas.length) return;
-  const last = velas[velas.length-1], prev = velas[velas.length-2];
-  document.getElementById('pval').textContent = '$' + last.c.toFixed(2);
-  if (prev) {
-    const d = last.c - prev.c, pct = (d/prev.c*100).toFixed(2);
-    const el = document.getElementById('pchg');
-    el.textContent = (d>=0?'+':'') + d.toFixed(2) + ' ('+pct+'%)';
-    el.className   = 'price-chg ' + (d>=0?'up':'dn');
+  const visible = allVelas.slice(zoomStart, zoomEnd+1);
+  if (!visible.length) return;
+
+  // Rango de precios
+  let minP = Infinity, maxP = -Infinity;
+  visible.forEach(v => { if (v.l<minP) minP=v.l; if (v.h>maxP) maxP=v.h; });
+  const pad = (maxP-minP)*0.05;
+  minP -= pad; maxP += pad;
+
+  // Funciones de conversión
+  const xOf  = i  => M.left + (i/(visible.length-1||1)) * gW;
+  const yOf  = p  => M.top  + (1-(p-minP)/(maxP-minP)) * gH;
+  const velW = Math.max(1, Math.min(20, gW/visible.length*0.7));
+
+  // ── Grid horizontal (precios) ──
+  const pasos = 8;
+  ctx.textAlign = 'left';
+  for (let i=0; i<=pasos; i++) {
+    const p  = minP + (maxP-minP)*i/pasos;
+    const y  = yOf(p);
+    ctx.beginPath();
+    ctx.moveTo(M.left, y); ctx.lineTo(W-M.right, y);
+    ctx.strokeStyle = 'rgba(255,255,255,0.05)';
+    ctx.lineWidth = 1; ctx.stroke();
+    ctx.fillStyle = '#484f58';
+    ctx.font = '10px JetBrains Mono';
+    ctx.textAlign = 'left';
+    ctx.fillText('$'+p.toFixed(2), W-M.right+6, y+4);
   }
+
+  // ── Líneas verticales de inicio de día ──
+  let fechaAnt = null;
+  visible.forEach((v,i) => {
+    const f = new Date(v.x).toLocaleDateString('en-US',{timeZone:'America/New_York'});
+    if (f !== fechaAnt) {
+      fechaAnt = f;
+      const x = xOf(i);
+      ctx.beginPath();
+      ctx.moveTo(x, M.top); ctx.lineTo(x, H-M.bottom);
+      ctx.strokeStyle = C.dayLine;
+      ctx.lineWidth = 1; ctx.setLineDash([4,4]);
+      ctx.stroke(); ctx.setLineDash([]);
+      ctx.fillStyle = C.dayLabel;
+      ctx.font = '10px JetBrains Mono';
+      ctx.textAlign = 'left';
+      ctx.fillText(fmtDia(v.x), x+3, M.top+12);
+    }
+  });
+
+  // ── SMAs ──
+  [20,40,100,200].forEach(period => {
+    if (!smaState[period]) return;
+    const smas = calcSMA(allVelas, period).slice(zoomStart, zoomEnd+1);
+    ctx.beginPath();
+    let primero = true;
+    smas.forEach((val,i) => {
+      if (val===null) return;
+      const x = xOf(i), y = yOf(val);
+      if (primero) { ctx.moveTo(x,y); primero=false; }
+      else ctx.lineTo(x,y);
+    });
+    ctx.strokeStyle = C.sma[period];
+    ctx.lineWidth = 1; ctx.stroke();
+  });
+
+  // ── Velas ──
+  visible.forEach((v,i) => {
+    const x    = xOf(i);
+    const yO   = yOf(v.o), yC = yOf(v.c);
+    const yH   = yOf(v.h), yL = yOf(v.l);
+    const sube = v.c >= v.o;
+    const color = sube ? C.up : C.dn;
+    const isHovered = i === hoveredIdx;
+
+    // Mecha
+    ctx.beginPath();
+    ctx.moveTo(x, yH); ctx.lineTo(x, yL);
+    ctx.strokeStyle = isHovered ? color : C.wick;
+    ctx.lineWidth = 1; ctx.stroke();
+
+    // Cuerpo
+    const bodyY = Math.min(yO,yC);
+    const bodyH = Math.max(1, Math.abs(yC-yO));
+    ctx.fillStyle = isHovered ? color : (sube ? C.up+'99' : C.dn+'99');
+    ctx.fillRect(x-velW/2, bodyY, velW, bodyH);
+    if (isHovered) {
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1;
+      ctx.strokeRect(x-velW/2, bodyY, velW, bodyH);
+    }
+  });
+
+  // ── Vela en formación ──
+  if (esMercadoAbierto() && visible.length > 0) {
+    const x = xOf(visible.length-1);
+    ctx.beginPath();
+    ctx.moveTo(x, M.top); ctx.lineTo(x, H-M.bottom);
+    ctx.strokeStyle = C.forming;
+    ctx.lineWidth = 1.5; ctx.setLineDash([3,3]);
+    ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle = '#58a6ff';
+    ctx.font = 'bold 10px JetBrains Mono';
+    ctx.textAlign = 'center';
+    ctx.fillText('EN FORMACIÓN', x, M.top+24);
+  }
+
+  // ── Eje X (fechas) ──
+  ctx.fillStyle = '#484f58';
+  ctx.font = '10px JetBrains Mono';
+  ctx.textAlign = 'center';
+  const paso = Math.ceil(visible.length/10);
+  visible.forEach((v,i) => {
+    if (i%paso!==0) return;
+    ctx.fillText(fmtDia(v.x), xOf(i), H-M.bottom+16);
+  });
 }
 
-function cambiar(sym) {
-  activo = sym;
-  clearTimeout(refreshTimer);
-  myChart?.destroy(); myChart = null;
-  zoomStart = null; zoomEnd = null;
-  document.querySelectorAll('.asset-tab').forEach(b => b.classList.toggle('active', b.textContent===sym));
-  cargarDatos(sym);
+// ═══════════════════════════════════════
+// TOOLTIP
+// ═══════════════════════════════════════
+function showTooltip(e) {
+  if (!allVelas.length) return;
+  const rect   = cc.getBoundingClientRect();
+  const mouseX = e.clientX - rect.left;
+  const mouseY = e.clientY - rect.top;
+  const W = cc.width, H = cc.height;
+  const gW = W - M.left - M.right;
+
+  const visible = allVelas.slice(zoomStart, zoomEnd+1);
+  const i = Math.round((mouseX - M.left) / gW * (visible.length-1));
+  if (i<0||i>=visible.length) { hideTooltip(); return; }
+
+  hoveredIdx = i;
+  render();
+
+  const v   = visible[i];
+  const tt  = document.getElementById('tooltip');
+  const sube = v.c >= v.o;
+
+  document.getElementById('tt-title').textContent = fmtFecha(v.x) + '  ' + velaLabel(v.x);
+  document.getElementById('tt-o').textContent = '$'+v.o.toFixed(2);
+  document.getElementById('tt-h').textContent = '$'+v.h.toFixed(2);
+  document.getElementById('tt-l').textContent = '$'+v.l.toFixed(2);
+  const ttC = document.getElementById('tt-c');
+  ttC.textContent = '$'+v.c.toFixed(2);
+  ttC.style.color = sube ? '#3fb950' : '#f85149';
+
+  // Posición del tooltip
+  let tx = e.clientX - rect.left + 16;
+  let ty = e.clientY - rect.top  - 10;
+  if (tx + 200 > W) tx = mouseX - 210;
+  if (ty + 120 > H) ty = H - 130;
+  tt.style.left    = tx+'px';
+  tt.style.top     = ty+'px';
+  tt.style.display = 'block';
 }
 
+function hideTooltip() {
+  document.getElementById('tooltip').style.display = 'none';
+  if (hoveredIdx !== -1) { hoveredIdx = -1; render(); }
+}
+
+// ═══════════════════════════════════════
+// ZOOM
+// ═══════════════════════════════════════
+cc.addEventListener('wheel', e => {
+  e.preventDefault();
+  if (!allVelas.length) return;
+  const total  = allVelas.length;
+  const rango  = zoomEnd - zoomStart;
+  const factor = e.deltaY < 0 ? 0.85 : 1.15;
+  const newLen = Math.max(7, Math.min(total, Math.round(rango*factor)));
+  const rect   = cc.getBoundingClientRect();
+  const relX   = (e.clientX-rect.left) / cc.width;
+  const centro = Math.round(zoomStart + rango*relX);
+  zoomStart    = Math.max(0, centro - Math.round(newLen/2));
+  zoomEnd      = Math.min(total-1, zoomStart+newLen);
+  if (zoomEnd===total-1) zoomStart = Math.max(0,zoomEnd-newLen);
+  render();
+}, { passive:false });
+
+// ═══════════════════════════════════════
+// PAN
+// ═══════════════════════════════════════
+cc.addEventListener('mousedown', e => {
+  if (drawMode) return;
+  panActive = true;
+  panX0     = e.clientX;
+  panZ0     = { start:zoomStart, end:zoomEnd, rango:zoomEnd-zoomStart };
+  cc.style.cursor = 'grabbing';
+});
+
+cc.addEventListener('mousemove', e => {
+  if (panActive && panZ0) {
+    const gW      = cc.width - M.left - M.right;
+    const pxPorV  = gW / (panZ0.rango||1);
+    const delta   = Math.round((e.clientX - panX0) / pxPorV);
+    let ns        = panZ0.start - delta;
+    let ne        = panZ0.end   - delta;
+    const total   = allVelas.length;
+    if (ns < 0)         { ne -= ns; ns = 0; }
+    if (ne > total-1)   { ns -= (ne-(total-1)); ne = total-1; }
+    zoomStart = Math.max(0, ns);
+    zoomEnd   = Math.min(total-1, ne);
+    render();
+  } else if (!drawMode) {
+    showTooltip(e);
+  }
+});
+
+cc.addEventListener('mouseup', e => {
+  panActive = false; panX0 = null;
+  cc.style.cursor = 'default';
+});
+
+cc.addEventListener('mouseleave', () => {
+  panActive = false;
+  cc.style.cursor = 'default';
+  hideTooltip();
+});
+
+// ═══════════════════════════════════════
+// FIT
+// ═══════════════════════════════════════
+function fitChart() {
+  zoomStart=0; zoomEnd=allVelas.length-1;
+  render(); toast('Vista completa');
+}
+
+// ═══════════════════════════════════════
+// SMA TOGGLE
+// ═══════════════════════════════════════
 function togSMA(p) {
   smaState[p] = !smaState[p];
   document.getElementById('b'+p).classList.toggle('on',  smaState[p]);
   document.getElementById('b'+p).classList.toggle('off', !smaState[p]);
-  if (myChart) {
-    const ds = myChart.data.datasets.find(d => d.label==='SMA'+p);
-    if (ds) { ds.hidden = !smaState[p]; myChart.update('none'); }
+  render();
+}
+
+// ═══════════════════════════════════════
+// CAMBIAR ACTIVO
+// ═══════════════════════════════════════
+function cambiar(sym) {
+  activo = sym;
+  clearTimeout(refreshTimer);
+  allVelas=[]; zoomStart=0; zoomEnd=0;
+  document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('on',b.textContent===sym));
+  cargarDatos(sym);
+}
+
+// ═══════════════════════════════════════
+// PRECIO HEADER
+// ═══════════════════════════════════════
+function updatePrecio(velas) {
+  if (!velas.length) return;
+  const last=velas[velas.length-1], prev=velas[velas.length-2];
+  document.getElementById('pval').textContent = '$'+last.c.toFixed(2);
+  if (prev) {
+    const d=last.c-prev.c, pct=(d/prev.c*100).toFixed(2);
+    const el=document.getElementById('pchg');
+    el.textContent=(d>=0?'+':'')+d.toFixed(2)+' ('+pct+'%)';
+    el.className='pchg '+(d>=0?'up':'dn');
   }
 }
 
-function resizeDC() {
-  const w = document.querySelector('.chart-wrap');
-  dc.width = w.clientWidth-32; dc.height = w.clientHeight-24;
-  redraw();
-}
-
+// ═══════════════════════════════════════
+// DIBUJO DE LINEAS
+// ═══════════════════════════════════════
 function togDraw() {
   drawMode = !drawMode;
   dc.classList.toggle('draw-mode', drawMode);
-  document.getElementById('bdraw').classList.toggle('active', drawMode);
+  document.getElementById('bdraw').classList.toggle('draw-on', drawMode);
+  // Deshabilitar tooltip y pan en modo dibujo
   toast(drawMode ? 'Modo dibujo ON — click y arrastra' : 'Modo dibujo OFF');
 }
 
 function clearLines() {
-  userLines[activo] = [];
-  dctx.clearRect(0, 0, dc.width, dc.height);
+  userLines[activo]=[];
+  dctx.clearRect(0,0,dc.width,dc.height);
   toast('Líneas eliminadas');
 }
 
-function redraw() {
-  dctx.clearRect(0, 0, dc.width, dc.height);
-  (userLines[activo]||[]).forEach(l => line(l.x1,l.y1,l.x2,l.y2,false));
+function redrawLines() {
+  dctx.clearRect(0,0,dc.width,dc.height);
+  (userLines[activo]||[]).forEach(l=>drawLine(l.x1,l.y1,l.x2,l.y2,false));
 }
 
-function line(x1,y1,x2,y2,pre) {
+function drawLine(x1,y1,x2,y2,pre) {
   dctx.beginPath(); dctx.moveTo(x1,y1); dctx.lineTo(x2,y2);
-  dctx.strokeStyle = pre ? 'rgba(88,166,255,0.5)' : '#58a6ff';
-  dctx.lineWidth   = pre ? 1 : 1.5;
-  dctx.setLineDash(pre ? [4,4] : []);
+  dctx.strokeStyle = pre?'rgba(88,166,255,0.5)':'#58a6ff';
+  dctx.lineWidth   = pre?1:1.5;
+  dctx.setLineDash(pre?[4,4]:[]);
   dctx.stroke(); dctx.setLineDash([]);
 }
 
-dc.addEventListener('mousedown', e => { if (!drawMode) return; drawing=true; p0={x:e.offsetX,y:e.offsetY}; });
-dc.addEventListener('mousemove', e => { if (!drawMode||!drawing||!p0) return; redraw(); line(p0.x,p0.y,e.offsetX,e.offsetY,true); });
-dc.addEventListener('mouseup', e => {
-  if (!drawMode||!drawing||!p0) return; drawing=false;
+dc.addEventListener('mousedown', e=>{ if(!drawMode)return; drawing=true; p0={x:e.offsetX,y:e.offsetY}; });
+dc.addEventListener('mousemove', e=>{ if(!drawMode||!drawing||!p0)return; redrawLines(); drawLine(p0.x,p0.y,e.offsetX,e.offsetY,true); });
+dc.addEventListener('mouseup', e=>{
+  if(!drawMode||!drawing||!p0)return; drawing=false;
   const dx=e.offsetX-p0.x, dy=e.offsetY-p0.y;
-  if (Math.sqrt(dx*dx+dy*dy)<5) return;
-  if (!userLines[activo]) userLines[activo]=[];
+  if(Math.sqrt(dx*dx+dy*dy)<5)return;
+  if(!userLines[activo])userLines[activo]=[];
   userLines[activo].push({x1:p0.x,y1:p0.y,x2:e.offsetX,y2:e.offsetY});
-  redraw(); p0=null;
+  redrawLines(); p0=null;
 });
-dc.addEventListener('mouseleave', () => { if (drawing) { drawing=false; redraw(); } });
-window.addEventListener('resize', () => { resizeDC(); redraw(); });
+dc.addEventListener('mouseleave',()=>{ if(drawing){drawing=false;redrawLines();} });
 
+// ═══════════════════════════════════════
+// TOAST
+// ═══════════════════════════════════════
 let tt=null;
 function toast(msg) {
   const el=document.getElementById('toast');
   el.textContent=msg; el.classList.add('show');
-  if(tt) clearTimeout(tt);
+  if(tt)clearTimeout(tt);
   tt=setTimeout(()=>el.classList.remove('show'),2500);
 }
 
-window.addEventListener('load', () => { resizeDC(); cargarDatos('SPY'); });
-
-const dc   = document.getElementById('drawCanvas');
-const dctx = dc.getContext('2d');
-
-// Numero de vela AXIS segun hora de cierre
-function velaLabel(tsMs) {
-  const h = new Date(tsMs).toLocaleString('en-US', { hour:'numeric', hour12:false, timeZone:'America/New_York' });
-  const hora = parseInt(h);
-  const labels = { 10:'V1', 11:'V2', 12:'V3', 13:'V4', 14:'V5', 15:'V6', 16:'V7' };
-  return (labels[hora] || 'V?') + ' · ' + hora + ':00';
-}
-
-function calcSMA(velas, period) {
-  return velas.map((v,i) => {
-    if (i < period-1) return { x: v.x, y: null };
-    const avg = velas.slice(i-period+1,i+1).reduce((s,c) => s+c.c, 0) / period;
-    return { x: v.x, y: avg };
-  });
-}
-
-// Plugin personalizado: lineas verticales al inicio de cada dia
-const pluginLineasDia = {
-  id: 'lineasDia',
-  afterDraw(chart) {
-    const { ctx, scales: { x, y } } = chart;
-    if (!x || !y) return;
-    const velas = chart._axisVelas || [];
-    let fechaAnterior = null;
-    ctx.save();
-    velas.forEach(v => {
-      const fecha = new Date(v.x).toLocaleDateString('en-US', { timeZone:'America/New_York' });
-      if (fecha !== fechaAnterior) {
-        fechaAnterior = fecha;
-        const px = x.getPixelForValue(v.x);
-        if (px < x.left || px > x.right) return;
-        ctx.beginPath();
-        ctx.moveTo(px, y.top);
-        ctx.lineTo(px, y.bottom);
-        ctx.strokeStyle = 'rgba(240,180,41,0.25)';
-        ctx.lineWidth   = 1;
-        ctx.setLineDash([4, 4]);
-        ctx.stroke();
-        ctx.setLineDash([]);
-        // Label fecha
-        ctx.fillStyle  = '#484f58';
-        ctx.font       = '10px JetBrains Mono';
-        ctx.textAlign  = 'left';
-        const label = new Date(v.x).toLocaleDateString('en-US', { month:'short', day:'numeric', timeZone:'America/New_York' });
-        ctx.fillText(label, px + 3, y.top + 12);
-      }
-    });
-    ctx.restore();
-  }
-};
+// ═══════════════════════════════════════
+// ARRANQUE
+// ═══════════════════════════════════════
+window.addEventListener('load', ()=>{ resize(); cargarDatos('SPY'); });
+window.addEventListener('resize', ()=>{ resize(); });
 </script>
 </body>
 </html>
