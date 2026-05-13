@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v8.22
+AXIS Breakout Sentinel v8.23
 Estrategias: 1VR | 1VR+ | RPG | GNA | GBA | RCB/CNF
 Multi-activo: SPY, AAPL, BA, GLD
 Auto-P2 | Apagado automatico si nuevo P2 >= P1
@@ -21,6 +21,7 @@ v8.14: Fix parser timestamp ISO en test_tradier_30min — agrupacion correcta de
 v8.15: Fix agrupacion AXIS — ignorar barras pre-AXIS (9:30 y 9:45), V1 empieza en barra 10:00
 v8.16: Ruta /comparar_fuentes — compara TwelveData vs Tradier 15min para HOY, muestra OHLC lado a lado por vela AXIS
 v8.17: MIGRACION COMPLETA — TwelveData eliminado. get_velas() ahora usa Tradier produccion 15min agrupadas en velas AXIS. 99.8% mas preciso que TwelveData.
+v8.23: Ruta /diagnostico — auditoria completa de estrategias por activo y fecha. Muestra valores exactos, umbrales y razon de cada señal disparada o no.
 """
 
 import requests
@@ -861,7 +862,7 @@ def reporte_horario():
 # LOOP PRINCIPAL
 # ═══════════════════════════════════════════════════════════
 def monitor_loop():
-    print("AXIS Breakout Sentinel v8.22 iniciado...")
+    print("AXIS Breakout Sentinel v8.23 iniciado...")
     while True:
         ahora = datetime.now(EST)
         minutos_hasta_01 = (1 - ahora.minute) % 60
@@ -893,7 +894,7 @@ def home():
             "tipo":    "RCB" if c["p3"] else "CNF" if c["on"] else "OFF",
         }
     return jsonify({
-        "sistema":     "AXIS Breakout Sentinel v8.22",
+        "sistema":     "AXIS Breakout Sentinel v8.23",
         "estado":      "activo" if SISTEMA_ACTIVO else "apagado",
         "hora_est":    ahora.strftime("%A %H:%M EST"),
         "mercado":     "abierto" if es_dia_mercado(ahora) else "cerrado",
@@ -916,7 +917,7 @@ def test():
         else:
             lineas_canal.append(f"  {a}: OFF")
     enviar_telegram(
-        f"✅ <b>AXIS Breakout Sentinel v8.22</b>\n"
+        f"✅ <b>AXIS Breakout Sentinel v8.23</b>\n"
         f"<b>Hora:</b> {ahora.strftime('%A %d/%m/%Y %H:%M EST')}\n"
         f"<b>Mercado:</b> {'Abierto' if es_dia_mercado(ahora) else 'Cerrado'}\n"
         f"<b>1VR:</b> {'ON' if VR1_ON else 'OFF'} | "
@@ -1889,6 +1890,211 @@ def test_rango():
             resultado[f"{dias}_dias_habiles"] = {"estado": f"❌ error: {str(e)}"}
 
     return jsonify(resultado), 200
+
+# ═══════════════════════════════════════════════════════════
+# DIAGNOSTICO — Auditoria de estrategias por activo y fecha
+# Uso: /diagnostico?simbolo=AAPL&fecha=2026-03-27
+# Muestra OHLC real + razon exacta de cada señal por vela
+# Permanente — para verificacion de datos y logica
+# ═══════════════════════════════════════════════════════════
+@app.route("/diagnostico", methods=["GET"])
+def diagnostico():
+    from datetime import date as date_cls, datetime as dt2, timedelta
+    from collections import defaultdict
+
+    simbolo = request.args.get("simbolo", "SPY").upper()
+    fecha   = request.args.get("fecha", date_cls.today().strftime("%Y-%m-%d"))
+
+    reporte = { "simbolo": simbolo, "fecha": fecha, "velas": [], "señales": [], "log": [] }
+    log = reporte["log"]
+
+    # ── Obtener velas del dia y dia anterior via Tradier ──
+    try:
+        fecha_dt   = dt2.strptime(fecha, "%Y-%m-%d")
+        fecha_ini  = (fecha_dt - timedelta(days=10)).strftime("%Y-%m-%d")
+        fecha_fin  = fecha_dt.strftime("%Y-%m-%d")
+
+        r = requests.get(
+            f"{TRADIER_BASE_REAL}/markets/timesales",
+            headers=TRADIER_HEADERS_REAL,
+            params={
+                "symbol":         simbolo,
+                "interval":       "15min",
+                "start":          f"{fecha_ini} 09:00",
+                "end":            f"{fecha_fin} 16:30",
+                "session_filter": "open",
+            },
+            timeout=30
+        )
+        data   = r.json()
+        series = data.get("series")
+        barras = []
+        if series and series != "null":
+            barras = series.get("data", [])
+            if isinstance(barras, dict): barras = [barras]
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+    # ── Agrupar en velas AXIS ──
+    dias = defaultdict(lambda: defaultdict(list))
+    for b in barras:
+        ts  = b["time"].replace("T", " ")
+        bdt = dt2.strptime(ts, "%Y-%m-%d %H:%M:%S")
+        f   = bdt.strftime("%Y-%m-%d")
+        h, m = bdt.hour, bdt.minute
+        if h == 9 and m in (30, 45): dias[f]["V1"].append(b)
+        elif h == 10: dias[f]["V2"].append(b)
+        elif h == 11: dias[f]["V3"].append(b)
+        elif h == 12: dias[f]["V4"].append(b)
+        elif h == 13: dias[f]["V5"].append(b)
+        elif h == 14: dias[f]["V6"].append(b)
+        elif h == 15: dias[f]["V7"].append(b)
+
+    def construir_vela(vnum, bs):
+        if not bs: return None
+        return {
+            "vela":  vnum,
+            "open":  round(float(bs[0]["open"]), 2),
+            "high":  round(max(float(b["high"]) for b in bs), 2),
+            "low":   round(min(float(b["low"])  for b in bs), 2),
+            "close": round(float(bs[-1]["close"]), 2),
+            "bars":  len(bs),
+        }
+
+    # ── Velas del dia anterior (para V7 close y SMAs simples) ──
+    fechas_ordenadas = sorted(dias.keys())
+    v7_prev_close = None
+    for f in fechas_ordenadas:
+        if f < fecha:
+            bs = dias[f].get("V7", [])
+            if bs: v7_prev_close = round(float(bs[-1]["close"]), 2)
+
+    # ── Construir velas del dia solicitado ──
+    velas_dia = {}
+    for vnum in ["V1","V2","V3","V4","V5","V6","V7"]:
+        v = construir_vela(vnum, dias.get(fecha, {}).get(vnum, []))
+        if v: velas_dia[vnum] = v
+
+    reporte["velas"] = list(velas_dia.values())
+    reporte["v7_dia_anterior"] = v7_prev_close
+
+    if not velas_dia:
+        log.append("⚠️ Sin velas para esta fecha — puede ser feriado o fin de semana")
+        return jsonify(reporte), 200
+
+    # ── Helpers ──
+    def es_verde(v): return v["close"] > v["open"]
+    def es_roja(v):  return v["close"] < v["open"]
+    def es_alcista(v):
+        o,h,l,c = v["open"],v["high"],v["low"],v["close"]
+        cuerpo   = c - o
+        rango    = h - l
+        mechaSup = h - c
+        if c <= o: return False, "close <= open"
+        if rango == 0: return False, "rango=0"
+        r1 = round(cuerpo/rango, 3)
+        if r1 < 0.15: return False, f"body/range={r1} < 0.15"
+        r2 = round(mechaSup/cuerpo, 3) if cuerpo > 0 else 999
+        if r2 > 0.30: return False, f"mechaSup/body={r2} > 0.30"
+        return True, f"body/range={r1} mechaSup/body={r2}"
+
+    v1 = velas_dia.get("V1")
+
+    # ── ANALISIS 1VR ──
+    log.append("─── 1VR ───────────────────────────────")
+    if v1:
+        if es_roja(v1):
+            log.append(f"✅ 1VR DISPARADA — V1 roja: O{v1['open']} C{v1['close']}")
+            reporte["señales"].append("1VR en V1")
+        else:
+            log.append(f"❌ 1VR no — V1 verde: O{v1['open']} C{v1['close']}")
+
+    # ── ANALISIS RPG ──
+    log.append("─── RPG ───────────────────────────────")
+    if v1 and v7_prev_close:
+        gap_up   = round((v1["open"] - v7_prev_close) / v7_prev_close * 100, 3)
+        gap_down = round((v7_prev_close - v1["open"]) / v7_prev_close * 100, 3)
+        hay_gap  = abs(gap_up) >= 0.2 or abs(gap_down) >= 0.2
+        log.append(f"V7 anterior close: {v7_prev_close}")
+        log.append(f"V1 open: {v1['open']} | gap_up={gap_up}% gap_down={gap_down}%")
+        log.append(f"Gap >= 0.2%: {'SI' if hay_gap else 'NO'}")
+        log.append(f"V1 verde: {'SI' if es_verde(v1) else 'NO'}")
+
+        if hay_gap and es_verde(v1):
+            piso = v1["low"]
+            log.append(f"✅ RPG activado — piso = V1.low = {piso}")
+            rpg_fired = False
+            for vnum in ["V2","V3","V4","V5","V6","V7"]:
+                v = velas_dia.get(vnum)
+                if not v or rpg_fired: continue
+                roja = es_roja(v)
+                bajo_piso = v["close"] < piso
+                log.append(f"  {vnum}: O{v['open']} H{v['high']} L{v['low']} C{v['close']} | roja={roja} close({v['close']})<piso({piso})={bajo_piso}")
+                if roja and bajo_piso:
+                    log.append(f"  ✅ RPG DISPARADA en {vnum}")
+                    reporte["señales"].append(f"RPG en {vnum}")
+                    rpg_fired = True
+                elif bajo_piso and not roja:
+                    log.append(f"  ⚠️ {vnum} cerro bajo piso pero es VERDE — RPG requiere roja")
+                elif roja and not bajo_piso:
+                    log.append(f"  ⚠️ {vnum} es roja pero NO cerro bajo piso")
+        else:
+            log.append("❌ RPG no activado — condiciones V1 no cumplidas")
+    else:
+        log.append(f"❌ RPG no — {'sin V1' if not v1 else 'sin V7 anterior'}")
+
+    # ── ANALISIS GNA ──
+    log.append("─── GNA ───────────────────────────────")
+    if v1 and v7_prev_close:
+        gap_up = round((v1["open"] - v7_prev_close) / v7_prev_close * 100, 3)
+        log.append(f"gap_up={gap_up}% (min 0.1%): {'SI' if gap_up >= 0.1 else 'NO'}")
+        log.append(f"V1 verde: {'SI' if es_verde(v1) else 'NO'}")
+        log.append("SMA20>SMA40: requiere historial largo — verificar en dashboard")
+
+        if gap_up >= 0.1 and es_verde(v1):
+            techo = v1["close"]
+            log.append(f"GNA activado — techo = V1.close = {techo}")
+            gna_fired = False
+            for vnum in ["V2","V3","V4","V5","V6","V7"]:
+                v = velas_dia.get(vnum)
+                if not v or gna_fired: continue
+                ok_alc, razon_alc = es_alcista(v)
+                rompe = v["close"] > techo
+                log.append(f"  {vnum}: O{v['open']} H{v['high']} L{v['low']} C{v['close']} | alcista={ok_alc}({razon_alc}) rompe={rompe}(c{v['close']}>t{techo})")
+                if ok_alc and rompe:
+                    tipo = "GNA" if vnum == "V2" else "GNA+2"
+                    log.append(f"  ✅ {tipo} DISPARADA en {vnum}")
+                    reporte["señales"].append(f"{tipo} en {vnum}")
+                    gna_fired = True
+        else:
+            log.append("❌ GNA no activado")
+
+    # ── ANALISIS GBA ──
+    log.append("─── GBA ───────────────────────────────")
+    if v1 and v7_prev_close:
+        gap_down = round((v7_prev_close - v1["open"]) / v7_prev_close * 100, 3)
+        log.append(f"gap_down={gap_down}% (min 0.1%): {'SI' if gap_down >= 0.1 else 'NO'}")
+        log.append(f"V1 verde: {'SI' if es_verde(v1) else 'NO'}")
+
+        if gap_down >= 0.1 and es_verde(v1):
+            techo = v1["close"]
+            log.append(f"GBA activado — techo = V1.close = {techo}")
+            gba_fired = False
+            for vnum in ["V2","V3","V4","V5","V6","V7"]:
+                v = velas_dia.get(vnum)
+                if not v or gba_fired: continue
+                ok_alc, razon_alc = es_alcista(v)
+                rompe = v["close"] > techo
+                log.append(f"  {vnum}: alcista={ok_alc}({razon_alc}) rompe={rompe}")
+                if ok_alc and rompe:
+                    tipo = "GBA" if vnum == "V2" else "GBA+2"
+                    log.append(f"  ✅ {tipo} DISPARADA en {vnum}")
+                    reporte["señales"].append(f"{tipo} en {vnum}")
+                    gba_fired = True
+        else:
+            log.append("❌ GBA no activado")
+
+    return jsonify(reporte), 200
 
 # ═══════════════════════════════════════════════════════════
 # ARRANQUE
