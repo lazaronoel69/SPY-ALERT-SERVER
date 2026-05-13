@@ -1,0 +1,987 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AXIS — Charts</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Bebas+Neue&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:      #080b0f;
+    --surface: #0d1117;
+    --border:  #21262d;
+    --accent:  #f0b429;
+    --green:   #3fb950;
+    --red:     #f85149;
+    --cyan:    #58a6ff;
+    --text:    #c9d1d9;
+    --dim:     #6e7681;
+    --mono:    'JetBrains Mono', monospace;
+    --disp:    'Bebas Neue', sans-serif;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:var(--bg); color:var(--text); font-family:var(--mono); height:100vh; display:flex; flex-direction:column; overflow:hidden; }
+
+  header {
+    display:flex; align-items:center; gap:16px;
+    padding:8px 20px; background:var(--surface);
+    border-bottom:1px solid var(--border); flex-shrink:0;
+  }
+  .logo { font-family:var(--disp); font-size:24px; letter-spacing:3px; color:var(--accent); line-height:1; }
+  .logo small { display:block; font-family:var(--mono); font-size:10px; color:var(--dim); letter-spacing:1px; }
+
+  .tabs { display:flex; gap:4px; }
+  .tab {
+    padding:5px 14px; border:1px solid var(--border); background:transparent;
+    color:var(--dim); font-family:var(--mono); font-size:12px; font-weight:600;
+    cursor:pointer; border-radius:4px; transition:all 0.15s; letter-spacing:1px;
+  }
+  .tab:hover { border-color:var(--accent); color:var(--text); }
+  .tab.on { background:var(--accent); border-color:var(--accent); color:#000; }
+
+  .price-box { margin-left:auto; display:flex; align-items:baseline; gap:8px; }
+  .pval { font-size:22px; font-weight:700; }
+  .pchg { font-size:12px; font-weight:600; }
+  .up { color:var(--green); } .dn { color:var(--red); }
+
+  .toolbar {
+    display:flex; align-items:center; gap:8px;
+    padding:6px 20px; background:var(--surface);
+    border-bottom:1px solid var(--border); flex-shrink:0; flex-wrap:wrap;
+  }
+  .tg { display:flex; align-items:center; gap:5px; padding-right:10px; border-right:1px solid var(--border); }
+  .tg:last-child { border-right:none; margin-left:auto; }
+  .tlbl { font-size:9px; color:var(--dim); letter-spacing:1px; text-transform:uppercase; }
+
+  .btn {
+    padding:3px 9px; border:1px solid var(--border); background:transparent;
+    font-family:var(--mono); font-size:11px; font-weight:600;
+    cursor:pointer; border-radius:3px; transition:all 0.15s; color:var(--dim);
+  }
+  .btn:hover { border-color:var(--cyan); color:var(--cyan); }
+  .btn.s20  { color:#f0b429; border-color:#f0b429; }
+  .btn.s40  { color:#e05c1a; border-color:#e05c1a; }
+  .btn.s100 { color:#58a6ff; border-color:#58a6ff; }
+  .btn.s200 { color:#bc8cff; border-color:#bc8cff; }
+  .btn.on.s20  { background:#f0b429; color:#000; }
+  .btn.on.s40  { background:#e05c1a; color:#fff; }
+  .btn.on.s100 { background:#58a6ff; color:#000; }
+  .btn.on.s200 { background:#bc8cff; color:#000; }
+  .btn.off { opacity:0.3; }
+  .btn.draw-on { border-color:var(--cyan); color:var(--cyan); background:rgba(88,166,255,0.1); }
+  .btn.danger:hover { border-color:var(--red); color:var(--red); }
+
+  #info { font-size:11px; color:var(--dim); }
+
+  .chart-wrap { flex:1; position:relative; overflow:hidden; }
+  canvas { position:absolute; top:0; left:0; }
+  #chartCanvas { cursor:default; }
+  #drawCanvas  { pointer-events:none; z-index:5; }
+  #drawCanvas.draw-mode { pointer-events:all; cursor:crosshair; }
+
+  /* Tooltip */
+  #tooltip {
+    position:absolute; display:none;
+    background:#0d1117; border:1px solid #21262d;
+    border-radius:5px; padding:8px 12px;
+    font-size:11px; pointer-events:none; z-index:20;
+    min-width:190px;
+  }
+  #tooltip .tt-title { color:var(--accent); font-weight:700; margin-bottom:5px; font-size:11px; }
+  #tooltip .tt-row   { display:flex; justify-content:space-between; gap:14px; }
+  #tooltip .tt-lbl   { color:var(--dim); }
+  #tooltip .tt-val   { color:var(--text); font-weight:600; }
+
+  .toast {
+    position:fixed; bottom:18px; left:50%; transform:translateX(-50%);
+    background:#161b22; border:1px solid var(--border); color:var(--text);
+    padding:7px 18px; border-radius:6px; font-size:12px;
+    z-index:100; opacity:0; transition:opacity 0.3s; pointer-events:none;
+  }
+  .toast.show { opacity:1; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">AXIS<small>CHARTS v1.2 — SEÑALES</small></div>
+  <div class="tabs">
+    <button class="tab on"  onclick="cambiar('SPY')">SPY</button>
+    <button class="tab"     onclick="cambiar('AAPL')">AAPL</button>
+    <button class="tab"     onclick="cambiar('BA')">BA</button>
+    <button class="tab"     onclick="cambiar('GLD')">GLD</button>
+  </div>
+  <div class="price-box">
+    <span id="activo-label" style="font-size:15px;font-weight:700;color:var(--dim);letter-spacing:2px;margin-right:4px;">SPY</span>
+    <span class="pval" id="pval">—</span>
+    <span class="pchg" id="pchg"></span>
+  </div>
+</header>
+
+<div class="toolbar">
+  <div class="tg">
+    <span class="tlbl">SMA</span>
+    <button class="btn s20 on"  id="b20"  onclick="togSMA(20)">20</button>
+    <button class="btn s40 on"  id="b40"  onclick="togSMA(40)">40</button>
+    <button class="btn s100 on" id="b100" onclick="togSMA(100)">100</button>
+    <button class="btn s200 on" id="b200" onclick="togSMA(200)">200</button>
+  </div>
+  <div class="tg">
+    <span class="tlbl">Vista</span>
+    <button class="btn" onclick="fitChart()">⊡ Fit</button>
+  </div>
+  <div class="tg">
+    <span class="tlbl">Dibujo</span>
+    <button class="btn" id="bdraw" onclick="togDraw()">✏ Línea</button>
+    <button class="btn danger" onclick="clearLines()">✕ Limpiar</button>
+  </div>
+  <div class="tg"><span id="info">Cargando...</span></div>
+</div>
+
+<div class="chart-wrap" id="wrap">
+  <canvas id="chartCanvas"></canvas>
+  <canvas id="drawCanvas"></canvas>
+  <div id="tooltip">
+    <div class="tt-title" id="tt-title"></div>
+    <div class="tt-row"><span class="tt-lbl">Open</span><span class="tt-val" id="tt-o"></span></div>
+    <div class="tt-row"><span class="tt-lbl">High</span><span class="tt-val" id="tt-h"></span></div>
+    <div class="tt-row"><span class="tt-lbl">Low</span> <span class="tt-val" id="tt-l"></span></div>
+    <div class="tt-row"><span class="tt-lbl">Close</span><span class="tt-val" id="tt-c" style="color:var(--green)"></span></div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+// ═══════════════════════════════════════
+// CONFIG
+// ═══════════════════════════════════════
+const RAILWAY = 'https://web-production-bf9d0.up.railway.app';
+
+// Colores
+const C = {
+  up:'#3fb950', dn:'#f85149', wick:'#484f58',
+  sma:{ 20:'#f0b429', 40:'#e05c1a', 100:'#58a6ff', 200:'#bc8cff' },
+  grid:'rgba(255,255,255,0.05)', gridH:'rgba(255,255,255,0.08)',
+  dayLine:'rgba(240,180,41,0.3)', dayLabel:'#484f58',
+  forming:'rgba(88,166,255,0.6)',
+};
+
+// Estado
+let activo    = 'SPY';
+let allVelas  = [];
+let smaState  = { 20:true, 40:true, 100:true, 200:true };
+let drawMode  = false, drawing = false, p0 = null;
+let userLines = {};
+let zoomStart = 0, zoomEnd = 0;
+let panActive = false, panX0 = null, panZ0 = null;
+let refreshTimer = null;
+let hoveredIdx = -1;
+
+// Canvas
+const wrap = document.getElementById('wrap');
+const cc   = document.getElementById('chartCanvas');
+const dc   = document.getElementById('drawCanvas');
+const ctx  = cc.getContext('2d');
+const dctx = dc.getContext('2d');
+
+// Márgenes del área de gráfica
+const M = { top:30, right:70, bottom:30, left:10 };
+
+// ═══════════════════════════════════════
+// UTILIDADES
+// ═══════════════════════════════════════
+function esMercadoAbierto() {
+  const est  = new Date(new Date().toLocaleString('en-US',{timeZone:'America/New_York'}));
+  const d = est.getDay(), h = est.getHours(), m = est.getMinutes();
+  const mins = h*60+m;
+  return d>=1 && d<=5 && mins>=570 && mins<961; // 9:30-16:01 EST
+}
+
+function velaLabel(tsMs) {
+  const h = parseInt(new Date(tsMs).toLocaleString('en-US',{hour:'numeric',hour12:false,timeZone:'America/New_York'}));
+  const m = new Date(tsMs).getMinutes();
+  // V1 abre a las 9:30 EST
+  if (h===9 && m===30) return 'V1 · 9:30–10:00 EST';
+  // V2-V7 abren en hora en punto
+  return ({10:'V2',11:'V3',12:'V4',13:'V5',14:'V6',15:'V7',16:'V7'}[h]||'V?') + ' · ' + h + ':00 EST';
+}
+
+function fmtFecha(tsMs) {
+  return new Date(tsMs).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric',timeZone:'America/New_York'});
+}
+
+function fmtDia(tsMs) {
+  return new Date(tsMs).toLocaleDateString('en-US',{month:'short',day:'numeric',timeZone:'America/New_York'});
+}
+
+function calcSMA(velas, period) {
+  return velas.map((v,i) => {
+    if (i < period-1) return null;
+    return velas.slice(i-period+1,i+1).reduce((s,c)=>s+c.c,0)/period;
+  });
+}
+
+// ═══════════════════════════════════════
+// RESIZE
+// ═══════════════════════════════════════
+function resize() {
+  const w = wrap.clientWidth, h = wrap.clientHeight;
+  cc.width = w; cc.height = h;
+  dc.width = w; dc.height = h;
+  render();
+  redrawLines();
+}
+
+// ═══════════════════════════════════════
+// CARGAR DATOS — Tradier 15min via Railway
+// ═══════════════════════════════════════
+async function cargarDatos(sym, silencioso=false) {
+  if (!silencioso) document.getElementById('info').textContent = `Cargando ${sym}...`;
+  try {
+    // Llamamos a Railway que ya tiene get_velas() con Tradier 15min
+    const url = `${RAILWAY}/velas?simbolo=${sym}&dias=60`;
+    const res  = await fetch(url);
+    const data = await res.json();
+    if (!data.velas || !data.velas.length) throw new Error(data.error||'Sin datos');
+
+    // Convertir formato Railway → formato canvas
+    // datetime: "2026-05-12 09:30:00" → timestamp EST
+    const velas = data.velas.reverse().map(v => {
+      const dt = new Date(v.datetime.replace(' ','T') + '-04:00');
+      return {
+        x: dt.getTime(),
+        o: parseFloat(v.open),
+        h: parseFloat(v.high),
+        l: parseFloat(v.low),
+        c: parseFloat(v.close),
+        vela: v.vela || '',
+      };
+    });
+
+    allVelas = velas;
+    if (!silencioso) { zoomStart=0; zoomEnd=velas.length-1; }
+    else { zoomEnd=velas.length-1; zoomStart=Math.max(0,zoomEnd-(panZ0?.rango||zoomEnd)); }
+
+    updatePrecio(velas);
+    render();
+
+    const desde = fmtFecha(velas[0].x);
+    const auto  = esMercadoAbierto() ? ' · 🟢 auto 5min' : '';
+    document.getElementById('info').textContent = `${velas.length} velas · desde ${desde}${auto} · Tradier`;
+
+    clearTimeout(refreshTimer);
+    if (esMercadoAbierto())
+      refreshTimer = setTimeout(()=>cargarDatos(activo,true), 5*60*1000);
+
+  } catch(e) {
+    document.getElementById('info').textContent = 'Error: '+e.message;
+    toast('Error: '+e.message);
+  }
+}
+
+// ═══════════════════════════════════════
+// MOTOR DE SEÑALES AXIS
+// Recalcula señales sobre todas las velas
+// igual que Pine Script pero en JavaScript
+// ═══════════════════════════════════════
+
+// Colores de estrategias
+const SC = {
+  vr1:  '#f85149', // rojo
+  vr1p: '#f85149', // rojo texto amarillo
+  rpg:  '#bc8cff', // morado
+  gna:  '#3fb950', // verde
+  gba:  '#00d4c8', // cyan
+  rcb:  '#f0b429', // naranja
+  pm40: '#00d4c8', // cian
+};
+
+function calcSeñales(velas) {
+  // Necesitamos las SMAs globales (calculadas sobre todas las velas)
+  const sma20arr  = calcSMA(velas, 20);
+  const sma40arr  = calcSMA(velas, 40);
+  const sma100arr = calcSMA(velas, 100);
+  const sma200arr = calcSMA(velas, 200);
+
+  const señales = []; // { idx, tipo, color, textColor, arriba }
+  const canalesPM40 = []; // { p1Idx, p1High, p2Idx, p2High, activo }
+  const pisosRPG = []; // { idx, precio, fecha } — para dibujar línea blanca
+
+  // Helpers
+  const esV1    = v => v.vela === 'V1';
+  const esV2aV7 = v => ['V2','V3','V4','V5','V6','V7'].includes(v.vela);
+  const esRoja  = v => v.c < v.o;
+  const esVerde = v => v.c > v.o;
+
+  // Vela alcista estricta AXIS — mechaSup/body <= 0.75 (actualizado 05/13)
+  const esAlcista = v => {
+    const cuerpo   = v.c - v.o;
+    const rango    = v.h - v.l;
+    const mechaSup = v.h - v.c;
+    return v.c > v.o &&
+           (rango > 0 ? cuerpo / rango >= 0.15 : false) &&
+           (cuerpo > 0 ? mechaSup / cuerpo <= 0.75 : false);
+  };
+
+  // Estado por dia
+  let v1Close     = null;
+  let v7ClosePrev = null;
+  let fechaActual = null;
+
+  // Para RPG
+  let pisoRPG    = null;
+  let diaRPG     = null;
+  let rpgFired   = false;
+  let pisoRPGS20 = null;
+  let pisoRPGS40 = null;
+
+  // Para GNA
+  let techoGNA   = null;
+  let diaGNA     = null;
+  let gnaFired   = false;
+
+  // Para GBA
+  let techoGBA   = null;
+  let diaGBA     = null;
+  let gbaFired   = false;
+
+  // Para PM40
+  let pm40Active = false;
+  let pm40P1High = null;
+  let pm40P1Idx  = null;
+  let pm40P2High = null;
+  let pm40P2Idx  = null;
+
+  for (let i = 0; i < velas.length; i++) {
+    const v    = velas[i];
+    const s20  = sma20arr[i];
+    const s40  = sma40arr[i];
+    const s100 = sma100arr[i];
+    const s200 = sma200arr[i];
+    const fecha = new Date(v.x).toLocaleDateString('en-US',{timeZone:'America/New_York'});
+
+    // Reset diario
+    if (fecha !== fechaActual) {
+      // Guardar V7 del dia anterior
+      if (v1Close !== null) {
+        // Buscar V7 del dia anterior
+        for (let j = i - 1; j >= 0; j--) {
+          if (velas[j].vela === 'V7') { v7ClosePrev = velas[j].c; break; }
+        }
+      }
+      fechaActual = fecha;
+      v1Close   = null;
+      pisoRPG   = null; diaRPG  = null; rpgFired  = false;
+      techoGNA  = null; diaGNA  = null; gnaFired  = false;
+      techoGBA  = null; diaGBA  = null; gbaFired  = false;
+    }
+
+    // ── V1 ──
+    if (esV1(v)) {
+      v1Close = v.c;
+
+      // Gap
+      const gapUp   = v7ClosePrev ? (v.o - v7ClosePrev) / v7ClosePrev * 100 : 0;
+      const gapDown = v7ClosePrev ? (v7ClosePrev - v.o) / v7ClosePrev * 100 : 0;
+      const hayGap  = gapUp >= 0.2 || gapDown >= 0.2;
+
+      // 1VR — V1 roja
+      if (esRoja(v)) {
+        señales.push({ idx: i, tipo: '1VR', color: SC.vr1, textColor: '#fff', arriba: true });
+      }
+
+      // RPG — gap >= 0.2% + V1 verde → piso = V1.low
+      if (hayGap && esVerde(v)) {
+        pisoRPG    = v.l;
+        diaRPG     = fecha;
+        pisoRPGS20 = s20;
+        pisoRPGS40 = s40;
+        pisosRPG.push({ idx: i, precio: v.l, fecha });
+      }
+
+      // GNA — gap alcista >= 0.1% + SMA20>SMA40 + V1 verde
+      if (gapUp >= 0.1 && s20 && s40 && s20 > s40 && esVerde(v)) {
+        techoGNA = v.c;
+        diaGNA   = fecha;
+      }
+
+      // GBA — gap bajista >= 0.1% + V1 verde
+      if (gapDown >= 0.1 && esVerde(v)) {
+        techoGBA = v.c;
+        diaGBA   = fecha;
+      }
+
+      // PM40 — buscar P1 si SMA20>SMA40>SMA100>SMA200
+      if (s20 && s40 && s100 && s200 &&
+          s20 > s40 && s40 > s100 && s100 > s200) {
+
+        if (esRoja(v) && i > 0) {
+          const nuevoP1High = velas[i-1].h;
+
+          if (!pm40Active) {
+            // Activar PM40 — solo P1 por ahora, P2 se fija cuando haya >= 3 velas de distancia
+            pm40Active = true;
+            pm40P1High = nuevoP1High;
+            pm40P1Idx  = i - 1;
+            pm40P2High = null; // P2 pendiente hasta tener distancia minima
+            pm40P2Idx  = null;
+            canalesPM40.push({ p1Idx: pm40P1Idx, p1High: pm40P1High, p2Idx: null, p2High: null, señalIdx: null });
+          } else if (nuevoP1High >= pm40P1High) {
+            // Nuevo P1 >= P1 actual → canal reinicia
+            pm40P1High = nuevoP1High;
+            pm40P1Idx  = i - 1;
+            pm40P2High = null;
+            pm40P2Idx  = null;
+            canalesPM40.push({ p1Idx: pm40P1Idx, p1High: pm40P1High, p2Idx: null, p2High: null, señalIdx: null });
+          }
+          // Si nuevoP1 < P1 actual → el canal bajista sigue, no se resetea
+        }
+      } else if (pm40Active) {
+        // SMAs se cruzaron DESPUES de activarse → NO invalidan el canal
+        // PM40 sigue activo — esto es correcto segun la definicion
+      }
+    }
+
+    // ── V2-V7 ──
+    if (esV2aV7(v)) {
+
+      // RPG — cualquier vela que cierre < piso (sin requerir roja)
+      if (pisoRPG !== null && diaRPG === fecha && !rpgFired) {
+        if (v.c < pisoRPG) {
+          // Determinar estrellas de contexto
+          let tipo = 'RPG';
+          if (pisoRPGS20 && pisoRPGS40 && pisoRPGS20 > pisoRPGS40) tipo = 'RPG★';
+          // RPG★★ requiere canal RCB activo — pendiente cuando canal esté en dashboard
+          señales.push({ idx: i, tipo, color: SC.rpg, textColor: '#fff', arriba: true });
+          rpgFired = true;
+        }
+      }
+
+      // GNA
+      if (techoGNA !== null && diaGNA === fecha && !gnaFired) {
+        if (esAlcista(v) && v.c > techoGNA) {
+          const tipo = v.vela === 'V2' ? 'GNA' : 'GNA+2';
+          señales.push({ idx: i, tipo, color: SC.gna, textColor: '#fff', arriba: false });
+          gnaFired = true;
+        }
+      }
+
+      // GBA
+      if (techoGBA !== null && diaGBA === fecha && !gbaFired) {
+        if (esAlcista(v) && v.c > techoGBA) {
+          const tipo = v.vela === 'V2' ? 'GBA' : 'GBA+2';
+          señales.push({ idx: i, tipo, color: SC.gba, textColor: '#000', arriba: false });
+          gbaFired = true;
+        }
+      }
+
+      // PM40 — actualizar P2 y detectar señal
+      if (pm40Active && pm40P1High !== null) {
+        const distancia = i - pm40P1Idx;
+
+        // REGLA ABSOLUTA: si cualquier vela supera P1 → reset inmediato
+        if (v.h >= pm40P1High) {
+          pm40Active = false; pm40P1High = null; pm40P1Idx = null; pm40P2High = null; pm40P2Idx = null;
+        }
+        // Solo operar si hay al menos 3 velas ENTRE P1 y la vela actual (distancia >= 4)
+        else if (distancia >= 4) {
+
+          // Si P2 aún no está fijado, fijarlo ahora
+          if (pm40P2Idx === null) {
+            pm40P2High = v.h;
+            pm40P2Idx  = i;
+            if (canalesPM40.length > 0) {
+              canalesPM40[canalesPM40.length-1].p2Idx  = i;
+              canalesPM40[canalesPM40.length-1].p2High = v.h;
+            }
+          } else if (pm40P2Idx > pm40P1Idx) {
+            const slope     = (pm40P2High - pm40P1High) / (pm40P2Idx - pm40P1Idx);
+            const techoPM40 = pm40P1High + slope * (i - pm40P1Idx);
+
+            if (esAlcista(v) && v.h > techoPM40 && v.vela !== 'V1') {
+              if (pm40P2High < pm40P1High) {
+                señales.push({ idx: i, tipo: 'PM40', color: SC.pm40, textColor: '#000', arriba: false });
+                if (canalesPM40.length > 0) canalesPM40[canalesPM40.length-1].señalIdx = i;
+              }
+              pm40Active = false; pm40P1High = null; pm40P1Idx = null; pm40P2High = null; pm40P2Idx = null;
+            } else if (v.h > techoPM40 && v.h < pm40P1High) {
+              // Actualizar P2
+              pm40P2High = v.h;
+              pm40P2Idx  = i;
+              if (canalesPM40.length > 0) {
+                canalesPM40[canalesPM40.length-1].p2Idx  = i;
+                canalesPM40[canalesPM40.length-1].p2High = v.h;
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // V7 — guardar close para el dia siguiente
+    if (v.vela === 'V7') {
+      v7ClosePrev = v.c;
+    }
+  }
+
+  return { señales, canalesPM40, pisosRPG };
+}
+
+// Dibujar etiqueta de señal en canvas
+function dibujarSeñal(ctx, x, y, texto, bgColor, textColor, arriba) {
+  const pad  = 4;
+  ctx.font   = 'bold 10px JetBrains Mono';
+  const tw   = ctx.measureText(texto).width;
+  const bw   = tw + pad * 2;
+  const bh   = 16;
+  const bx   = x - bw / 2;
+  const by   = arriba ? y - bh - 4 : y + 4;
+
+  // Fondo
+  ctx.fillStyle = bgColor;
+  ctx.beginPath();
+  ctx.roundRect(bx, by, bw, bh, 3);
+  ctx.fill();
+
+  // Texto
+  ctx.fillStyle = textColor;
+  ctx.textAlign = 'center';
+  ctx.fillText(texto, x, by + bh - 4);
+}
+
+// ═══════════════════════════════════════
+// RENDER PRINCIPAL
+// ═══════════════════════════════════════
+function render() {
+  if (!allVelas.length) return;
+  const W = cc.width, H = cc.height;
+  const gW = W - M.left - M.right;
+  const gH = H - M.top  - M.bottom;
+
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle = '#080b0f';
+  ctx.fillRect(0,0,W,H);
+
+  const visible = allVelas.slice(zoomStart, zoomEnd+1);
+  if (!visible.length) return;
+
+  // Rango de precios
+  let minP = Infinity, maxP = -Infinity;
+  visible.forEach(v => { if (v.l<minP) minP=v.l; if (v.h>maxP) maxP=v.h; });
+  const pad = (maxP-minP)*0.05;
+  minP -= pad; maxP += pad;
+
+  // Funciones de conversión
+  const xOf  = i  => M.left + (i/(visible.length-1||1)) * gW;
+  const yOf  = p  => M.top  + (1-(p-minP)/(maxP-minP)) * gH;
+  const velW = Math.max(1, Math.min(20, gW/visible.length*0.7));
+
+  // ── Grid horizontal (precios) ──
+  const pasos = 8;
+  ctx.textAlign = 'left';
+  for (let i=0; i<=pasos; i++) {
+    const p  = minP + (maxP-minP)*i/pasos;
+    const y  = yOf(p);
+    ctx.beginPath();
+    ctx.moveTo(M.left, y); ctx.lineTo(W-M.right, y);
+    ctx.strokeStyle = 'rgba(255,255,255,0.05)';
+    ctx.lineWidth = 1; ctx.stroke();
+    ctx.fillStyle = '#484f58';
+    ctx.font = '10px JetBrains Mono';
+    ctx.textAlign = 'left';
+    ctx.fillText('$'+p.toFixed(2), W-M.right+6, y+4);
+  }
+
+  // ── Líneas verticales de inicio de día ──
+  let fechaAnt = null;
+  visible.forEach((v,i) => {
+    const f = new Date(v.x).toLocaleDateString('en-US',{timeZone:'America/New_York'});
+    if (f !== fechaAnt) {
+      fechaAnt = f;
+      const x = xOf(i);
+      ctx.beginPath();
+      ctx.moveTo(x, M.top); ctx.lineTo(x, H-M.bottom);
+      ctx.strokeStyle = C.dayLine;
+      ctx.lineWidth = 1; ctx.setLineDash([4,4]);
+      ctx.stroke(); ctx.setLineDash([]);
+      ctx.fillStyle = C.dayLabel;
+      ctx.font = '10px JetBrains Mono';
+      ctx.textAlign = 'left';
+      ctx.fillText(fmtDia(v.x), x+3, M.top+12);
+    }
+  });
+
+  // ── SMAs ──
+  [20,40,100,200].forEach(period => {
+    if (!smaState[period]) return;
+    const smas = calcSMA(allVelas, period).slice(zoomStart, zoomEnd+1);
+    ctx.beginPath();
+    let primero = true;
+    smas.forEach((val,i) => {
+      if (val===null) return;
+      const x = xOf(i), y = yOf(val);
+      if (primero) { ctx.moveTo(x,y); primero=false; }
+      else ctx.lineTo(x,y);
+    });
+    ctx.strokeStyle = C.sma[period];
+    ctx.lineWidth = 1; ctx.stroke();
+  });
+
+  // ── Velas ──
+  visible.forEach((v,i) => {
+    const x    = xOf(i);
+    const yO   = yOf(v.o), yC = yOf(v.c);
+    const yH   = yOf(v.h), yL = yOf(v.l);
+    const sube = v.c >= v.o;
+    const color = sube ? C.up : C.dn;
+    const isHovered = i === hoveredIdx;
+
+    // Mecha
+    ctx.beginPath();
+    ctx.moveTo(x, yH); ctx.lineTo(x, yL);
+    ctx.strokeStyle = isHovered ? color : C.wick;
+    ctx.lineWidth = 1; ctx.stroke();
+
+    // Cuerpo
+    const bodyY = Math.min(yO,yC);
+    const bodyH = Math.max(1, Math.abs(yC-yO));
+    ctx.fillStyle = isHovered ? color : (sube ? C.up+'99' : C.dn+'99');
+    ctx.fillRect(x-velW/2, bodyY, velW, bodyH);
+    if (isHovered) {
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1;
+      ctx.strokeRect(x-velW/2, bodyY, velW, bodyH);
+    }
+  });
+
+  // ── Señales AXIS ──
+  const { señales: todasSeñales, canalesPM40, pisosRPG } = calcSeñales(allVelas);
+
+  // Dibujar línea blanca tenue del piso RPG
+  pisosRPG.forEach(p => {
+    const i1 = p.idx - zoomStart;
+    if (i1 < 0 || i1 >= visible.length) return;
+    // Buscar última vela del mismo día para saber hasta dónde extender
+    let finIdx = i1;
+    for (let k = i1; k < visible.length; k++) {
+      const fk = new Date(visible[k].x).toLocaleDateString('en-US',{timeZone:'America/New_York'});
+      if (fk !== p.fecha) break;
+      finIdx = k;
+    }
+    ctx.beginPath();
+    ctx.moveTo(xOf(i1), yOf(p.precio));
+    ctx.lineTo(xOf(finIdx), yOf(p.precio));
+    ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+    ctx.lineWidth   = 1;
+    ctx.setLineDash([3, 3]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  });
+
+  // Dibujar canales PM40 (techo como línea cian punteada)
+  canalesPM40.forEach(c => {
+    // No dibujar canales inválidos (sin P2 definido o p2 >= p1)
+    if (c.p2High >= c.p1High) return;
+
+    const i1 = c.p1Idx - zoomStart;
+    const i2 = c.p2Idx - zoomStart;
+
+    // Calcular hasta dónde llega la línea:
+    // Si hubo señal → hasta la señal
+    // Si no → solo hasta P2 (no extender más allá)
+    const finAbsoluto = c.señalIdx !== null ? c.señalIdx : c.p2Idx;
+    const finIdx   = finAbsoluto - zoomStart;
+    const startIdx = Math.max(0, i1);
+    const endIdx   = Math.min(visible.length - 1, finIdx);
+
+    if (startIdx > endIdx) return;
+    if (startIdx >= visible.length) return;
+
+    const slope = (c.p2High - c.p1High) / (c.p2Idx - c.p1Idx);
+
+    // Línea de techo PM40
+    ctx.beginPath();
+    ctx.setLineDash([5, 3]);
+    ctx.strokeStyle = '#00d4c8';
+    ctx.lineWidth   = 1.5;
+
+    for (let k = startIdx; k <= endIdx; k++) {
+      const precioTecho = c.p1High + slope * (k + zoomStart - c.p1Idx);
+      const px = xOf(k);
+      const py = yOf(precioTecho);
+      if (k === startIdx) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    }
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Punto P1
+    if (i1 >= 0 && i1 < visible.length) {
+      ctx.beginPath();
+      ctx.arc(xOf(i1), yOf(c.p1High), 4, 0, Math.PI*2);
+      ctx.fillStyle = '#00d4c8';
+      ctx.fill();
+      ctx.fillStyle = '#00d4c8';
+      ctx.font = 'bold 9px JetBrains Mono';
+      ctx.textAlign = 'center';
+      ctx.fillText('P1', xOf(i1), yOf(c.p1High) - 8);
+    }
+
+    // Punto P2
+    if (i2 >= 0 && i2 < visible.length) {
+      ctx.beginPath();
+      ctx.arc(xOf(i2), yOf(c.p2High), 4, 0, Math.PI*2);
+      ctx.fillStyle = '#00d4c8';
+      ctx.fill();
+      ctx.fillStyle = '#00d4c8';
+      ctx.font = 'bold 9px JetBrains Mono';
+      ctx.textAlign = 'center';
+      ctx.fillText('P2', xOf(i2), yOf(c.p2High) - 8);
+    }
+  });
+
+  // Dibujar etiquetas de señales
+  todasSeñales.forEach(s => {
+    const visIdx = s.idx - zoomStart;
+    if (visIdx < 0 || visIdx >= visible.length) return;
+    const v  = visible[visIdx];
+    const x  = xOf(visIdx);
+    const y  = s.arriba ? yOf(v.h) : yOf(v.l);
+    dibujarSeñal(ctx, x, y, s.tipo, s.color, s.textColor, s.arriba);
+  });
+
+  // ── Vela en formación ──
+  if (esMercadoAbierto() && visible.length > 0) {
+    const x = xOf(visible.length-1);
+    ctx.beginPath();
+    ctx.moveTo(x, M.top); ctx.lineTo(x, H-M.bottom);
+    ctx.strokeStyle = C.forming;
+    ctx.lineWidth = 1.5; ctx.setLineDash([3,3]);
+    ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle = '#58a6ff';
+    ctx.font = 'bold 10px JetBrains Mono';
+    ctx.textAlign = 'center';
+    ctx.fillText('EN FORMACIÓN', x, M.top+24);
+  }
+
+  // ── Eje X (fechas) ──
+  ctx.fillStyle = '#484f58';
+  ctx.font = '10px JetBrains Mono';
+  ctx.textAlign = 'center';
+  const paso = Math.ceil(visible.length/10);
+  visible.forEach((v,i) => {
+    if (i%paso!==0) return;
+    ctx.fillText(fmtDia(v.x), xOf(i), H-M.bottom+16);
+  });
+}
+
+// ═══════════════════════════════════════
+// TOOLTIP
+// ═══════════════════════════════════════
+function showTooltip(e) {
+  if (!allVelas.length) return;
+  const rect   = cc.getBoundingClientRect();
+  const mouseX = e.clientX - rect.left;
+  const mouseY = e.clientY - rect.top;
+  const W = cc.width, H = cc.height;
+  const gW = W - M.left - M.right;
+
+  const visible = allVelas.slice(zoomStart, zoomEnd+1);
+  const i = Math.round((mouseX - M.left) / gW * (visible.length-1));
+  if (i<0||i>=visible.length) { hideTooltip(); return; }
+
+  hoveredIdx = i;
+  render();
+
+  const v   = visible[i];
+  const tt  = document.getElementById('tooltip');
+  const sube = v.c >= v.o;
+
+  document.getElementById('tt-title').textContent = fmtFecha(v.x) + '  ' + velaLabel(v.x);
+  document.getElementById('tt-o').textContent = '$'+v.o.toFixed(2);
+  document.getElementById('tt-h').textContent = '$'+v.h.toFixed(2);
+  document.getElementById('tt-l').textContent = '$'+v.l.toFixed(2);
+  const ttC = document.getElementById('tt-c');
+  ttC.textContent = '$'+v.c.toFixed(2);
+  ttC.style.color = sube ? '#3fb950' : '#f85149';
+
+  // Posición del tooltip
+  let tx = e.clientX - rect.left + 16;
+  let ty = e.clientY - rect.top  - 10;
+  if (tx + 200 > W) tx = mouseX - 210;
+  if (ty + 120 > H) ty = H - 130;
+  tt.style.left    = tx+'px';
+  tt.style.top     = ty+'px';
+  tt.style.display = 'block';
+}
+
+function hideTooltip() {
+  document.getElementById('tooltip').style.display = 'none';
+  if (hoveredIdx !== -1) { hoveredIdx = -1; render(); }
+}
+
+// ═══════════════════════════════════════
+// ZOOM
+// ═══════════════════════════════════════
+cc.addEventListener('wheel', e => {
+  e.preventDefault();
+  if (!allVelas.length) return;
+  const total  = allVelas.length;
+  const rango  = zoomEnd - zoomStart;
+  const factor = e.deltaY < 0 ? 0.85 : 1.15;
+  const newLen = Math.max(7, Math.min(total, Math.round(rango*factor)));
+  const rect   = cc.getBoundingClientRect();
+  const relX   = (e.clientX-rect.left) / cc.width;
+  const centro = Math.round(zoomStart + rango*relX);
+  zoomStart    = Math.max(0, centro - Math.round(newLen/2));
+  zoomEnd      = Math.min(total-1, zoomStart+newLen);
+  if (zoomEnd===total-1) zoomStart = Math.max(0,zoomEnd-newLen);
+  render();
+}, { passive:false });
+
+// ═══════════════════════════════════════
+// PAN
+// ═══════════════════════════════════════
+cc.addEventListener('mousedown', e => {
+  if (drawMode) return;
+  panActive = true;
+  panX0     = e.clientX;
+  panZ0     = { start:zoomStart, end:zoomEnd, rango:zoomEnd-zoomStart };
+  cc.style.cursor = 'grabbing';
+});
+
+cc.addEventListener('mousemove', e => {
+  if (panActive && panZ0) {
+    const gW      = cc.width - M.left - M.right;
+    const pxPorV  = gW / (panZ0.rango||1);
+    const delta   = Math.round((e.clientX - panX0) / pxPorV);
+    let ns        = panZ0.start - delta;
+    let ne        = panZ0.end   - delta;
+    const total   = allVelas.length;
+    if (ns < 0)         { ne -= ns; ns = 0; }
+    if (ne > total-1)   { ns -= (ne-(total-1)); ne = total-1; }
+    zoomStart = Math.max(0, ns);
+    zoomEnd   = Math.min(total-1, ne);
+    render();
+  } else if (!drawMode) {
+    showTooltip(e);
+  }
+});
+
+cc.addEventListener('mouseup', e => {
+  panActive = false; panX0 = null;
+  cc.style.cursor = 'default';
+});
+
+cc.addEventListener('mouseleave', () => {
+  panActive = false;
+  cc.style.cursor = 'default';
+  hideTooltip();
+});
+
+// ═══════════════════════════════════════
+// FIT
+// ═══════════════════════════════════════
+function fitChart() {
+  zoomStart=0; zoomEnd=allVelas.length-1;
+  render(); toast('Vista completa');
+}
+
+// ═══════════════════════════════════════
+// SMA TOGGLE
+// ═══════════════════════════════════════
+function togSMA(p) {
+  smaState[p] = !smaState[p];
+  document.getElementById('b'+p).classList.toggle('on',  smaState[p]);
+  document.getElementById('b'+p).classList.toggle('off', !smaState[p]);
+  render();
+}
+
+// ═══════════════════════════════════════
+// CAMBIAR ACTIVO
+// ═══════════════════════════════════════
+function cambiar(sym) {
+  activo = sym;
+  clearTimeout(refreshTimer);
+  allVelas=[]; zoomStart=0; zoomEnd=0;
+  document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('on',b.textContent===sym));
+  document.getElementById('activo-label').textContent = sym;
+  cargarDatos(sym);
+}
+
+// ═══════════════════════════════════════
+// PRECIO HEADER
+// ═══════════════════════════════════════
+function updatePrecio(velas) {
+  if (!velas.length) return;
+  const last=velas[velas.length-1], prev=velas[velas.length-2];
+  document.getElementById('pval').textContent = '$'+last.c.toFixed(2);
+  if (prev) {
+    const d=last.c-prev.c, pct=(d/prev.c*100).toFixed(2);
+    const el=document.getElementById('pchg');
+    el.textContent=(d>=0?'+':'')+d.toFixed(2)+' ('+pct+'%)';
+    el.className='pchg '+(d>=0?'up':'dn');
+  }
+}
+
+// ═══════════════════════════════════════
+// DIBUJO DE LINEAS
+// ═══════════════════════════════════════
+function togDraw() {
+  drawMode = !drawMode;
+  dc.classList.toggle('draw-mode', drawMode);
+  document.getElementById('bdraw').classList.toggle('draw-on', drawMode);
+  // Deshabilitar tooltip y pan en modo dibujo
+  toast(drawMode ? 'Modo dibujo ON — click y arrastra' : 'Modo dibujo OFF');
+}
+
+function clearLines() {
+  userLines[activo]=[];
+  dctx.clearRect(0,0,dc.width,dc.height);
+  toast('Líneas eliminadas');
+}
+
+function redrawLines() {
+  dctx.clearRect(0,0,dc.width,dc.height);
+  (userLines[activo]||[]).forEach(l=>drawLine(l.x1,l.y1,l.x2,l.y2,false));
+}
+
+function drawLine(x1,y1,x2,y2,pre) {
+  dctx.beginPath(); dctx.moveTo(x1,y1); dctx.lineTo(x2,y2);
+  dctx.strokeStyle = pre?'rgba(88,166,255,0.5)':'#58a6ff';
+  dctx.lineWidth   = pre?1:1.5;
+  dctx.setLineDash(pre?[4,4]:[]);
+  dctx.stroke(); dctx.setLineDash([]);
+}
+
+dc.addEventListener('mousedown', e=>{ if(!drawMode)return; drawing=true; p0={x:e.offsetX,y:e.offsetY}; });
+dc.addEventListener('mousemove', e=>{ if(!drawMode||!drawing||!p0)return; redrawLines(); drawLine(p0.x,p0.y,e.offsetX,e.offsetY,true); });
+dc.addEventListener('mouseup', e=>{
+  if(!drawMode||!drawing||!p0)return; drawing=false;
+  const dx=e.offsetX-p0.x, dy=e.offsetY-p0.y;
+  if(Math.sqrt(dx*dx+dy*dy)<5)return;
+  if(!userLines[activo])userLines[activo]=[];
+  userLines[activo].push({x1:p0.x,y1:p0.y,x2:e.offsetX,y2:e.offsetY});
+  redrawLines(); p0=null;
+});
+dc.addEventListener('mouseleave',()=>{ if(drawing){drawing=false;redrawLines();} });
+
+// ═══════════════════════════════════════
+// TOAST
+// ═══════════════════════════════════════
+let tt=null;
+function toast(msg) {
+  const el=document.getElementById('toast');
+  el.textContent=msg; el.classList.add('show');
+  if(tt)clearTimeout(tt);
+  tt=setTimeout(()=>el.classList.remove('show'),2500);
+}
+
+// ═══════════════════════════════════════
+// ARRANQUE
+// ═══════════════════════════════════════
+window.addEventListener('load', ()=>{ resize(); cargarDatos('SPY'); });
+window.addEventListener('resize', ()=>{ resize(); });
+</script>
+</body>
+</html>
