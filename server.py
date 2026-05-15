@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v8.23
+AXIS Breakout Sentinel v8.24
 Estrategias: 1VR | 1VR+ | RPG | GNA | GBA | RCB/CNF
 Multi-activo: SPY, AAPL, BA, GLD
 Auto-P2 | Apagado automatico si nuevo P2 >= P1
@@ -22,6 +22,7 @@ v8.15: Fix agrupacion AXIS — ignorar barras pre-AXIS (9:30 y 9:45), V1 empieza
 v8.16: Ruta /comparar_fuentes — compara TwelveData vs Tradier 15min para HOY, muestra OHLC lado a lado por vela AXIS
 v8.17: MIGRACION COMPLETA — TwelveData eliminado. get_velas() ahora usa Tradier produccion 15min agrupadas en velas AXIS. 99.8% mas preciso que TwelveData.
 v8.23: Ruta /diagnostico — auditoria completa de estrategias por activo y fecha. Muestra valores exactos, umbrales y razon de cada señal disparada o no.
+v8.24: Timer 15min en ordenes pendientes — expiran automaticamente con aviso a Telegram. Webhook mejorado.
 """
 
 import requests
@@ -74,8 +75,42 @@ TRADIER_HEADERS_REAL = {
     "Accept":        "application/json",
 }
 
-# Ordenes pendientes de confirmacion — clave: callback_query_id
+# Ordenes pendientes de confirmacion — clave: orden_id
+# Valor: { "opcion": {...}, "ts": datetime, "chat_id": int, "message_id": int }
 ordenes_pendientes = {}
+ORDEN_TIMEOUT_MIN = 15  # minutos antes de expirar
+
+def loop_limpiar_ordenes():
+    """Thread que cada 60s revisa ordenes expiradas y las cancela con aviso a Telegram"""
+    while True:
+        time.sleep(60)
+        try:
+            ahora = datetime.now(pytz.utc)
+            expiradas = [
+                oid for oid, d in list(ordenes_pendientes.items())
+                if (ahora - d["ts"]).total_seconds() > ORDEN_TIMEOUT_MIN * 60
+            ]
+            for oid in expiradas:
+                datos = ordenes_pendientes.pop(oid, None)
+                if not datos:
+                    continue
+                # Editar mensaje original en Telegram
+                try:
+                    requests.post(
+                        f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/editMessageText",
+                        json={
+                            "chat_id":    datos["chat_id"],
+                            "message_id": datos["message_id"],
+                            "text":       f"⏰ <b>Orden expirada</b> — no se ejecutó (>{ORDEN_TIMEOUT_MIN} min sin respuesta)\n<b>ID:</b> {oid}",
+                            "parse_mode": "HTML",
+                        },
+                        timeout=5
+                    )
+                except Exception as e:
+                    print(f"Error editando mensaje expirado {oid}: {e}")
+                print(f"Orden expirada y eliminada — ID: {oid}")
+        except Exception as e:
+            print(f"Error loop_limpiar_ordenes: {e}")
 
 ACTIVOS          = ["SPY", "AAPL", "BA", "GLD"]
 HORAS_REPORTE    = [10, 11, 12, 13, 14, 15, 16]
@@ -786,9 +821,14 @@ def enviar_telegram_botones(mensaje, orden_id):
     }
     try:
         r = requests.post(url, json=payload, timeout=10)
+        result = r.json()
         print(f"Telegram botones: {r.status_code}")
+        if result.get("ok"):
+            msg = result.get("result", {})
+            return msg.get("message_id"), msg.get("chat", {}).get("id")
     except Exception as e:
         print(f"Error Telegram botones: {e}")
+    return None, None
 
 # ═══════════════════════════════════════════════════════════
 # PREPARAR Y ENVIAR SEÑAL CON BOTONES
@@ -815,7 +855,6 @@ def enviar_senal_con_botones(simbolo, estrategia, hora_label, precio_vela, tipo_
 
     if opcion:
         opcion["subyacente"] = simbolo
-        ordenes_pendientes[orden_id] = opcion
         msg = (
             f"{emoji} <b>{estrategia}</b>\n"
             f"<b>Activo:</b> {simbolo}\n"
@@ -824,9 +863,15 @@ def enviar_senal_con_botones(simbolo, estrategia, hora_label, precio_vela, tipo_
             f"{extra}"
             f"<b>Opcion:</b> {opcion['tipo']} ${opcion['strike']:.0f} exp {opcion['expiration']}\n"
             f"<b>Ask:</b> ${opcion['ask']:.2f} | <b>Bid:</b> ${opcion['bid']:.2f}\n"
-            f"⚠️ <b>{tipo_opcion} — ¿Ejecutar?</b>"
+            f"⚠️ <b>{tipo_opcion} — ¿Ejecutar?</b> (expira en {ORDEN_TIMEOUT_MIN} min)"
         )
-        enviar_telegram_botones(msg, orden_id)
+        message_id, chat_id = enviar_telegram_botones(msg, orden_id)
+        ordenes_pendientes[orden_id] = {
+            "opcion":     opcion,
+            "ts":         datetime.now(pytz.utc),
+            "message_id": message_id,
+            "chat_id":    chat_id,
+        }
         print(f"{simbolo}: señal enviada con botones — {estrategia} | opcion {opcion['tipo']} ${opcion['strike']:.0f}")
     else:
         # Tradier no disponible — alerta simple sin botones pero con toda la info
@@ -862,7 +907,7 @@ def reporte_horario():
 # LOOP PRINCIPAL
 # ═══════════════════════════════════════════════════════════
 def monitor_loop():
-    print("AXIS Breakout Sentinel v8.23 iniciado...")
+    print("AXIS Breakout Sentinel v8.24 iniciado...")
     while True:
         ahora = datetime.now(EST)
         minutos_hasta_01 = (1 - ahora.minute) % 60
@@ -894,7 +939,7 @@ def home():
             "tipo":    "RCB" if c["p3"] else "CNF" if c["on"] else "OFF",
         }
     return jsonify({
-        "sistema":     "AXIS Breakout Sentinel v8.23",
+        "sistema":     "AXIS Breakout Sentinel v8.24",
         "estado":      "activo" if SISTEMA_ACTIVO else "apagado",
         "hora_est":    ahora.strftime("%A %H:%M EST"),
         "mercado":     "abierto" if es_dia_mercado(ahora) else "cerrado",
@@ -917,7 +962,7 @@ def test():
         else:
             lineas_canal.append(f"  {a}: OFF")
     enviar_telegram(
-        f"✅ <b>AXIS Breakout Sentinel v8.23</b>\n"
+        f"✅ <b>AXIS Breakout Sentinel v8.24</b>\n"
         f"<b>Hora:</b> {ahora.strftime('%A %d/%m/%Y %H:%M EST')}\n"
         f"<b>Mercado:</b> {'Abierto' if es_dia_mercado(ahora) else 'Cerrado'}\n"
         f"<b>1VR:</b> {'ON' if VR1_ON else 'OFF'} | "
@@ -1147,11 +1192,12 @@ def telegram_webhook():
             )
 
         if accion == "exec":
-            opcion = ordenes_pendientes.pop(orden_id, None)
-            if not opcion:
+            datos = ordenes_pendientes.pop(orden_id, None)
+            if not datos:
                 editar_mensaje("⚠️ <b>Orden expirada o ya procesada.</b>")
                 return jsonify({"ok": True}), 200
 
+            opcion = datos["opcion"]
             resultado = ejecutar_orden_tradier(opcion)
             if resultado["ok"]:
                 editar_mensaje(
@@ -2103,6 +2149,7 @@ def arrancar_monitor():
     time.sleep(5)
     threading.Thread(target=monitor_loop,        daemon=True).start()
     threading.Thread(target=loop_v7_anticipada,  daemon=True).start()
+    threading.Thread(target=loop_limpiar_ordenes, daemon=True).start()
 
 threading.Thread(target=arrancar_monitor, daemon=True).start()
 
