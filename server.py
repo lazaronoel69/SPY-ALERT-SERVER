@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v8.24
+AXIS Breakout Sentinel v8.25
 Estrategias: 1VR | 1VR+ | RPG | GNA | GBA | RCB/CNF
 Multi-activo: SPY, AAPL, BA, GLD
 Auto-P2 | Apagado automatico si nuevo P2 >= P1
@@ -22,7 +22,8 @@ v8.15: Fix agrupacion AXIS — ignorar barras pre-AXIS (9:30 y 9:45), V1 empieza
 v8.16: Ruta /comparar_fuentes — compara TwelveData vs Tradier 15min para HOY, muestra OHLC lado a lado por vela AXIS
 v8.17: MIGRACION COMPLETA — TwelveData eliminado. get_velas() ahora usa Tradier produccion 15min agrupadas en velas AXIS. 99.8% mas preciso que TwelveData.
 v8.23: Ruta /diagnostico — auditoria completa de estrategias por activo y fecha. Muestra valores exactos, umbrales y razon de cada señal disparada o no.
-v8.24: Timer 15min en ordenes pendientes — expiran automaticamente con aviso a Telegram. Webhook mejorado.
+v8.24: Timer 15min ordenes pendientes + thread limpieza.
+v8.25: Ruta /canal_estado — devuelve P1/P2/P3 actuales por activo para sincronizar con dashboard. en ordenes pendientes — expiran automaticamente con aviso a Telegram. Webhook mejorado.
 """
 
 import requests
@@ -907,7 +908,7 @@ def reporte_horario():
 # LOOP PRINCIPAL
 # ═══════════════════════════════════════════════════════════
 def monitor_loop():
-    print("AXIS Breakout Sentinel v8.24 iniciado...")
+    print("AXIS Breakout Sentinel v8.25 iniciado...")
     while True:
         ahora = datetime.now(EST)
         minutos_hasta_01 = (1 - ahora.minute) % 60
@@ -939,7 +940,7 @@ def home():
             "tipo":    "RCB" if c["p3"] else "CNF" if c["on"] else "OFF",
         }
     return jsonify({
-        "sistema":     "AXIS Breakout Sentinel v8.24",
+        "sistema":     "AXIS Breakout Sentinel v8.25",
         "estado":      "activo" if SISTEMA_ACTIVO else "apagado",
         "hora_est":    ahora.strftime("%A %H:%M EST"),
         "mercado":     "abierto" if es_dia_mercado(ahora) else "cerrado",
@@ -962,7 +963,7 @@ def test():
         else:
             lineas_canal.append(f"  {a}: OFF")
     enviar_telegram(
-        f"✅ <b>AXIS Breakout Sentinel v8.24</b>\n"
+        f"✅ <b>AXIS Breakout Sentinel v8.25</b>\n"
         f"<b>Hora:</b> {ahora.strftime('%A %d/%m/%Y %H:%M EST')}\n"
         f"<b>Mercado:</b> {'Abierto' if es_dia_mercado(ahora) else 'Cerrado'}\n"
         f"<b>1VR:</b> {'ON' if VR1_ON else 'OFF'} | "
@@ -2141,6 +2142,36 @@ def diagnostico():
             log.append("❌ GBA no activado")
 
     return jsonify(reporte), 200
+
+# ═══════════════════════════════════════════════════════════
+# CANAL ESTADO — devuelve P's actuales por activo
+# Usado por el dashboard para sincronizar el panel de P's
+# GET /canal_estado?activo=SPY (opcional — sin param devuelve todos)
+# ═══════════════════════════════════════════════════════════
+@app.route("/canal_estado", methods=["GET"])
+def canal_estado():
+    simbolo = request.args.get("activo", "").upper()
+    activos = [simbolo] if simbolo in ACTIVOS else ACTIVOS
+
+    resultado = {}
+    for a in activos:
+        c = canal[a]
+        ahora_dt = datetime.now(EST)
+        techo = calcular_techo_canal(a, ahora_dt) if c["on"] else None
+        piso_mitad = calcular_piso_mitad_canal(a, ahora_dt) if c["on"] and c["p3"] else (None, None)
+
+        resultado[a] = {
+            "on":      c["on"],
+            "tipo":    "RCB" if (c["on"] and c["p3"]) else ("CNF" if c["on"] else "---"),
+            "p1":      c["p1"],
+            "p2":      c["p2"],
+            "p3":      c["p3"],
+            "techo":   round(techo, 2) if techo else None,
+            "mitad":   round(piso_mitad[1], 2) if piso_mitad[1] else None,
+            "piso":    round(piso_mitad[0], 2) if piso_mitad[0] else None,
+        }
+
+    return jsonify(resultado), 200
 
 # ═══════════════════════════════════════════════════════════
 # ARRANQUE
