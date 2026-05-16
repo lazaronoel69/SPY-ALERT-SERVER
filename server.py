@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v8.26
+AXIS Breakout Sentinel v8.27
 Estrategias: 1VR | 1VR+ | RPG | GNA | GBA | RCB/CNF
 Multi-activo: SPY, AAPL, BA, GLD
 Auto-P2 | Apagado automatico si nuevo P2 >= P1
@@ -25,6 +25,7 @@ v8.23: Ruta /diagnostico — auditoria completa de estrategias por activo y fech
 v8.24: Timer 15min ordenes pendientes + thread limpieza.
 v8.25: Ruta /canal_estado — devuelve P1/P2/P3 actuales por activo para sincronizar con dashboard. en ordenes pendientes — expiran automaticamente con aviso a Telegram. Webhook mejorado.
 v8.26: Persistencia canales en archivo JSON — sobrevive reinicios. Precarga SPY CNF y GLD RCB.
+v8.27: Ruta /canal_lineas — Railway calcula techo/mitad/piso por cada vela. Dashboard dibuja exactamente lo mismo que Railway evalua.
 """
 
 import requests
@@ -998,7 +999,7 @@ def reporte_horario():
 # LOOP PRINCIPAL
 # ═══════════════════════════════════════════════════════════
 def monitor_loop():
-    print("AXIS Breakout Sentinel v8.26 iniciado...")
+    print("AXIS Breakout Sentinel v8.27 iniciado...")
     while True:
         ahora = datetime.now(EST)
         minutos_hasta_01 = (1 - ahora.minute) % 60
@@ -1030,7 +1031,7 @@ def home():
             "tipo":    "RCB" if c["p3"] else "CNF" if c["on"] else "OFF",
         }
     return jsonify({
-        "sistema":     "AXIS Breakout Sentinel v8.26",
+        "sistema":     "AXIS Breakout Sentinel v8.27",
         "estado":      "activo" if SISTEMA_ACTIVO else "apagado",
         "hora_est":    ahora.strftime("%A %H:%M EST"),
         "mercado":     "abierto" if es_dia_mercado(ahora) else "cerrado",
@@ -1053,7 +1054,7 @@ def test():
         else:
             lineas_canal.append(f"  {a}: OFF")
     enviar_telegram(
-        f"✅ <b>AXIS Breakout Sentinel v8.26</b>\n"
+        f"✅ <b>AXIS Breakout Sentinel v8.27</b>\n"
         f"<b>Hora:</b> {ahora.strftime('%A %d/%m/%Y %H:%M EST')}\n"
         f"<b>Mercado:</b> {'Abierto' if es_dia_mercado(ahora) else 'Cerrado'}\n"
         f"<b>1VR:</b> {'ON' if VR1_ON else 'OFF'} | "
@@ -2264,6 +2265,52 @@ def canal_estado():
         }
 
     return jsonify(resultado), 200
+
+# ═══════════════════════════════════════════════════════════
+# CANAL LINEAS — calcula techo/mitad/piso por cada vela
+# El dashboard dibuja exactamente lo que Railway calcula
+# GET /canal_lineas?activo=SPY
+# Devuelve lista de { datetime, techo, mitad, piso } por vela AXIS
+# ═══════════════════════════════════════════════════════════
+@app.route("/canal_lineas", methods=["GET"])
+def canal_lineas():
+    simbolo = request.args.get("activo", "SPY").upper()
+    if simbolo not in ACTIVOS:
+        return jsonify({"error": f"Activo no reconocido"}), 400
+
+    c = canal[simbolo]
+    if not c["on"] or not c["p1"] or not c["p2_actual_high"] or not c["p2_actual_ts"]:
+        return jsonify({"activo": simbolo, "on": False, "lineas": []}), 200
+
+    # Obtener velas del activo
+    velas = get_velas(simbolo, outputsize=280)
+    if not velas:
+        return jsonify({"error": "Sin velas"}), 500
+
+    lineas = []
+    for v in velas:
+        try:
+            ahora_dt = datetime.strptime(v["datetime"], "%Y-%m-%d %H:%M:%S")
+            ahora_dt = EST.localize(ahora_dt)
+            techo = calcular_techo_canal(simbolo, ahora_dt)
+            piso, mitad = calcular_piso_mitad_canal(simbolo, ahora_dt)
+            lineas.append({
+                "datetime": v["datetime"],
+                "vela":     v["vela"],
+                "techo":    round(techo, 4) if techo else None,
+                "mitad":    round(mitad, 4) if mitad else None,
+                "piso":     round(piso,  4) if piso  else None,
+            })
+        except Exception as e:
+            continue
+
+    tipo = "RCB" if c["p3"] else "CNF"
+    return jsonify({
+        "activo":  simbolo,
+        "on":      True,
+        "tipo":    tipo,
+        "lineas":  lineas,
+    }), 200
 
 # ═══════════════════════════════════════════════════════════
 # ARRANQUE
