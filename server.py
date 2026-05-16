@@ -2288,8 +2288,19 @@ def canal_lineas():
         return jsonify({"error": "Sin velas"}), 500
 
     lineas = []
+    fecha_p1 = c["p1"]["fecha"]
+    hora_p1  = c["p1"]["hora_est"]
+
     for v in velas:
         try:
+            # Solo incluir velas desde P1 en adelante
+            v_fecha = v["datetime"][:10]
+            v_hora  = int(v["datetime"][11:13])
+            if v_fecha < fecha_p1:
+                continue
+            if v_fecha == fecha_p1 and v_hora < hora_p1:
+                continue
+
             ahora_dt = datetime.strptime(v["datetime"], "%Y-%m-%d %H:%M:%S")
             ahora_dt = EST.localize(ahora_dt)
             techo = calcular_techo_canal(simbolo, ahora_dt)
