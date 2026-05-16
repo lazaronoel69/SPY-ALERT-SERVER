@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v8.25
+AXIS Breakout Sentinel v8.26
 Estrategias: 1VR | 1VR+ | RPG | GNA | GBA | RCB/CNF
 Multi-activo: SPY, AAPL, BA, GLD
 Auto-P2 | Apagado automatico si nuevo P2 >= P1
@@ -24,6 +24,7 @@ v8.17: MIGRACION COMPLETA — TwelveData eliminado. get_velas() ahora usa Tradie
 v8.23: Ruta /diagnostico — auditoria completa de estrategias por activo y fecha. Muestra valores exactos, umbrales y razon de cada señal disparada o no.
 v8.24: Timer 15min ordenes pendientes + thread limpieza.
 v8.25: Ruta /canal_estado — devuelve P1/P2/P3 actuales por activo para sincronizar con dashboard. en ordenes pendientes — expiran automaticamente con aviso a Telegram. Webhook mejorado.
+v8.26: Persistencia canales en archivo JSON — sobrevive reinicios. Precarga SPY CNF y GLD RCB.
 """
 
 import requests
@@ -60,6 +61,8 @@ EST              = pytz.timezone("America/New_York")
 
 # ── TRADIER SANDBOX (ordenes paper trading) ──
 import os
+import json
+
 TRADIER_TOKEN   = os.environ.get("TRADIER_TOKEN", "")
 TRADIER_ACCOUNT = os.environ.get("TRADIER_ACCOUNT", "")
 TRADIER_BASE    = "https://sandbox.tradier.com/v1"
@@ -157,6 +160,93 @@ def canal_vacio():
 
 estado_dia = {a: estado_diario_vacio() for a in ACTIVOS}
 canal      = {a: canal_vacio()         for a in ACTIVOS}
+
+# ═══════════════════════════════════════════════════════════
+# PERSISTENCIA DE CANALES — archivo JSON en /tmp
+# Sobrevive reinicios de Railway dentro del mismo deployment
+# Al primer deploy usa CANALES_DEFAULT con SPY y GLD preconfigurados
+# ═══════════════════════════════════════════════════════════
+CANALES_FILE = "/tmp/axis_canales.json"
+
+CANALES_DEFAULT = {
+    "SPY": {
+        "on": True, "apagado": False, "v1_candidato": None,
+        "p1": {"fecha": "2026-05-14", "hora_est": 15, "high": 748.69},
+        "p2": {"fecha": "2026-05-15", "hora_est": 14, "high": 743.46},
+        "p2_actual_high": 743.46,
+        "p2_actual_ts": "2026-05-15T14:00:00",
+        "p3": None,
+    },
+    "GLD": {
+        "on": True, "apagado": False, "v1_candidato": None,
+        "p1": {"fecha": "2026-04-17", "hora_est": 10, "high": 448.70},
+        "p2": {"fecha": "2026-05-07", "hora_est": 11, "high": 437.42},
+        "p2_actual_high": 437.42,
+        "p2_actual_ts": "2026-05-07T11:00:00",
+        "p3": {"fecha": "2026-04-29", "hora_est": 9, "low": 415.27},
+    },
+    "AAPL": {"on": False, "apagado": False, "p1": None, "p2": None, "p3": None,
+             "p2_actual_high": None, "p2_actual_ts": None, "v1_candidato": None},
+    "BA":   {"on": False, "apagado": False, "p1": None, "p2": None, "p3": None,
+             "p2_actual_high": None, "p2_actual_ts": None, "v1_candidato": None},
+}
+
+def guardar_canales():
+    try:
+        data = {}
+        for a in ACTIVOS:
+            c = canal[a]
+            ts = c["p2_actual_ts"]
+            data[a] = {
+                "on":             c["on"],
+                "apagado":        c["apagado"],
+                "p1":             c["p1"],
+                "p2":             c["p2"],
+                "p3":             c["p3"],
+                "p2_actual_high": c["p2_actual_high"],
+                "p2_actual_ts":   ts.isoformat() if hasattr(ts, 'isoformat') else ts,
+                "v1_candidato":   None,
+            }
+        with open(CANALES_FILE, 'w') as f:
+            json.dump(data, f, indent=2)
+        print(f"Canales guardados → {CANALES_FILE}")
+    except Exception as e:
+        print(f"Error guardando canales: {e}")
+
+def cargar_canales():
+    try:
+        if os.path.exists(CANALES_FILE):
+            with open(CANALES_FILE, 'r') as f:
+                data = json.load(f)
+            print(f"Canales cargados desde {CANALES_FILE}")
+        else:
+            data = CANALES_DEFAULT
+            print("Primer arranque — cargando canales por defecto (SPY CNF + GLD RCB)")
+        for a in ACTIVOS:
+            if a not in data:
+                continue
+            d = data[a]
+            canal[a]["on"]             = d.get("on", False)
+            canal[a]["apagado"]        = d.get("apagado", False)
+            canal[a]["p1"]             = d.get("p1")
+            canal[a]["p2"]             = d.get("p2")
+            canal[a]["p3"]             = d.get("p3")
+            canal[a]["p2_actual_high"] = d.get("p2_actual_high")
+            ts_str = d.get("p2_actual_ts")
+            if ts_str and isinstance(ts_str, str):
+                try:
+                    from datetime import datetime as _dt
+                    canal[a]["p2_actual_ts"] = EST.localize(_dt.fromisoformat(ts_str))
+                except:
+                    canal[a]["p2_actual_ts"] = None
+            canal[a]["v1_candidato"] = None
+        for a in ACTIVOS:
+            if canal[a]["on"]:
+                tipo = "RCB" if canal[a]["p3"] else "CNF"
+                p1h  = canal[a]["p1"]["high"] if canal[a]["p1"] else "?"
+                print(f"  {a}: {tipo} activo — P1={p1h}")
+    except Exception as e:
+        print(f"Error cargando canales: {e}")
 
 # ═══════════════════════════════════════════════════════════
 # FESTIVOS Y DIA DE MERCADO
@@ -908,7 +998,7 @@ def reporte_horario():
 # LOOP PRINCIPAL
 # ═══════════════════════════════════════════════════════════
 def monitor_loop():
-    print("AXIS Breakout Sentinel v8.25 iniciado...")
+    print("AXIS Breakout Sentinel v8.26 iniciado...")
     while True:
         ahora = datetime.now(EST)
         minutos_hasta_01 = (1 - ahora.minute) % 60
@@ -940,7 +1030,7 @@ def home():
             "tipo":    "RCB" if c["p3"] else "CNF" if c["on"] else "OFF",
         }
     return jsonify({
-        "sistema":     "AXIS Breakout Sentinel v8.25",
+        "sistema":     "AXIS Breakout Sentinel v8.26",
         "estado":      "activo" if SISTEMA_ACTIVO else "apagado",
         "hora_est":    ahora.strftime("%A %H:%M EST"),
         "mercado":     "abierto" if es_dia_mercado(ahora) else "cerrado",
@@ -963,7 +1053,7 @@ def test():
         else:
             lineas_canal.append(f"  {a}: OFF")
     enviar_telegram(
-        f"✅ <b>AXIS Breakout Sentinel v8.25</b>\n"
+        f"✅ <b>AXIS Breakout Sentinel v8.26</b>\n"
         f"<b>Hora:</b> {ahora.strftime('%A %d/%m/%Y %H:%M EST')}\n"
         f"<b>Mercado:</b> {'Abierto' if es_dia_mercado(ahora) else 'Cerrado'}\n"
         f"<b>1VR:</b> {'ON' if VR1_ON else 'OFF'} | "
@@ -1010,6 +1100,7 @@ def activar():
         canal[simbolo]["on"]           = True
         canal[simbolo]["apagado"]      = False
         canal[simbolo]["v1_candidato"] = None
+        guardar_canales()
 
         ahora_dt = datetime.now(EST)
         techo = calcular_techo_canal(simbolo, ahora_dt)
@@ -1034,6 +1125,7 @@ def desactivar():
     if simbolo not in ACTIVOS:
         return jsonify({"error": f"Activo {simbolo} no reconocido"}), 400
     canal[simbolo] = canal_vacio()
+    guardar_canales()
     enviar_telegram(f"🔕 <b>Canal desactivado manualmente — {simbolo}</b>")
     return jsonify({"status": "canal desactivado", "activo": simbolo}), 200
 
@@ -2178,8 +2270,9 @@ def canal_estado():
 # ═══════════════════════════════════════════════════════════
 def arrancar_monitor():
     time.sleep(5)
-    threading.Thread(target=monitor_loop,        daemon=True).start()
-    threading.Thread(target=loop_v7_anticipada,  daemon=True).start()
+    cargar_canales()
+    threading.Thread(target=monitor_loop,         daemon=True).start()
+    threading.Thread(target=loop_v7_anticipada,   daemon=True).start()
     threading.Thread(target=loop_limpiar_ordenes, daemon=True).start()
 
 threading.Thread(target=arrancar_monitor, daemon=True).start()
