@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v8.28
+AXIS Breakout Sentinel v8.29
 Estrategias: 1VR | 1VR+ | RPG | GNA | GBA | RCB/CNF
 Multi-activo: SPY, AAPL, BA, GLD
 Auto-P2 | Apagado automatico si nuevo P2 >= P1
@@ -101,12 +101,13 @@ def loop_limpiar_ordenes():
                     continue
                 # Editar mensaje original en Telegram
                 try:
+                    texto_original = datos.get("texto_original", "")
                     requests.post(
                         f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/editMessageText",
                         json={
                             "chat_id":    datos["chat_id"],
                             "message_id": datos["message_id"],
-                            "text":       f"⏰ <b>Orden expirada</b> — no se ejecutó (>{ORDEN_TIMEOUT_MIN} min sin respuesta)\n<b>ID:</b> {oid}",
+                            "text":       f"{texto_original}\n\n━━━━━━━━━━━━━━━━━━\n⏰ <b>Orden expirada</b> — no se ejecutó (>{ORDEN_TIMEOUT_MIN} min sin respuesta)",
                             "parse_mode": "HTML",
                         },
                         timeout=5
@@ -145,6 +146,16 @@ def estado_diario_vacio():
         "gba_activo":    False,
         "gba_fired":     False,
         "vr1_fired":     False,
+        # PM40
+        "pm40_p1_high":      None,
+        "pm40_p1_idx":       None,
+        "pm40_p2_high":      None,
+        "pm40_p2_idx":       None,
+        "pm40_velas_bajo_p1": 0,
+        "pm40_p1_maduro":    False,
+        "pm40_activo":       False,
+        "pm40_fired":        False,
+        "pm40_vela_idx":     0,  # contador de vela del día
     }
 
 def canal_vacio():
@@ -615,7 +626,7 @@ def evaluar_activo(simbolo, velas, ahora):
     v_alcista = (
         v_close > v_open and
         (cuerpo / rango >= 0.15 if rango > 0 else False) and
-        (mecha_sup / cuerpo <= 0.30 if cuerpo > 0 else False)
+        (mecha_sup / cuerpo <= 0.75 if cuerpo > 0 else False)
     )
     v_roja    = v_close < v_open
     v7_ayer   = ed["v7_ayer_close"]
@@ -679,6 +690,35 @@ def evaluar_activo(simbolo, velas, ahora):
             if techo and v_close > techo and v_alcista:
                 c["v1_candidato"] = v_high
                 print(f"{simbolo} Canal V1 candidato Auto-P2: ${v_high:.2f}")
+
+        # PM40 — P1 dinámico en V1 (solo si no hay canal manual activo)
+        if not c["on"] and not ed["pm40_fired"]:
+            sma20  = calcular_sma(velas, 20)
+            sma40  = calcular_sma(velas, 40)
+            sma100 = calcular_sma(velas, 100)
+            sma200 = calcular_sma(velas, 200)
+            smas_ok = sma20 and sma40 and sma100 and sma200 and sma20 > sma40 > sma100 > sma200
+            ed["pm40_vela_idx"] = 1  # V1 = posición 1
+            if smas_ok:
+                if not ed["pm40_activo"]:
+                    ed["pm40_activo"]         = True
+                    ed["pm40_p1_high"]        = v_high
+                    ed["pm40_p1_idx"]         = 1
+                    ed["pm40_p2_high"]        = None
+                    ed["pm40_p2_idx"]         = None
+                    ed["pm40_velas_bajo_p1"]  = 0
+                    ed["pm40_p1_maduro"]      = False
+                elif v_high >= ed["pm40_p1_high"]:
+                    ed["pm40_p1_high"]        = v_high
+                    ed["pm40_p1_idx"]         = 1
+                    ed["pm40_p2_high"]        = None
+                    ed["pm40_p2_idx"]         = None
+                    ed["pm40_velas_bajo_p1"]  = 0
+                    ed["pm40_p1_maduro"]      = False
+                else:
+                    ed["pm40_velas_bajo_p1"] += 1
+                    if ed["pm40_velas_bajo_p1"] >= 3:
+                        ed["pm40_p1_maduro"] = True
 
         return
 
@@ -778,7 +818,56 @@ def evaluar_activo(simbolo, velas, ahora):
                     c["v1_candidato"] = v_high
                     print(f"{simbolo} Canal V{hora_vela-8} candidato: ${v_high:.2f}")
 
-    print(f"{simbolo} V{hora_vela-8} {hora_vela+1}:00 — O:{v_open:.2f} C:{v_close:.2f} | RPG:{ed['rpg_activo']} GNA:{ed['gna_activo']} GBA:{ed['gba_activo']}")
+    # PM40 — V2-V7
+    if not c["on"] and ed["pm40_activo"] and not ed["pm40_fired"] and ed["pm40_p1_high"]:
+        ed["pm40_vela_idx"] += 1
+        idx_actual = ed["pm40_vela_idx"]
+
+        if v_high >= ed["pm40_p1_high"]:
+            # HIGH >= P1 → P1 se mueve
+            ed["pm40_p1_high"]       = v_high
+            ed["pm40_p1_idx"]        = idx_actual
+            ed["pm40_p2_high"]       = None
+            ed["pm40_p2_idx"]        = None
+            ed["pm40_velas_bajo_p1"] = 0
+            ed["pm40_p1_maduro"]     = False
+        else:
+            ed["pm40_velas_bajo_p1"] += 1
+            if ed["pm40_velas_bajo_p1"] >= 3:
+                ed["pm40_p1_maduro"] = True
+
+            if ed["pm40_p1_maduro"]:
+                distancia = idx_actual - ed["pm40_p1_idx"]
+
+                if ed["pm40_p2_idx"] is None and distancia >= 4:
+                    # Fijar P2
+                    ed["pm40_p2_high"] = v_high
+                    ed["pm40_p2_idx"]  = idx_actual
+                    print(f"{simbolo} PM40 P2 fijado: ${v_high:.2f} idx={idx_actual}")
+
+                elif ed["pm40_p2_idx"] is not None:
+                    slope      = (ed["pm40_p2_high"] - ed["pm40_p1_high"]) / (ed["pm40_p2_idx"] - ed["pm40_p1_idx"])
+                    techo_pm40 = ed["pm40_p1_high"] + slope * (idx_actual - ed["pm40_p1_idx"])
+
+                    if v_high > techo_pm40:
+                        if v_alcista and hora_vela > 9:
+                            # SEÑAL PM40
+                            ed["pm40_fired"]  = True
+                            ed["pm40_activo"] = False
+                            enviar_senal_con_botones(
+                                simbolo, "PM40 — RUPTURA CANAL BAJISTA",
+                                f"{hora_vela+1}:00 EST", v_close, "CALL",
+                                f"<b>P1:</b> ${ed['pm40_p1_high']:.2f} | <b>P2:</b> ${ed['pm40_p2_high']:.2f}\n"
+                                f"<b>Techo:</b> ${techo_pm40:.2f} | <b>High:</b> ${v_high:.2f}\n"
+                            )
+                        else:
+                            # Actualizar P2
+                            if v_high < ed["pm40_p1_high"]:
+                                ed["pm40_p2_high"] = v_high
+                                ed["pm40_p2_idx"]  = idx_actual
+
+    # Log estado
+    print(f"{simbolo} V{hora_vela-8} {hora_vela+1}:00 — O:{v_open:.2f} C:{v_close:.2f} | RPG:{ed['rpg_activo']} GNA:{ed['gna_activo']} GBA:{ed['gba_activo']} PM40:{ed['pm40_activo']}")
 
 
 # ═══════════════════════════════════════════════════════════
@@ -872,25 +961,54 @@ def get_opcion_tradier(simbolo, tipo, precio_actual):
 # ═══════════════════════════════════════════════════════════
 def ejecutar_orden_tradier(opcion):
     try:
-        payload = {
-            "class":        "option",
-            "symbol":       opcion["subyacente"],
+        # COMPRA — market order
+        payload_compra = {
+            "class":         "option",
+            "symbol":        opcion["subyacente"],
             "option_symbol": opcion["symbol"],
-            "side":         "buy_to_open",
-            "quantity":     "1",
-            "type":         "market",
-            "duration":     "day",
+            "side":          "buy_to_open",
+            "quantity":      "1",
+            "type":          "market",
+            "duration":      "day",
         }
         r = requests.post(
             f"{TRADIER_BASE}/accounts/{TRADIER_ACCOUNT}/orders",
             headers=TRADIER_HEADERS,
-            data=payload,
+            data=payload_compra,
             timeout=10
         )
-        data = r.json()
+        data     = r.json()
         orden_id = data.get("order", {}).get("id")
         status   = data.get("order", {}).get("status", "unknown")
-        return {"ok": True, "id": orden_id, "status": status}
+
+        # VENTA LIMITE GTC al doble del ask (100% ganancia)
+        precio_venta = round(opcion["ask"] * 2, 2)
+        payload_venta = {
+            "class":         "option",
+            "symbol":        opcion["subyacente"],
+            "option_symbol": opcion["symbol"],
+            "side":          "sell_to_close",
+            "quantity":      "1",
+            "type":          "limit",
+            "price":         str(precio_venta),
+            "duration":      "gtc",
+        }
+        r2 = requests.post(
+            f"{TRADIER_BASE}/accounts/{TRADIER_ACCOUNT}/orders",
+            headers=TRADIER_HEADERS,
+            data=payload_venta,
+            timeout=10
+        )
+        data2     = r2.json()
+        orden_venta_id = data2.get("order", {}).get("id")
+
+        return {
+            "ok":            True,
+            "id":            orden_id,
+            "status":        status,
+            "venta_id":      orden_venta_id,
+            "precio_venta":  precio_venta,
+        }
     except Exception as e:
         print(f"Error ejecutar orden Tradier: {e}")
         return {"ok": False, "error": str(e)}
@@ -959,10 +1077,11 @@ def enviar_senal_con_botones(simbolo, estrategia, hora_label, precio_vela, tipo_
         )
         message_id, chat_id = enviar_telegram_botones(msg, orden_id)
         ordenes_pendientes[orden_id] = {
-            "opcion":     opcion,
-            "ts":         datetime.now(pytz.utc),
-            "message_id": message_id,
-            "chat_id":    chat_id,
+            "opcion":          opcion,
+            "ts":              datetime.now(pytz.utc),
+            "message_id":      message_id,
+            "chat_id":         chat_id,
+            "texto_original":  msg,
         }
         print(f"{simbolo}: señal enviada con botones — {estrategia} | opcion {opcion['tipo']} ${opcion['strike']:.0f}")
     else:
@@ -999,7 +1118,7 @@ def reporte_horario():
 # LOOP PRINCIPAL
 # ═══════════════════════════════════════════════════════════
 def monitor_loop():
-    print("AXIS Breakout Sentinel v8.28 iniciado...")
+    print("AXIS Breakout Sentinel v8.29 iniciado...")
     while True:
         ahora = datetime.now(EST)
         minutos_hasta_01 = (1 - ahora.minute) % 60
@@ -1031,7 +1150,7 @@ def home():
             "tipo":    "RCB" if c["p3"] else "CNF" if c["on"] else "OFF",
         }
     return jsonify({
-        "sistema":     "AXIS Breakout Sentinel v8.28",
+        "sistema":     "AXIS Breakout Sentinel v8.29",
         "estado":      "activo" if SISTEMA_ACTIVO else "apagado",
         "hora_est":    ahora.strftime("%A %H:%M EST"),
         "mercado":     "abierto" if es_dia_mercado(ahora) else "cerrado",
@@ -1054,7 +1173,7 @@ def test():
         else:
             lineas_canal.append(f"  {a}: OFF")
     enviar_telegram(
-        f"✅ <b>AXIS Breakout Sentinel v8.28</b>\n"
+        f"✅ <b>AXIS Breakout Sentinel v8.29</b>\n"
         f"<b>Hora:</b> {ahora.strftime('%A %d/%m/%Y %H:%M EST')}\n"
         f"<b>Mercado:</b> {'Abierto' if es_dia_mercado(ahora) else 'Cerrado'}\n"
         f"<b>1VR:</b> {'ON' if VR1_ON else 'OFF'} | "
@@ -1285,6 +1404,20 @@ def telegram_webhook():
                 timeout=5
             )
 
+        # Agregar recibo DEBAJO del mensaje original sin borrarlo
+        def agregar_recibo(recibo):
+            texto_original = datos.get("texto_original", "")
+            requests.post(
+                f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/editMessageText",
+                json={
+                    "chat_id":    chat_id,
+                    "message_id": message_id,
+                    "text":       f"{texto_original}\n\n{recibo}",
+                    "parse_mode": "HTML",
+                },
+                timeout=5
+            )
+
         if accion == "exec":
             datos = ordenes_pendientes.pop(orden_id, None)
             if not datos:
@@ -1294,16 +1427,15 @@ def telegram_webhook():
             opcion = datos["opcion"]
             resultado = ejecutar_orden_tradier(opcion)
             if resultado["ok"]:
-                editar_mensaje(
-                    f"✅ <b>ORDEN EJECUTADA</b>\n"
-                    f"<b>Opcion:</b> {opcion['tipo']} ${opcion['strike']:.0f} exp {opcion['expiration']}\n"
-                    f"<b>Cantidad:</b> 1 contrato\n"
-                    f"<b>ID Orden:</b> {resultado['id']}\n"
-                    f"<b>Status:</b> {resultado['status']}"
+                agregar_recibo(
+                    f"━━━━━━━━━━━━━━━━━━\n"
+                    f"✅ <b>EJECUTADA</b> | ID: {resultado['id']} | {resultado['status']}\n"
+                    f"📈 <b>Venta límite GTC:</b> ${resultado['precio_venta']:.2f} (ID: {resultado['venta_id']})"
                 )
-                print(f"Orden ejecutada — ID: {resultado['id']} | {opcion}")
+                print(f"Orden ejecutada — ID: {resultado['id']} | Venta GTC: ${resultado['precio_venta']:.2f}")
             else:
-                editar_mensaje(
+                agregar_recibo(
+                    f"━━━━━━━━━━━━━━━━━━\n"
                     f"❌ <b>ERROR AL EJECUTAR</b>\n"
                     f"{resultado.get('error', 'Error desconocido')}"
                 )
@@ -1311,7 +1443,7 @@ def telegram_webhook():
 
         elif accion == "skip":
             ordenes_pendientes.pop(orden_id, None)
-            editar_mensaje("❌ <b>Orden ignorada.</b>")
+            agregar_recibo("━━━━━━━━━━━━━━━━━━\n❌ <b>Orden ignorada</b>")
             print(f"Orden ignorada — ID: {orden_id}")
 
     except Exception as e:
@@ -2135,7 +2267,7 @@ def diagnostico():
         r1 = round(cuerpo/rango, 3)
         if r1 < 0.15: return False, f"body/range={r1} < 0.15"
         r2 = round(mechaSup/cuerpo, 3) if cuerpo > 0 else 999
-        if r2 > 0.30: return False, f"mechaSup/body={r2} > 0.30"
+        if r2 > 0.75: return False, f"mechaSup/body={r2} > 0.75"
         return True, f"body/range={r1} mechaSup/body={r2}"
 
     v1 = velas_dia.get("V1")
