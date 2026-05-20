@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v8.29
+AXIS Breakout Sentinel v8.31
 Estrategias: 1VR | 1VR+ | RPG | GNA | GBA | RCB/CNF
 Multi-activo: SPY, AAPL, BA, GLD
 Auto-P2 | Apagado automatico si nuevo P2 >= P1
@@ -760,63 +760,37 @@ def evaluar_activo(simbolo, velas, ahora):
                 f"<b>Techo V1:</b> ${v1_close:.2f} | <b>Cierre:</b> ${v_close:.2f}\n"
             )
 
-    # RCB/CNF
+    # RCB/CNF — ruptura con botones igual que todas las estrategias
     if c["on"] and not c["apagado"]:
         ahora_dt = EST.localize(datetime.strptime(vela_actual["datetime"], "%Y-%m-%d %H:%M:%S"))
         techo = calcular_techo_canal(simbolo, ahora_dt)
 
-        if techo:
-            sobre_techo = v_close > techo
-
-            if hora_vela == 10:
-                if c["v1_candidato"]:
-                    nuevo_p2_high = max(c["v1_candidato"], v_high) if (v_alcista and sobre_techo) else c["v1_candidato"]
-                    if nuevo_p2_high < c["p1"]["high"]:
-                        c["p2_actual_high"] = nuevo_p2_high
-                        c["p2_actual_ts"]   = ahora_dt
-                        tipo_canal = "RCB" if c["p3"] else "CNF"
-                        enviar_telegram(
-                            f"🟠 <b>{tipo_canal} — RUPTURA CANAL</b>\n"
-                            f"<b>Activo:</b> {simbolo}\n"
-                            f"<b>Hora:</b> {hora_vela+1}:00 EST\n"
-                            f"<b>Techo:</b> ${techo:.2f}\n"
-                            f"<b>Cierre:</b> ${v_close:.2f}\n"
-                            f"<b>Nuevo P2:</b> ${nuevo_p2_high:.2f}\n"
-                            f"📈 <b>CALL — Evaluar entrada</b>"
-                        )
-                    else:
-                        c["apagado"] = True
-                        enviar_telegram(
-                            f"🔕 <b>Canal APAGADO — {simbolo}</b>\n"
-                            f"Nuevo P2 ${nuevo_p2_high:.2f} >= P1 ${c['p1']['high']:.2f}"
-                        )
-                    c["v1_candidato"] = None
-
-                elif v_alcista and sobre_techo:
-                    if v_high < c["p1"]["high"]:
-                        c["p2_actual_high"] = v_high
-                        c["p2_actual_ts"]   = ahora_dt
-                        tipo_canal = "RCB" if c["p3"] else "CNF"
-                        enviar_telegram(
-                            f"🟠 <b>{tipo_canal} — RUPTURA CANAL</b>\n"
-                            f"<b>Activo:</b> {simbolo}\n"
-                            f"<b>Hora:</b> {hora_vela+1}:00 EST\n"
-                            f"<b>Techo:</b> ${techo:.2f}\n"
-                            f"<b>Cierre:</b> ${v_close:.2f}\n"
-                            f"<b>Nuevo P2:</b> ${v_high:.2f}\n"
-                            f"📈 <b>CALL — Evaluar entrada</b>"
-                        )
-                    else:
-                        c["apagado"] = True
-                        enviar_telegram(
-                            f"🔕 <b>Canal APAGADO — {simbolo}</b>\n"
-                            f"Nuevo P2 ${v_high:.2f} >= P1 ${c['p1']['high']:.2f}"
-                        )
-
-            elif hora_vela > 10:
-                if v_alcista and sobre_techo:
-                    c["v1_candidato"] = v_high
-                    print(f"{simbolo} Canal V{hora_vela-8} candidato: ${v_high:.2f}")
+        if techo and v_alcista and v_close > techo:
+            tipo_canal = "RCB" if c["p3"] else "CNF"
+            if v_high < c["p1"]["high"]:
+                # Ruptura válida — señal con botones
+                enviar_senal_con_botones(
+                    simbolo,
+                    f"{tipo_canal} — RUPTURA CANAL",
+                    f"{hora_vela+1}:00 EST",
+                    v_close,
+                    "CALL",
+                    f"<b>Techo:</b> ${techo:.2f} | <b>Cierre:</b> ${v_close:.2f}\n"
+                    f"<b>P1:</b> ${c['p1']['high']:.2f} | <b>P2:</b> ${c['p2_actual_high']:.2f}\n"
+                )
+                # Actualizar P2 con este high
+                c["p2_actual_high"] = v_high
+                c["p2_actual_ts"]   = ahora_dt
+                guardar_canales()
+                print(f"{simbolo} {tipo_canal} ruptura V{hora_vela-8} techo=${techo:.2f} close=${v_close:.2f}")
+            else:
+                # High >= P1 — canal apagado
+                c["apagado"] = True
+                guardar_canales()
+                enviar_telegram(
+                    f"🔕 <b>Canal APAGADO — {simbolo}</b>\n"
+                    f"High ${v_high:.2f} >= P1 ${c['p1']['high']:.2f}"
+                )
 
     # PM40 — V2-V7
     if not c["on"] and ed["pm40_activo"] and not ed["pm40_fired"] and ed["pm40_p1_high"]:
@@ -1118,7 +1092,7 @@ def reporte_horario():
 # LOOP PRINCIPAL
 # ═══════════════════════════════════════════════════════════
 def monitor_loop():
-    print("AXIS Breakout Sentinel v8.29 iniciado...")
+    print("AXIS Breakout Sentinel v8.31 iniciado...")
     while True:
         ahora = datetime.now(EST)
         minutos_hasta_01 = (1 - ahora.minute) % 60
@@ -1150,7 +1124,7 @@ def home():
             "tipo":    "RCB" if c["p3"] else "CNF" if c["on"] else "OFF",
         }
     return jsonify({
-        "sistema":     "AXIS Breakout Sentinel v8.29",
+        "sistema":     "AXIS Breakout Sentinel v8.31",
         "estado":      "activo" if SISTEMA_ACTIVO else "apagado",
         "hora_est":    ahora.strftime("%A %H:%M EST"),
         "mercado":     "abierto" if es_dia_mercado(ahora) else "cerrado",
@@ -1173,7 +1147,7 @@ def test():
         else:
             lineas_canal.append(f"  {a}: OFF")
     enviar_telegram(
-        f"✅ <b>AXIS Breakout Sentinel v8.29</b>\n"
+        f"✅ <b>AXIS Breakout Sentinel v8.31</b>\n"
         f"<b>Hora:</b> {ahora.strftime('%A %d/%m/%Y %H:%M EST')}\n"
         f"<b>Mercado:</b> {'Abierto' if es_dia_mercado(ahora) else 'Cerrado'}\n"
         f"<b>1VR:</b> {'ON' if VR1_ON else 'OFF'} | "
@@ -2367,6 +2341,18 @@ def diagnostico():
             log.append("❌ GBA no activado")
 
     return jsonify(reporte), 200
+
+# ═══════════════════════════════════════════════════════════
+# PRECIO EN TIEMPO REAL
+# GET /precio?simbolo=SPY
+# ═══════════════════════════════════════════════════════════
+@app.route("/precio", methods=["GET"])
+def precio_rt():
+    simbolo = request.args.get("simbolo", "SPY").upper()
+    precio  = get_precio_tradier(simbolo)
+    if precio:
+        return jsonify({"simbolo": simbolo, "precio": precio}), 200
+    return jsonify({"error": "No disponible"}), 500
 
 # ═══════════════════════════════════════════════════════════
 # CANAL ESTADO — devuelve P's actuales por activo
