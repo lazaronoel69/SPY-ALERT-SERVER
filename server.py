@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v8.31
+AXIS Breakout Sentinel v8.32
 Estrategias: 1VR | 1VR+ | RPG | GNA | GBA | RCB/CNF
 Multi-activo: SPY, AAPL, BA, GLD
 Auto-P2 | Apagado automatico si nuevo P2 >= P1
@@ -141,21 +141,23 @@ def estado_diario_vacio():
         "rpg_piso":      None,
         "rpg_activo":    False,
         "rpg_fired":     False,
+        "rpg_s20":       None,
+        "rpg_s40":       None,
         "gna_activo":    False,
         "gna_fired":     False,
         "gba_activo":    False,
         "gba_fired":     False,
         "vr1_fired":     False,
         # PM40
-        "pm40_p1_high":      None,
-        "pm40_p1_idx":       None,
-        "pm40_p2_high":      None,
-        "pm40_p2_idx":       None,
+        "pm40_p1_high":       None,
+        "pm40_p1_idx":        None,
+        "pm40_p2_high":       None,
+        "pm40_p2_idx":        None,
         "pm40_velas_bajo_p1": 0,
-        "pm40_p1_maduro":    False,
-        "pm40_activo":       False,
-        "pm40_fired":        False,
-        "pm40_vela_idx":     0,  # contador de vela del día
+        "pm40_p1_maduro":     False,
+        "pm40_activo":        False,
+        "pm40_fired":         False,
+        "pm40_vela_idx":      0,
     }
 
 def canal_vacio():
@@ -638,33 +640,51 @@ def evaluar_activo(simbolo, velas, ahora):
         ed["v1_open"]  = v_open
         ed["v1_low"]   = v_low
 
-        # ── v8.3: 1VR / 1VR+ — tiempo real ──
+        # ── 1VR — Primera Vela Roja ──
         if VR1_ON and v_roja and not ed["vr1_fired"]:
             ahora_dt_vr = EST.localize(datetime.strptime(vela_actual["datetime"], "%Y-%m-%d %H:%M:%S"))
-            techo_vr = calcular_techo_canal(simbolo, ahora_dt_vr)
+            techo_vr    = calcular_techo_canal(simbolo, ahora_dt_vr)
             _, mitad_vr = calcular_piso_mitad_canal(simbolo, ahora_dt_vr)
-            c_vr = canal[simbolo]
-            en_canal_rcb_vr = (
+            c_vr        = canal[simbolo]
+            sma20_vr    = calcular_sma(velas, 20)
+            sma40_vr    = calcular_sma(velas, 40)
+
+            # Condición A: dentro de RCB entre techo y 30% hacia la media
+            zona_30 = None
+            if techo_vr and mitad_vr:
+                zona_30 = techo_vr - (techo_vr - mitad_vr) * 0.30
+            en_rcb_30 = (
                 c_vr["on"] and not c_vr["apagado"] and c_vr["p3"] is not None
-                and techo_vr is not None and mitad_vr is not None
-                and mitad_vr <= v_close <= techo_vr
-            )
-            label_vr = "1VR+" if en_canal_rcb_vr else "1VR"
-            extra_vr = f"<b>Canal RCB:</b> Techo ${techo_vr:.2f} | Mitad ${mitad_vr:.2f}\n" if en_canal_rcb_vr else ""
-            ed["vr1_fired"] = True
-            enviar_senal_con_botones(
-                simbolo, f"{label_vr} — PRIMERA VELA ROJA",
-                "10:00 EST", v_close, "PUT",
-                f"<b>Open:</b> ${v_open:.2f} | <b>Close:</b> ${v_close:.2f}\n{extra_vr}"
+                and techo_vr is not None and zona_30 is not None
+                and zona_30 <= v_close <= techo_vr
             )
 
-        # RPG
+            # Condición B: SMA40 > SMA20
+            sma40_gt_sma20 = sma40_vr and sma20_vr and sma40_vr > sma20_vr
+
+            # Necesita UNA de las dos condiciones
+            if en_rcb_30 or sma40_gt_sma20:
+                ed["vr1_fired"] = True
+                label_vr = "1VR+" if en_rcb_30 else "1VR"
+                extra_vr = f"<b>Canal RCB:</b> Techo ${techo_vr:.2f} | Zona 30%: ${zona_30:.2f}\n" if en_rcb_30 else \
+                           f"<b>SMA40:</b> ${sma40_vr:.2f} > <b>SMA20:</b> ${sma20_vr:.2f}\n"
+                enviar_senal_con_botones(
+                    simbolo, f"{label_vr} — PRIMERA VELA ROJA",
+                    "10:00 EST", v_close, "PUT",
+                    f"<b>Open:</b> ${v_open:.2f} | <b>Close:</b> ${v_close:.2f}\n{extra_vr}"
+                )
+            else:
+                print(f"{simbolo} 1VR sin condición adicional — no dispara")
+
+        # RPG — gap mínimo 0.5%, V1 verde
         if RPG_ON and v7_ayer and v_close > v_open and not ed["rpg_fired"]:
             gap = abs(v_open - v7_ayer) / v7_ayer * 100
-            if gap >= 0.2:
+            if gap >= 0.5:
                 ed["rpg_activo"] = True
                 ed["rpg_piso"]   = v_low
-                print(f"{simbolo} RPG activado — piso: ${v_low:.2f}")
+                ed["rpg_s20"]    = calcular_sma(velas, 20)
+                ed["rpg_s40"]    = calcular_sma(velas, 40)
+                print(f"{simbolo} RPG activado — gap {gap:.2f}% piso: ${v_low:.2f}")
 
         # GNA
         if GNA_ON and v7_ayer and v_close > v_open and not ed["gna_fired"]:
@@ -725,16 +745,42 @@ def evaluar_activo(simbolo, velas, ahora):
     # ── VELAS 2-7 ──
     v1_close = ed["v1_close"]
 
-    # RPG
+    # RPG — cualquier vela que cierre < piso + UNA de (RCB 30%) O (SMA20>SMA40)
     if RPG_ON and ed["rpg_activo"] and not ed["rpg_fired"] and ed["rpg_piso"]:
-        if v_roja and v_close < ed["rpg_piso"]:
-            ed["rpg_fired"]  = True
-            ed["rpg_activo"] = False
-            enviar_senal_con_botones(
-                simbolo, "RPG — RUPTURA PISO GAP",
-                f"{hora_vela+1}:00 EST", v_close, "PUT",
-                f"<b>Piso V1:</b> ${ed['rpg_piso']:.2f} | <b>Cierre:</b> ${v_close:.2f}\n"
+        if v_close < ed["rpg_piso"]:
+            ahora_dt_rpg = EST.localize(datetime.strptime(vela_actual["datetime"], "%Y-%m-%d %H:%M:%S"))
+            techo_rpg    = calcular_techo_canal(simbolo, ahora_dt_rpg)
+            _, mitad_rpg = calcular_piso_mitad_canal(simbolo, ahora_dt_rpg)
+            c_rpg        = canal[simbolo]
+
+            # Condición A: dentro RCB entre techo y 30% hacia la media
+            zona_30_rpg = None
+            if techo_rpg and mitad_rpg:
+                zona_30_rpg = techo_rpg - (techo_rpg - mitad_rpg) * 0.30
+            en_rcb_30_rpg = (
+                c_rpg["on"] and not c_rpg["apagado"] and c_rpg["p3"] is not None
+                and techo_rpg is not None and zona_30_rpg is not None
+                and zona_30_rpg <= v_close <= techo_rpg
             )
+
+            # Condición B: SMA20 > SMA40
+            s20_rpg = ed.get("rpg_s20")
+            s40_rpg = ed.get("rpg_s40")
+            sma20_gt_sma40 = s20_rpg and s40_rpg and s20_rpg > s40_rpg
+
+            if en_rcb_30_rpg or sma20_gt_sma40:
+                ed["rpg_fired"]  = True
+                ed["rpg_activo"] = False
+                label_rpg = "RPG+" if en_rcb_30_rpg else "RPG"
+                extra_rpg = f"<b>Canal RCB:</b> Techo ${techo_rpg:.2f} | Zona 30%: ${zona_30_rpg:.2f}\n" if en_rcb_30_rpg else \
+                            f"<b>SMA20:</b> ${s20_rpg:.2f} > <b>SMA40:</b> ${s40_rpg:.2f}\n"
+                enviar_senal_con_botones(
+                    simbolo, f"{label_rpg} — RUPTURA PISO GAP",
+                    f"{hora_vela+1}:00 EST", v_close, "PUT",
+                    f"<b>Piso V1:</b> ${ed['rpg_piso']:.2f} | <b>Cierre:</b> ${v_close:.2f}\n{extra_rpg}"
+                )
+            else:
+                print(f"{simbolo} RPG ruptura sin condición adicional — no dispara")
 
     # GNA
     if GNA_ON and ed["gna_activo"] and not ed["gna_fired"] and v1_close:
@@ -1092,7 +1138,7 @@ def reporte_horario():
 # LOOP PRINCIPAL
 # ═══════════════════════════════════════════════════════════
 def monitor_loop():
-    print("AXIS Breakout Sentinel v8.31 iniciado...")
+    print("AXIS Breakout Sentinel v8.32 iniciado...")
     while True:
         ahora = datetime.now(EST)
         minutos_hasta_01 = (1 - ahora.minute) % 60
@@ -1124,7 +1170,7 @@ def home():
             "tipo":    "RCB" if c["p3"] else "CNF" if c["on"] else "OFF",
         }
     return jsonify({
-        "sistema":     "AXIS Breakout Sentinel v8.31",
+        "sistema":     "AXIS Breakout Sentinel v8.32",
         "estado":      "activo" if SISTEMA_ACTIVO else "apagado",
         "hora_est":    ahora.strftime("%A %H:%M EST"),
         "mercado":     "abierto" if es_dia_mercado(ahora) else "cerrado",
@@ -1147,7 +1193,7 @@ def test():
         else:
             lineas_canal.append(f"  {a}: OFF")
     enviar_telegram(
-        f"✅ <b>AXIS Breakout Sentinel v8.31</b>\n"
+        f"✅ <b>AXIS Breakout Sentinel v8.32</b>\n"
         f"<b>Hora:</b> {ahora.strftime('%A %d/%m/%Y %H:%M EST')}\n"
         f"<b>Mercado:</b> {'Abierto' if es_dia_mercado(ahora) else 'Cerrado'}\n"
         f"<b>1VR:</b> {'ON' if VR1_ON else 'OFF'} | "
@@ -1709,6 +1755,104 @@ def corregir_cierre_v7(simbolo):
     except Exception as e:
         print(f"Error correccion V7 {simbolo}: {e}")
 
+def evaluar_hed(simbolo):
+    """
+    HED — Hanger en Diario
+    Evalúa si la vela del día forma una shooting star a las 3:58:01 EST
+    Ejecución automática sin botón si cumple condiciones
+    """
+    try:
+        velas = get_velas(simbolo, outputsize=2)
+        if not velas:
+            return
+        # Tomar la vela del día actual (última)
+        v = velas[-1]
+        v_open  = float(v["open"])
+        v_close = float(v["close"])
+        v_high  = float(v["high"])
+        v_low   = float(v["low"])
+
+        cuerpo   = abs(v_close - v_open)
+        mecha_sup = v_high - max(v_close, v_open)
+        mecha_inf = min(v_close, v_open) - v_low
+        rango     = v_high - v_low
+
+        # No doji
+        if cuerpo <= 0 or rango <= 0:
+            print(f"{simbolo} HED: doji — no válida")
+            return
+
+        # Shooting star mínima: mecha_sup >= 1.25 × cuerpo AND mecha_inf <= 25% cuerpo
+        es_shooting_star = (
+            mecha_sup >= 1.25 * cuerpo and
+            mecha_inf <= 0.25 * cuerpo
+        )
+
+        if not es_shooting_star:
+            print(f"{simbolo} HED: no shooting star — mecha_sup={mecha_sup:.2f} cuerpo={cuerpo:.2f}")
+            return
+
+        # Calcular SMAs
+        velas_hist = get_velas(simbolo, outputsize=60)
+        closes = [float(x["close"]) for x in velas_hist]
+        sma20 = sum(closes[-20:]) / 20 if len(closes) >= 20 else None
+        sma40 = sum(closes[-40:]) / 40 if len(closes) >= 40 else None
+
+        # Condición A: SMA20 > SMA40
+        cond_a = sma20 and sma40 and sma20 > sma40
+
+        # Condición B: dentro RCB entre techo y 30% hacia la media
+        ahora_dt = datetime.now(EST)
+        techo_h  = calcular_techo_canal(simbolo, ahora_dt)
+        _, mitad_h = calcular_piso_mitad_canal(simbolo, ahora_dt)
+        c_hed    = canal[simbolo]
+        zona_30_h = None
+        if techo_h and mitad_h:
+            zona_30_h = techo_h - (techo_h - mitad_h) * 0.30
+        cond_b = (
+            c_hed["on"] and not c_hed["apagado"] and c_hed["p3"] is not None
+            and techo_h is not None and zona_30_h is not None
+            and zona_30_h <= v_close <= techo_h
+        )
+
+        if not (cond_a or cond_b):
+            print(f"{simbolo} HED: shooting star pero sin condición adicional")
+            return
+
+        # Buscar opción PUT automáticamente
+        precio_actual = get_precio_tradier(simbolo) or v_close
+        opcion = get_opcion_tradier(simbolo, "put", precio_actual)
+        if not opcion:
+            enviar_telegram(f"⚠️ <b>HED {simbolo}</b> — Shooting star detectada pero sin opción disponible")
+            return
+
+        # Ejecutar automáticamente sin botón
+        opcion["subyacente"] = simbolo
+        resultado = ejecutar_orden_tradier(opcion)
+
+        color_vela = "🟢" if v_close > v_open else "🔴"
+        cond_str = "RCB 30%" if cond_b else f"SMA20({sma20:.2f})>SMA40({sma40:.2f})"
+
+        if resultado["ok"]:
+            enviar_telegram(
+                f"🕯 <b>HED — SHOOTING STAR DIARIA</b>\n"
+                f"<b>Activo:</b> {simbolo} {color_vela}\n"
+                f"<b>Condición:</b> {cond_str}\n"
+                f"<b>Mecha sup:</b> {mecha_sup:.2f} | <b>Cuerpo:</b> {cuerpo:.2f} | ratio: {mecha_sup/cuerpo:.2f}×\n"
+                f"<b>Opción PUT:</b> ${opcion['strike']:.0f} exp {opcion['expiration']}\n"
+                f"✅ <b>EJECUTADA automáticamente</b> | ID: {resultado['id']}\n"
+                f"📈 Venta GTC: ${resultado['precio_venta']:.2f}"
+            )
+            print(f"{simbolo} HED ejecutada — ID: {resultado['id']}")
+        else:
+            enviar_telegram(
+                f"⚠️ <b>HED {simbolo}</b> — Shooting star detectada\n"
+                f"❌ Error al ejecutar: {resultado.get('error','desconocido')}"
+            )
+    except Exception as e:
+        print(f"Error evaluar_hed {simbolo}: {e}")
+
+
 def loop_v7_anticipada():
     """
     Thread independiente que vigila 3:58 y 4:00 EST
@@ -1731,11 +1875,12 @@ def loop_v7_anticipada():
                 ejecutado_400 = set()
 
             if es_dia_mercado(ahora):
-                # 3:58 EST — evaluacion anticipada V7
+                # 3:58 EST — evaluacion anticipada V7 + HED
                 if ahora.hour == 15 and ahora.minute == 58:
                     for simbolo in ACTIVOS_V7_ANTICIPADA:
                         if simbolo not in ejecutado_358:
                             evaluar_v7_anticipada(simbolo)
+                            evaluar_hed(simbolo)
                             ejecutado_358.add(simbolo)
 
                 # 4:00 EST — correccion cierre real sin alerta
