@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v8.38
+AXIS Breakout Sentinel v8.37
 Estrategias: 1VR | 1VR+ | RPG | GNA | GBA | RCB/CNF
 Multi-activo: SPY, AAPL, BA, GLD
 Auto-P2 | Apagado automatico si nuevo P2 >= P1
@@ -358,160 +358,82 @@ def restar_dias_habiles(fecha, dias):
     return actual
 
 # ═══════════════════════════════════════════════════════════
-# TASTYTRADE — CREDENCIALES Y SESIÓN
-# ═══════════════════════════════════════════════════════════
-TT_USERNAME = os.environ.get("TT_USERNAME", "")
-TT_PASSWORD = os.environ.get("TT_PASSWORD", "")
-TT_ACCOUNT  = os.environ.get("TT_ACCOUNT",  "")
-TT_BASE     = "https://api.tastytrade.com"
-
-# Cache del session token — se renueva cada 24h
-_tt_session_token = None
-_tt_session_ts    = None
-
-def get_tt_session():
-    """Obtiene o renueva el session token de tastytrade."""
-    global _tt_session_token, _tt_session_ts
-    ahora = datetime.now(pytz.utc)
-    # Renovar si no existe o tiene más de 20 horas
-    if _tt_session_token and _tt_session_ts:
-        if (ahora - _tt_session_ts).total_seconds() < 72000:
-            return _tt_session_token
-    try:
-        r = requests.post(
-            f"{TT_BASE}/sessions",
-            json={"login": TT_USERNAME, "password": TT_PASSWORD},
-            headers={"Content-Type": "application/json"},
-            timeout=15
-        )
-        data = r.json()
-        token = data.get("data", {}).get("session-token")
-        if token:
-            _tt_session_token = token
-            _tt_session_ts    = ahora
-            print("tastytrade session token renovado ✅")
-            return token
-        print(f"Error tastytrade login: {data}")
-        return None
-    except Exception as e:
-        print(f"Error get_tt_session: {e}")
-        return None
-
-def get_tt_headers():
-    token = get_tt_session()
-    if not token:
-        return None
-    return {
-        "Authorization": token,
-        "Content-Type":  "application/json",
-    }
-
-
+# GET_VELAS — Tradier produccion 15min → velas AXIS
 # V1 = 9:30+9:45 | V2-V7 = 4 barras de 15min cada una
-# ═══════════════════════════════════════════════════════════
-# ═══════════════════════════════════════════════════════════
-# GET_VELAS — tastytrade 15min → velas AXIS
-# V1 = 9:30+9:45 | V2-V7 = 4 barras de 15min
-# Historial hasta 12 meses via DXFeed candles
 # ═══════════════════════════════════════════════════════════
 def get_velas(simbolo, outputsize=50):
     try:
-        from datetime import date, timedelta
+        from datetime import date, datetime as dt2
         from collections import defaultdict
 
-        headers = get_tt_headers()
-        if not headers:
-            print(f"get_velas {simbolo}: sin sesión tastytrade")
+        fecha_fin  = date.today()
+        fecha_mid2 = restar_dias_habiles(fecha_fin, 40)
+        fecha_mid1 = restar_dias_habiles(fecha_fin, 80)
+        fecha_ini  = restar_dias_habiles(fecha_fin, 120)
+
+        todas_barras = []
+
+        for (f_ini, f_fin) in [
+            (fecha_ini.strftime("%Y-%m-%d"),  fecha_mid1.strftime("%Y-%m-%d")),
+            (fecha_mid1.strftime("%Y-%m-%d"), fecha_mid2.strftime("%Y-%m-%d")),
+            (fecha_mid2.strftime("%Y-%m-%d"), fecha_fin.strftime("%Y-%m-%d")),
+        ]:
+            r = requests.get(
+                f"{TRADIER_BASE_REAL}/markets/timesales",
+                headers=TRADIER_HEADERS_REAL,
+                params={
+                    "symbol":         simbolo,
+                    "interval":       "15min",
+                    "start":          f"{f_ini} 09:00",
+                    "end":            f"{f_fin} 16:30",
+                    "session_filter": "open",
+                },
+                timeout=30
+            )
+            if r.status_code != 200:
+                print(f"Tradier error {simbolo} {f_ini}-{f_fin}: HTTP {r.status_code}")
+                continue
+            data   = r.json()
+            series = data.get("series")
+            if not series or series == "null":
+                continue
+            barras = series.get("data", [])
+            if isinstance(barras, dict):
+                barras = [barras]
+            todas_barras.extend(barras)
+
+        if not todas_barras:
+            print(f"Tradier sin datos {simbolo}")
             return None
 
-        # Calcular rango de fechas — hasta 12 meses
-        fecha_fin = date.today()
-        dias_hist = min(outputsize * 2, 365)
-        fecha_ini = fecha_fin - timedelta(days=dias_hist)
-
-        # Convertir a timestamps Unix en milisegundos
-        from datetime import datetime as dt2
-        ts_ini = int(dt2.combine(fecha_ini, dt2.min.time()).timestamp() * 1000)
-        ts_fin = int(dt2.combine(fecha_fin, dt2.max.time()).timestamp() * 1000)
-
-        # Obtener quote token para DXFeed
-        r_token = requests.get(
-            f"{TT_BASE}/api-quote-tokens",
-            headers=headers,
-            timeout=10
-        )
-        if r_token.status_code != 200:
-            print(f"Error quote token tastytrade: {r_token.status_code}")
-            return None
-
-        quote_token = r_token.json().get("data", {}).get("token")
-        dxfeed_url  = r_token.json().get("data", {}).get("dxlink-url", "https://tasty-openapi-ws.dxfeed.com/realtime")
-
-        # Llamar al endpoint REST de candles históricos via DXFeed
-        r = requests.get(
-            f"https://history.dxfeed.com/v3/candles/{simbolo}%7B=15m%7D",
-            params={
-                "fromTime": ts_ini,
-                "toTime":   ts_fin,
-                "token":    quote_token,
-            },
-            timeout=30
-        )
-
-        if r.status_code != 200:
-            print(f"tastytrade candles error {simbolo}: HTTP {r.status_code} — {r.text[:200]}")
-            return None
-
-        data   = r.json()
-        candles = data.get("candles", data.get("Candle", []))
-        if not candles:
-            print(f"tastytrade sin candles {simbolo}")
-            return None
-
-        # Agrupar barras 15min en velas AXIS — misma lógica que antes
+        # Agrupar barras por fecha y vela AXIS
+        # Estructura: { "2026-05-12": { "V1": [barras], ... }, ... }
         dias_dict = defaultdict(lambda: defaultdict(list))
 
-        for c in candles:
-            # DXFeed retorna time en milisegundos
-            ts_ms = c.get("time") or c.get("t")
-            if not ts_ms:
-                continue
-            bdt   = dt2.utcfromtimestamp(ts_ms / 1000)
-            # Convertir UTC a EST (UTC-4 en verano, UTC-5 en invierno)
-            # tastytrade retorna en UTC
-            from datetime import timezone
-            bdt_utc = bdt.replace(tzinfo=timezone.utc)
-            bdt_est = bdt_utc.astimezone(EST)
-
-            fecha = bdt_est.strftime("%Y-%m-%d")
-            h, m  = bdt_est.hour, bdt_est.minute
-
-            barra = {
-                "open":  c.get("open") or c.get("o"),
-                "high":  c.get("high") or c.get("h"),
-                "low":   c.get("low")  or c.get("l"),
-                "close": c.get("close") or c.get("c"),
-            }
+        for b in todas_barras:
+            ts_str = b["time"].replace("T", " ")
+            bdt    = dt2.strptime(ts_str, "%Y-%m-%d %H:%M:%S")
+            fecha  = bdt.strftime("%Y-%m-%d")
+            h, m   = bdt.hour, bdt.minute
 
             # V1 = barras 9:30 y 9:45
             if h == 9 and m in (30, 45):
-                dias_dict[fecha]["V1"].append(barra)
-            elif h == 10: dias_dict[fecha]["V2"].append(barra)
-            elif h == 11: dias_dict[fecha]["V3"].append(barra)
-            elif h == 12: dias_dict[fecha]["V4"].append(barra)
-            elif h == 13: dias_dict[fecha]["V5"].append(barra)
-            elif h == 14: dias_dict[fecha]["V6"].append(barra)
-            elif h == 15: dias_dict[fecha]["V7"].append(barra)
+                dias_dict[fecha]["V1"].append(b)
+            elif h == 10: dias_dict[fecha]["V2"].append(b)
+            elif h == 11: dias_dict[fecha]["V3"].append(b)
+            elif h == 12: dias_dict[fecha]["V4"].append(b)
+            elif h == 13: dias_dict[fecha]["V5"].append(b)
+            elif h == 14: dias_dict[fecha]["V6"].append(b)
+            elif h == 15: dias_dict[fecha]["V7"].append(b)
 
-        # Construir velas AXIS — mismo formato que antes
-        vela_hora = {
-            "V1": "09:30:00", "V2": "10:00:00", "V3": "11:00:00",
-            "V4": "12:00:00", "V5": "13:00:00", "V6": "14:00:00", "V7": "15:00:00"
-        }
+        # Construir lista de velas en formato compatible con el resto del codigo
+        # Ordenadas de mas reciente a mas antigua (igual que TwelveData)
+        vela_hora = {"V1":"09:30:00","V2":"10:00:00","V3":"11:00:00",
+                     "V4":"12:00:00","V5":"13:00:00","V6":"14:00:00","V7":"15:00:00"}
         resultado_velas = []
 
         for fecha in sorted(dias_dict.keys(), reverse=True):
-            for vela in ["V7", "V6", "V5", "V4", "V3", "V2", "V1"]:
+            for vela in ["V7","V6","V5","V4","V3","V2","V1"]:
                 bs = dias_dict[fecha].get(vela, [])
                 if not bs:
                     continue
@@ -532,14 +454,12 @@ def get_velas(simbolo, outputsize=50):
             print(f"get_velas {simbolo}: sin velas construidas")
             return None
 
-        print(f"get_velas {simbolo}: {len(resultado_velas)} velas desde tastytrade ✅")
+        # Limitar a outputsize
         return resultado_velas[:outputsize]
 
     except Exception as e:
-        print(f"Error get_velas tastytrade {simbolo}: {e}")
+        print(f"Error get_velas Tradier {simbolo}: {e}")
         return None
-
-
 
 # ═══════════════════════════════════════════════════════════
 # CALCULAR SMA
@@ -1381,7 +1301,7 @@ def reporte_horario():
 # LOOP PRINCIPAL
 # ═══════════════════════════════════════════════════════════
 def monitor_loop():
-    print("AXIS Breakout Sentinel v8.38 iniciado...")
+    print("AXIS Breakout Sentinel v8.37 iniciado...")
     while True:
         ahora = datetime.now(EST)
         minutos_hasta_01 = (1 - ahora.minute) % 60
@@ -1413,7 +1333,7 @@ def home():
             "tipo":    "RCB" if c["p3"] else "CNF" if c["on"] else "OFF",
         }
     return jsonify({
-        "sistema":     "AXIS Breakout Sentinel v8.38",
+        "sistema":     "AXIS Breakout Sentinel v8.37",
         "estado":      "activo" if SISTEMA_ACTIVO else "apagado",
         "hora_est":    ahora.strftime("%A %H:%M EST"),
         "mercado":     "abierto" if es_dia_mercado(ahora) else "cerrado",
@@ -1436,7 +1356,7 @@ def test():
         else:
             lineas_canal.append(f"  {a}: OFF")
     enviar_telegram(
-        f"✅ <b>AXIS Breakout Sentinel v8.38</b>\n"
+        f"✅ <b>AXIS Breakout Sentinel v8.37</b>\n"
         f"<b>Hora:</b> {ahora.strftime('%A %d/%m/%Y %H:%M EST')}\n"
         f"<b>Mercado:</b> {'Abierto' if es_dia_mercado(ahora) else 'Cerrado'}\n"
         f"<b>1VR:</b> {'ON' if VR1_ON else 'OFF'} | "
