@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v8.37
+AXIS Breakout Sentinel v8.40
 Estrategias: 1VR | 1VR+ | RPG | GNA | GBA | RCB/CNF
 Multi-activo: SPY, AAPL, BA, GLD
 Auto-P2 | Apagado automatico si nuevo P2 >= P1
@@ -190,7 +190,123 @@ canal      = {a: canal_vacio()         for a in ACTIVOS}
 # Sobrevive reinicios de Railway dentro del mismo deployment
 # Al primer deploy usa CANALES_DEFAULT con SPY y GLD preconfigurados
 # ═══════════════════════════════════════════════════════════
-CANALES_FILE = "/data/axis_canales.json"
+CANALES_FILE    = "/data/axis_canales.json"
+PORTFOLIO_FILE  = "/data/axis_portfolio.json"
+
+# ═══════════════════════════════════════════════════════════
+# PORTFOLIO — ESTRUCTURA Y PERSISTENCIA
+# ═══════════════════════════════════════════════════════════
+def portfolio_vacio():
+    return {
+        "posiciones":  [],   # posiciones abiertas
+        "historial":   [],   # posiciones cerradas
+        "reto": {
+            "activo":         False,
+            "capital_inicial": 2000,
+            "carriles": [
+                {"id": i+1, "capital": 200, "ronda": 0, "posicion": None, "historial": []}
+                for i in range(10)
+            ]
+        }
+    }
+
+_portfolio = None
+
+def cargar_portfolio():
+    global _portfolio
+    try:
+        if os.path.exists(PORTFOLIO_FILE):
+            with open(PORTFOLIO_FILE, 'r') as f:
+                _portfolio = json.load(f)
+            print(f"Portfolio cargado — {len(_portfolio['posiciones'])} posiciones abiertas")
+        else:
+            _portfolio = portfolio_vacio()
+            guardar_portfolio()
+            print("Portfolio nuevo creado")
+    except Exception as e:
+        print(f"Error cargando portfolio: {e}")
+        _portfolio = portfolio_vacio()
+
+def guardar_portfolio():
+    try:
+        with open(PORTFOLIO_FILE, 'w') as f:
+            json.dump(_portfolio, f, indent=2, default=str)
+    except Exception as e:
+        print(f"Error guardando portfolio: {e}")
+
+def registrar_posicion(opcion, estrategia, simbolo, precio_entrada, es_reto=False, carril_id=None):
+    """Registra una posición abierta en el portfolio."""
+    global _portfolio
+    if _portfolio is None:
+        cargar_portfolio()
+    import uuid
+    pos = {
+        "id":             str(uuid.uuid4())[:8],
+        "simbolo":        simbolo,
+        "estrategia":     estrategia,
+        "tipo":           opcion["tipo"],
+        "strike":         opcion["strike"],
+        "expiration":     opcion["expiration"],
+        "option_symbol":  opcion["symbol"],
+        "precio_entrada": precio_entrada,
+        "contratos":      1,
+        "precio_gtc":     round(precio_entrada * 2, 2),
+        "ts_entrada":     datetime.now(EST).isoformat(),
+        "es_reto":        es_reto,
+        "carril_id":      carril_id,
+        "estado":         "abierta",
+    }
+    _portfolio["posiciones"].append(pos)
+    if es_reto and carril_id:
+        for c in _portfolio["reto"]["carriles"]:
+            if c["id"] == carril_id:
+                c["posicion"] = pos["id"]
+                c["ronda"]   += 1
+                break
+    guardar_portfolio()
+    return pos
+
+def cerrar_posicion(pos_id, precio_cierre, motivo="panic"):
+    """Cierra una posición y la mueve al historial."""
+    global _portfolio
+    if _portfolio is None:
+        cargar_portfolio()
+    pos = next((p for p in _portfolio["posiciones"] if p["id"] == pos_id), None)
+    if not pos:
+        return None
+    pl_pct = round((precio_cierre - pos["precio_entrada"]) / pos["precio_entrada"] * 100, 2)
+    pl_usd = round((precio_cierre - pos["precio_entrada"]) * 100 * pos["contratos"], 2)
+    pos["precio_cierre"] = precio_cierre
+    pos["pl_pct"]        = pl_pct
+    pos["pl_usd"]        = pl_usd
+    pos["motivo_cierre"] = motivo
+    pos["ts_cierre"]     = datetime.now(EST).isoformat()
+    pos["estado"]        = "cerrada"
+    # Actualizar carril del Reto si aplica
+    if pos.get("es_reto") and pos.get("carril_id"):
+        for c in _portfolio["reto"]["carriles"]:
+            if c["id"] == pos["carril_id"]:
+                c["capital"]  = round(c["capital"] + pl_usd, 2)
+                c["posicion"] = None
+                c["historial"].append({
+                    "ronda":          c["ronda"],
+                    "pl_usd":         pl_usd,
+                    "capital_final":  c["capital"],
+                })
+                break
+    _portfolio["posiciones"] = [p for p in _portfolio["posiciones"] if p["id"] != pos_id]
+    _portfolio["historial"].append(pos)
+    guardar_portfolio()
+    # Notificar Telegram
+    emoji = "✅" if pl_pct > 0 else "🔴"
+    enviar_telegram(
+        f"{emoji} <b>Posición cerrada — {simbolo if (simbolo := pos['simbolo']) else ''}</b>\n"
+        f"<b>Motivo:</b> {motivo}\n"
+        f"<b>{pos['tipo']} ${pos['strike']} exp {pos['expiration']}</b>\n"
+        f"<b>P&L:</b> {'+' if pl_pct > 0 else ''}{pl_pct}% | ${'+' if pl_usd > 0 else ''}{pl_usd:.2f}\n"
+        f"<b>Entrada:</b> ${pos['precio_entrada']:.2f} → <b>Cierre:</b> ${precio_cierre:.2f}"
+    )
+    return pos
 
 CANALES_DEFAULT = {
     "SPY": {
@@ -1200,22 +1316,33 @@ def ejecutar_orden_tradier(opcion):
 # TELEGRAM — ENVIAR MENSAJE CON BOTONES
 # ═══════════════════════════════════════════════════════════
 def enviar_telegram_botones(mensaje, orden_id):
+    global _portfolio
+    if _portfolio is None:
+        cargar_portfolio()
+    reto_activo = _portfolio["reto"]["activo"]
+    # Buscar carril disponible en el Reto
+    carril_disponible = None
+    if reto_activo:
+        for c in _portfolio["reto"]["carriles"]:
+            if c["posicion"] is None and c["capital"] > 0:
+                carril_disponible = c["id"]
+                break
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    botones = [
+        {"text": "✅ EJECUTAR", "callback_data": f"exec:{orden_id}"},
+        {"text": "❌ IGNORAR",  "callback_data": f"skip:{orden_id}"},
+    ]
+    if reto_activo and carril_disponible:
+        botones.insert(1, {"text": f"🏆 RETO C{carril_disponible}", "callback_data": f"reto:{orden_id}:{carril_disponible}"})
     payload = {
         "chat_id":    TELEGRAM_CHAT_ID,
         "text":       mensaje,
         "parse_mode": "HTML",
-        "reply_markup": {
-            "inline_keyboard": [[
-                {"text": "✅ EJECUTAR", "callback_data": f"exec:{orden_id}"},
-                {"text": "❌ IGNORAR",  "callback_data": f"skip:{orden_id}"},
-            ]]
-        }
+        "reply_markup": {"inline_keyboard": [botones]}
     }
     try:
         r = requests.post(url, json=payload, timeout=10)
         result = r.json()
-        print(f"Telegram botones: {r.status_code}")
         if result.get("ok"):
             msg = result.get("result", {})
             return msg.get("message_id"), msg.get("chat", {}).get("id")
@@ -1261,6 +1388,7 @@ def enviar_senal_con_botones(simbolo, estrategia, hora_label, precio_vela, tipo_
         message_id, chat_id = enviar_telegram_botones(msg, orden_id)
         ordenes_pendientes[orden_id] = {
             "opcion":          opcion,
+            "estrategia":      estrategia,
             "ts":              datetime.now(pytz.utc),
             "message_id":      message_id,
             "chat_id":         chat_id,
@@ -1301,7 +1429,7 @@ def reporte_horario():
 # LOOP PRINCIPAL
 # ═══════════════════════════════════════════════════════════
 def monitor_loop():
-    print("AXIS Breakout Sentinel v8.37 iniciado...")
+    print("AXIS Breakout Sentinel v8.40 iniciado...")
     while True:
         ahora = datetime.now(EST)
         minutos_hasta_01 = (1 - ahora.minute) % 60
@@ -1333,7 +1461,7 @@ def home():
             "tipo":    "RCB" if c["p3"] else "CNF" if c["on"] else "OFF",
         }
     return jsonify({
-        "sistema":     "AXIS Breakout Sentinel v8.37",
+        "sistema":     "AXIS Breakout Sentinel v8.40",
         "estado":      "activo" if SISTEMA_ACTIVO else "apagado",
         "hora_est":    ahora.strftime("%A %H:%M EST"),
         "mercado":     "abierto" if es_dia_mercado(ahora) else "cerrado",
@@ -1356,7 +1484,7 @@ def test():
         else:
             lineas_canal.append(f"  {a}: OFF")
     enviar_telegram(
-        f"✅ <b>AXIS Breakout Sentinel v8.37</b>\n"
+        f"✅ <b>AXIS Breakout Sentinel v8.40</b>\n"
         f"<b>Hora:</b> {ahora.strftime('%A %d/%m/%Y %H:%M EST')}\n"
         f"<b>Mercado:</b> {'Abierto' if es_dia_mercado(ahora) else 'Cerrado'}\n"
         f"<b>1VR:</b> {'ON' if VR1_ON else 'OFF'} | "
@@ -1520,6 +1648,75 @@ def tradier_test():
     return jsonify(resultados), 200
 
 # ═══════════════════════════════════════════════════════════
+# PORTFOLIO MANAGER — RUTAS
+# ═══════════════════════════════════════════════════════════
+@app.route("/portfolio", methods=["GET"])
+def serve_portfolio():
+    from flask import Response
+    html_path = os.path.join(os.path.dirname(__file__), "axis_portfolio.html")
+    if os.path.exists(html_path):
+        with open(html_path, "r") as f:
+            return Response(f.read(), mimetype="text/html")
+    return Response("<h1>axis_portfolio.html no encontrado</h1>", mimetype="text/html"), 404
+
+@app.route("/portfolio/data", methods=["GET"])
+def portfolio_data():
+    global _portfolio
+    if _portfolio is None:
+        cargar_portfolio()
+    # Enriquecer con precio actual de Tradier
+    posiciones = []
+    for pos in _portfolio["posiciones"]:
+        p = dict(pos)
+        try:
+            precio_actual = get_precio_tradier(pos["simbolo"])
+            if precio_actual and pos["precio_entrada"] > 0:
+                # Para opciones estimamos precio actual como % del movimiento del subyacente
+                p["precio_actual"] = precio_actual
+                # P&L estimado basado en precio ask de entrada
+                p["pl_pct"] = None  # Se calculará en el frontend con datos reales
+        except:
+            p["precio_actual"] = None
+        posiciones.append(p)
+    return jsonify({
+        "posiciones": posiciones,
+        "historial":  _portfolio["historial"][-20:],  # últimas 20 cerradas
+        "reto":       _portfolio["reto"],
+    }), 200
+
+@app.route("/portfolio/cerrar", methods=["GET", "POST"])
+def portfolio_cerrar():
+    pos_id       = request.args.get("id") or (request.get_json(silent=True) or {}).get("id")
+    precio_cierre = float(request.args.get("precio", 0) or (request.get_json(silent=True) or {}).get("precio", 0))
+    motivo       = request.args.get("motivo", "panic")
+    if not pos_id:
+        return jsonify({"error": "id requerido"}), 400
+    pos = cerrar_posicion(pos_id, precio_cierre, motivo)
+    if not pos:
+        return jsonify({"error": "Posición no encontrada"}), 404
+    return jsonify({"ok": True, "posicion": pos}), 200
+
+@app.route("/portfolio/reto/activar", methods=["GET"])
+def reto_activar():
+    global _portfolio
+    if _portfolio is None:
+        cargar_portfolio()
+    _portfolio["reto"]["activo"] = True
+    guardar_portfolio()
+    enviar_telegram("🏆 <b>Reto Millonario ACTIVADO</b>\n10 carriles × $200 = $2,000\n¡A duplicar!")
+    return jsonify({"ok": True, "reto": _portfolio["reto"]}), 200
+
+@app.route("/portfolio/reto/desactivar", methods=["GET"])
+def reto_desactivar():
+    global _portfolio
+    if _portfolio is None:
+        cargar_portfolio()
+    _portfolio["reto"]["activo"] = False
+    guardar_portfolio()
+    enviar_telegram("⏸ <b>Reto Millonario PAUSADO</b>")
+    return jsonify({"ok": True}), 200
+
+# ═══════════════════════════════════════════════════════════
 # APP WEB — servida desde Railway
 # ═══════════════════════════════════════════════════════════
 @app.route("/charts", methods=["GET"])
@@ -1606,23 +1803,36 @@ def telegram_webhook():
             if not datos:
                 editar_mensaje("⚠️ <b>Orden expirada o ya procesada.</b>")
                 return jsonify({"ok": True}), 200
+            opcion   = datos["opcion"]
+            estrategia = datos.get("estrategia", "AXIS")
+            # Registrar en portfolio con precio ask como precio entrada
+            registrar_posicion(opcion, estrategia, opcion["subyacente"], opcion["ask"])
+            agregar_recibo(
+                f"━━━━━━━━━━━━━━━━━━\n"
+                f"✅ <b>EJECUTADA</b> — registrada en Portfolio\n"
+                f"📈 <b>Objetivo GTC:</b> ${opcion['ask']*2:.2f} (+100%)"
+            )
+            print(f"Posición registrada en portfolio — {opcion['subyacente']} {opcion['tipo']} ${opcion['strike']}")
 
-            opcion = datos["opcion"]
-            resultado = ejecutar_orden_tradier(opcion)
-            if resultado["ok"]:
-                agregar_recibo(
-                    f"━━━━━━━━━━━━━━━━━━\n"
-                    f"✅ <b>EJECUTADA</b> | ID: {resultado['id']} | {resultado['status']}\n"
-                    f"📈 <b>Venta límite GTC:</b> ${resultado['precio_venta']:.2f} (ID: {resultado['venta_id']})"
-                )
-                print(f"Orden ejecutada — ID: {resultado['id']} | Venta GTC: ${resultado['precio_venta']:.2f}")
+        elif accion == "reto":
+            partes_reto = orden_id.split(":")
+            if len(partes_reto) == 2:
+                orden_id_real, carril_id = partes_reto[0], int(partes_reto[1])
             else:
-                agregar_recibo(
-                    f"━━━━━━━━━━━━━━━━━━\n"
-                    f"❌ <b>ERROR AL EJECUTAR</b>\n"
-                    f"{resultado.get('error', 'Error desconocido')}"
-                )
-                print(f"Error ejecutando orden: {resultado}")
+                orden_id_real, carril_id = orden_id, 1
+            datos = ordenes_pendientes.pop(orden_id_real, None)
+            if not datos:
+                editar_mensaje("⚠️ <b>Orden expirada o ya procesada.</b>")
+                return jsonify({"ok": True}), 200
+            opcion = datos["opcion"]
+            estrategia = datos.get("estrategia", "AXIS")
+            registrar_posicion(opcion, estrategia, opcion["subyacente"], opcion["ask"], es_reto=True, carril_id=carril_id)
+            agregar_recibo(
+                f"━━━━━━━━━━━━━━━━━━\n"
+                f"🏆 <b>EJECUTADA en RETO — Carril #{carril_id}</b>\n"
+                f"📈 <b>Objetivo GTC:</b> ${opcion['ask']*2:.2f} (+100%)"
+            )
+            print(f"Posición RETO registrada — Carril {carril_id} | {opcion['subyacente']} {opcion['tipo']} ${opcion['strike']}")
 
         elif accion == "skip":
             ordenes_pendientes.pop(orden_id, None)
@@ -2755,6 +2965,7 @@ def canal_lineas():
 def arrancar_monitor():
     time.sleep(5)
     cargar_canales()
+    cargar_portfolio()
     threading.Thread(target=monitor_loop,         daemon=True).start()
     threading.Thread(target=loop_v7_anticipada,   daemon=True).start()
     threading.Thread(target=loop_limpiar_ordenes, daemon=True).start()
