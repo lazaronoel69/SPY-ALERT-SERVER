@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v8.36
+AXIS Breakout Sentinel v8.37
 Estrategias: 1VR | 1VR+ | RPG | GNA | GBA | RCB/CNF
 Multi-activo: SPY, AAPL, BA, GLD
 Auto-P2 | Apagado automatico si nuevo P2 >= P1
@@ -756,15 +756,23 @@ def evaluar_activo(simbolo, velas, ahora):
                     if ed["pm40_velas_bajo_p1"] >= 3:
                         ed["pm40_p1_maduro"] = True
 
-                    # P2 dinámico en V1 — si HIGH > P2 actual pero < P1 → actualizar P2
-                    if ed["pm40_p2_high"] is not None and v_high > ed["pm40_p2_high"] and v_high < ed["pm40_p1_high"]:
+                    # P2 dinámico en V1 — si HIGH > P2 actual → actualizar P2
+                    if ed["pm40_p2_high"] is not None and v_high > ed["pm40_p2_high"]:
                         ed["pm40_p2_high"] = v_high
                         ed["pm40_p2_idx"]  = ed["pm40_vela_idx"]
-                        # Sincronizar con canal
                         canal[simbolo]["p2"]["high"]      = v_high
                         canal[simbolo]["p2_actual_high"]  = v_high
-                        guardar_canales()
-                        print(f"{simbolo} PM40 P2 dinámico V1: ${v_high:.2f}")
+                        # P2 >= P1 → canal bajista inválido → reset completo
+                        if ed["pm40_p2_high"] >= ed["pm40_p1_high"]:
+                            ed["pm40_activo"] = False; ed["pm40_p1_high"] = None
+                            ed["pm40_p1_idx"] = None; ed["pm40_p2_high"] = None
+                            ed["pm40_p2_idx"] = None; ed["pm40_velas_bajo_p1"] = 0
+                            ed["pm40_p1_maduro"] = False; canal[simbolo]["on"] = False
+                            guardar_canales()
+                            print(f"{simbolo} PM40 reset — P2 >= P1")
+                        else:
+                            guardar_canales()
+                            print(f"{simbolo} PM40 P2 dinámico V1: ${v_high:.2f}")
 
         # 4PASOS en V1 — solo si hay canal RCB activo
         if c["on"] and not c["apagado"] and c["p3"] is not None and not ed["4ps_fired"]:
@@ -875,8 +883,15 @@ def evaluar_activo(simbolo, velas, ahora):
                 )
                 # Actualizar P2 con este high
                 c["p2_actual_high"] = v_high
+                c["p2"]["high"]     = v_high
                 c["p2_actual_ts"]   = ahora_dt
-                guardar_canales()
+                # P2 >= P1 → canal inválido → apagar
+                if c["p2_actual_high"] >= c["p1"]["high"]:
+                    c["on"] = False; c["apagado"] = True
+                    guardar_canales()
+                    enviar_telegram(f"🔕 <b>Canal APAGADO — {simbolo}</b>\nP2 ${v_high:.2f} >= P1 ${c['p1']['high']:.2f}")
+                else:
+                    guardar_canales()
                 print(f"{simbolo} {tipo_canal} ruptura V{hora_vela-8} techo=${techo:.2f} close=${v_close:.2f}")
             else:
                 # High >= P1 — canal apagado
@@ -935,16 +950,32 @@ def evaluar_activo(simbolo, velas, ahora):
                             ed["pm40_p2_idx"]  = idx_actual
                             canal[simbolo]["p2"]["high"]     = v_high
                             canal[simbolo]["p2_actual_high"] = v_high
-                            guardar_canales()
-                            print(f"{simbolo} PM40 P2 dinámico actualizado: ${v_high:.2f}")
-                    elif v_high > ed["pm40_p2_high"] and v_high < ed["pm40_p1_high"]:
-                        # P2 dinámico — high mayor que P2 actual pero < P1 → mejor slope
+                            if ed["pm40_p2_high"] >= ed["pm40_p1_high"]:
+                                ed["pm40_activo"] = False; ed["pm40_p1_high"] = None
+                                ed["pm40_p1_idx"] = None; ed["pm40_p2_high"] = None
+                                ed["pm40_p2_idx"] = None; ed["pm40_velas_bajo_p1"] = 0
+                                ed["pm40_p1_maduro"] = False; canal[simbolo]["on"] = False
+                                guardar_canales()
+                                print(f"{simbolo} PM40 reset — P2 >= P1")
+                            else:
+                                guardar_canales()
+                                print(f"{simbolo} PM40 P2 dinámico actualizado: ${v_high:.2f}")
+                    elif v_high > ed["pm40_p2_high"]:
+                        # P2 dinámico — high mayor que P2 actual → actualizar P2
                         ed["pm40_p2_high"] = v_high
                         ed["pm40_p2_idx"]  = idx_actual
                         canal[simbolo]["p2"]["high"]     = v_high
                         canal[simbolo]["p2_actual_high"] = v_high
-                        guardar_canales()
-                        print(f"{simbolo} PM40 P2 dinámico mejorado: ${v_high:.2f}")
+                        if ed["pm40_p2_high"] >= ed["pm40_p1_high"]:
+                            ed["pm40_activo"] = False; ed["pm40_p1_high"] = None
+                            ed["pm40_p1_idx"] = None; ed["pm40_p2_high"] = None
+                            ed["pm40_p2_idx"] = None; ed["pm40_velas_bajo_p1"] = 0
+                            ed["pm40_p1_maduro"] = False; canal[simbolo]["on"] = False
+                            guardar_canales()
+                            print(f"{simbolo} PM40 reset — P2 >= P1")
+                        else:
+                            guardar_canales()
+                            print(f"{simbolo} PM40 P2 dinámico mejorado: ${v_high:.2f}")
 
     # 4PASOS — V2-V7 (solo dentro de canal RCB activo)
     if c["on"] and not c["apagado"] and c["p3"] is not None and ed["4ps_activo"] and not ed["4ps_fired"]:
@@ -1270,7 +1301,7 @@ def reporte_horario():
 # LOOP PRINCIPAL
 # ═══════════════════════════════════════════════════════════
 def monitor_loop():
-    print("AXIS Breakout Sentinel v8.36 iniciado...")
+    print("AXIS Breakout Sentinel v8.37 iniciado...")
     while True:
         ahora = datetime.now(EST)
         minutos_hasta_01 = (1 - ahora.minute) % 60
@@ -1302,7 +1333,7 @@ def home():
             "tipo":    "RCB" if c["p3"] else "CNF" if c["on"] else "OFF",
         }
     return jsonify({
-        "sistema":     "AXIS Breakout Sentinel v8.36",
+        "sistema":     "AXIS Breakout Sentinel v8.37",
         "estado":      "activo" if SISTEMA_ACTIVO else "apagado",
         "hora_est":    ahora.strftime("%A %H:%M EST"),
         "mercado":     "abierto" if es_dia_mercado(ahora) else "cerrado",
@@ -1325,7 +1356,7 @@ def test():
         else:
             lineas_canal.append(f"  {a}: OFF")
     enviar_telegram(
-        f"✅ <b>AXIS Breakout Sentinel v8.36</b>\n"
+        f"✅ <b>AXIS Breakout Sentinel v8.37</b>\n"
         f"<b>Hora:</b> {ahora.strftime('%A %d/%m/%Y %H:%M EST')}\n"
         f"<b>Mercado:</b> {'Abierto' if es_dia_mercado(ahora) else 'Cerrado'}\n"
         f"<b>1VR:</b> {'ON' if VR1_ON else 'OFF'} | "
