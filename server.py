@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v8.38
+AXIS Breakout Sentinel v8.39
 Estrategias: 1VR | 1VR+ | RPG | GNA | GBA | RCB/CNF
 Multi-activo: SPY, AAPL, BA, GLD
 Auto-P2 | Apagado automatico si nuevo P2 >= P1
@@ -360,31 +360,35 @@ def restar_dias_habiles(fecha, dias):
 # ═══════════════════════════════════════════════════════════
 # TASTYTRADE — CREDENCIALES Y SESIÓN
 # ═══════════════════════════════════════════════════════════
-TT_USERNAME = os.environ.get("TT_USERNAME", "")
-TT_PASSWORD = os.environ.get("TT_PASSWORD", "")
-TT_ACCOUNT  = os.environ.get("TT_ACCOUNT",  "")
-TT_BASE     = "https://api.tastytrade.com"
+TT_USERNAME       = os.environ.get("TT_USERNAME", "")
+TT_PASSWORD       = os.environ.get("TT_PASSWORD", "")
+TT_ACCOUNT        = os.environ.get("TT_ACCOUNT",  "")
+TT_REMEMBER_TOKEN = os.environ.get("TT_REMEMBER_TOKEN", "")
+TT_BASE           = "https://api.tastytrade.com"
 
-# Cache del session token — se renueva cada 24h
+# Cache del session token
 _tt_session_token = None
 _tt_session_ts    = None
 
 def get_tt_session():
-    """Obtiene o renueva el session token de tastytrade."""
+    """Obtiene session token usando remember-token — sin device challenge."""
     global _tt_session_token, _tt_session_ts
     ahora = datetime.now(pytz.utc)
-    # Renovar si no existe o tiene más de 20 horas
     if _tt_session_token and _tt_session_ts:
         if (ahora - _tt_session_ts).total_seconds() < 72000:
             return _tt_session_token
     try:
         r = requests.post(
             f"{TT_BASE}/sessions",
-            json={"login": TT_USERNAME, "password": TT_PASSWORD},
+            json={
+                "login":          TT_USERNAME,
+                "password":       TT_PASSWORD,
+                "remember-token": TT_REMEMBER_TOKEN,
+            },
             headers={"Content-Type": "application/json"},
             timeout=15
         )
-        data = r.json()
+        data  = r.json()
         token = data.get("data", {}).get("session-token")
         if token:
             _tt_session_token = token
@@ -1381,7 +1385,7 @@ def reporte_horario():
 # LOOP PRINCIPAL
 # ═══════════════════════════════════════════════════════════
 def monitor_loop():
-    print("AXIS Breakout Sentinel v8.38 iniciado...")
+    print("AXIS Breakout Sentinel v8.39 iniciado...")
     while True:
         ahora = datetime.now(EST)
         minutos_hasta_01 = (1 - ahora.minute) % 60
@@ -1413,7 +1417,7 @@ def home():
             "tipo":    "RCB" if c["p3"] else "CNF" if c["on"] else "OFF",
         }
     return jsonify({
-        "sistema":     "AXIS Breakout Sentinel v8.38",
+        "sistema":     "AXIS Breakout Sentinel v8.39",
         "estado":      "activo" if SISTEMA_ACTIVO else "apagado",
         "hora_est":    ahora.strftime("%A %H:%M EST"),
         "mercado":     "abierto" if es_dia_mercado(ahora) else "cerrado",
@@ -1436,7 +1440,7 @@ def test():
         else:
             lineas_canal.append(f"  {a}: OFF")
     enviar_telegram(
-        f"✅ <b>AXIS Breakout Sentinel v8.38</b>\n"
+        f"✅ <b>AXIS Breakout Sentinel v8.39</b>\n"
         f"<b>Hora:</b> {ahora.strftime('%A %d/%m/%Y %H:%M EST')}\n"
         f"<b>Mercado:</b> {'Abierto' if es_dia_mercado(ahora) else 'Cerrado'}\n"
         f"<b>1VR:</b> {'ON' if VR1_ON else 'OFF'} | "
