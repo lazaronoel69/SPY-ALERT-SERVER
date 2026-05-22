@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v8.40
+AXIS Breakout Sentinel v8.41
 Estrategias: 1VR | 1VR+ | RPG | GNA | GBA | RCB/CNF
 Multi-activo: SPY, AAPL, BA, GLD
 Auto-P2 | Apagado automatico si nuevo P2 >= P1
@@ -192,6 +192,65 @@ canal      = {a: canal_vacio()         for a in ACTIVOS}
 # ═══════════════════════════════════════════════════════════
 CANALES_FILE    = "/data/axis_canales.json"
 PORTFOLIO_FILE  = "/data/axis_portfolio.json"
+
+# ═══════════════════════════════════════════════════════════
+# ANTHROPIC — ANÁLISIS DE PORTFOLIO
+# ═══════════════════════════════════════════════════════════
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+
+def analizar_portfolio_claude(posiciones, reto):
+    """Llama a Claude para analizar el portfolio y dar recomendaciones."""
+    if not ANTHROPIC_API_KEY:
+        return "API key de Anthropic no configurada."
+    if not posiciones and not any(c["posicion"] for c in reto["carriles"]):
+        return "Sin posiciones abiertas para analizar."
+    try:
+        # Construir contexto del portfolio
+        ahora = datetime.now(EST)
+        contexto_pos = []
+        for pos in posiciones:
+            contexto_pos.append(
+                f"- {pos['simbolo']} {pos['tipo']} ${pos['strike']} exp {pos['expiration']} "
+                f"| Entrada: ${pos['precio_entrada']:.2f} | GTC: ${pos['precio_gtc']:.2f} "
+                f"| Estrategia: {pos['estrategia']}"
+                f"{' | RETO Carril #' + str(pos['carril_id']) if pos.get('es_reto') else ''}"
+            )
+        capital_reto = sum(c["capital"] for c in reto["carriles"])
+        prompt = (
+            f"Eres el analista de AXIS, un sistema de trading de opciones. "
+            f"Hora actual: {ahora.strftime('%A %I:%M %p EST')}. "
+            f"Analiza estas posiciones abiertas y da recomendaciones concretas y breves:\n\n"
+            f"POSICIONES ABIERTAS:\n" + "\n".join(contexto_pos or ["Ninguna"]) + "\n\n"
+            f"RETO MILLONARIO: {'Activo' if reto['activo'] else 'Inactivo'} | "
+            f"Capital total: ${capital_reto:.2f} de $1,000,000\n\n"
+            f"Dame: 1) Estado general del portfolio en 1 oración. "
+            f"2) Recomendación específica por posición (mantener/cerrar/subir GTC). "
+            f"3) Una observación de mercado relevante. "
+            f"Responde en español, máximo 150 palabras, sin markdown."
+        )
+        r = requests.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={
+                "x-api-key":         ANTHROPIC_API_KEY,
+                "anthropic-version": "2023-06-01",
+                "content-type":      "application/json",
+            },
+            json={
+                "model":      "claude-sonnet-4-20250514",
+                "max_tokens": 300,
+                "messages":   [{"role": "user", "content": prompt}],
+            },
+            timeout=20
+        )
+        data = r.json()
+        if r.status_code == 200:
+            return data["content"][0]["text"]
+        else:
+            print(f"Error Anthropic: {data}")
+            return f"Error al consultar Claude: {data.get('error', {}).get('message', 'desconocido')}"
+    except Exception as e:
+        print(f"Error analizar_portfolio_claude: {e}")
+        return f"Error de conexión con Anthropic: {str(e)}"
 
 # ═══════════════════════════════════════════════════════════
 # PORTFOLIO — ESTRUCTURA Y PERSISTENCIA
@@ -1429,7 +1488,7 @@ def reporte_horario():
 # LOOP PRINCIPAL
 # ═══════════════════════════════════════════════════════════
 def monitor_loop():
-    print("AXIS Breakout Sentinel v8.40 iniciado...")
+    print("AXIS Breakout Sentinel v8.41 iniciado...")
     while True:
         ahora = datetime.now(EST)
         minutos_hasta_01 = (1 - ahora.minute) % 60
@@ -1461,7 +1520,7 @@ def home():
             "tipo":    "RCB" if c["p3"] else "CNF" if c["on"] else "OFF",
         }
     return jsonify({
-        "sistema":     "AXIS Breakout Sentinel v8.40",
+        "sistema":     "AXIS Breakout Sentinel v8.41",
         "estado":      "activo" if SISTEMA_ACTIVO else "apagado",
         "hora_est":    ahora.strftime("%A %H:%M EST"),
         "mercado":     "abierto" if es_dia_mercado(ahora) else "cerrado",
@@ -1484,7 +1543,7 @@ def test():
         else:
             lineas_canal.append(f"  {a}: OFF")
     enviar_telegram(
-        f"✅ <b>AXIS Breakout Sentinel v8.40</b>\n"
+        f"✅ <b>AXIS Breakout Sentinel v8.41</b>\n"
         f"<b>Hora:</b> {ahora.strftime('%A %d/%m/%Y %H:%M EST')}\n"
         f"<b>Mercado:</b> {'Abierto' if es_dia_mercado(ahora) else 'Cerrado'}\n"
         f"<b>1VR:</b> {'ON' if VR1_ON else 'OFF'} | "
@@ -1695,6 +1754,17 @@ def portfolio_cerrar():
     if not pos:
         return jsonify({"error": "Posición no encontrada"}), 404
     return jsonify({"ok": True, "posicion": pos}), 200
+
+@app.route("/portfolio/claude", methods=["GET"])
+def portfolio_claude():
+    global _portfolio
+    if _portfolio is None:
+        cargar_portfolio()
+    analisis = analizar_portfolio_claude(
+        _portfolio["posiciones"],
+        _portfolio["reto"]
+    )
+    return jsonify({"analisis": analisis}), 200
 
 @app.route("/portfolio/reto/activar", methods=["GET"])
 def reto_activar():
