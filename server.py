@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v8.33
+AXIS Breakout Sentinel v8.34
 Estrategias: 1VR | 1VR+ | RPG | GNA | GBA | RCB/CNF
 Multi-activo: SPY, AAPL, BA, GLD
 Auto-P2 | Apagado automatico si nuevo P2 >= P1
@@ -479,15 +479,21 @@ def ts_a_datetime(fecha_str, hora_est):
 
 def calcular_techo_canal(simbolo, ahora_dt):
     c = canal[simbolo]
-    if not c["on"] or c["apagado"] or not c["p1"] or not c["p2_actual_high"] or not c["p2_actual_ts"]:
+    if not c["on"] or c["apagado"] or not c["p1"] or not c["p2"]:
         return None
     try:
+        # Usar p2_actual si está disponible, sino usar p2 base
+        p2_high = c["p2_actual_high"] if c["p2_actual_high"] else c["p2"]["high"]
+        if c["p2_actual_ts"]:
+            dt_p2 = c["p2_actual_ts"]
+        else:
+            dt_p2 = ts_a_datetime(c["p2"]["fecha"], c["p2"]["hora_est"])
+
         dt_p1 = ts_a_datetime(c["p1"]["fecha"], c["p1"]["hora_est"])
-        dt_p2 = c["p2_actual_ts"]
         horas_p1_p2 = (dt_p2 - dt_p1).total_seconds() / 3600
         if horas_p1_p2 <= 0:
             return None
-        slope = (c["p2_actual_high"] - c["p1"]["high"]) / horas_p1_p2
+        slope = (p2_high - c["p1"]["high"]) / horas_p1_p2
         horas_desde_p1 = (ahora_dt - dt_p1).total_seconds() / 3600
         return c["p1"]["high"] + slope * horas_desde_p1
     except Exception as e:
@@ -1248,7 +1254,7 @@ def reporte_horario():
 # LOOP PRINCIPAL
 # ═══════════════════════════════════════════════════════════
 def monitor_loop():
-    print("AXIS Breakout Sentinel v8.33 iniciado...")
+    print("AXIS Breakout Sentinel v8.34 iniciado...")
     while True:
         ahora = datetime.now(EST)
         minutos_hasta_01 = (1 - ahora.minute) % 60
@@ -1280,7 +1286,7 @@ def home():
             "tipo":    "RCB" if c["p3"] else "CNF" if c["on"] else "OFF",
         }
     return jsonify({
-        "sistema":     "AXIS Breakout Sentinel v8.33",
+        "sistema":     "AXIS Breakout Sentinel v8.34",
         "estado":      "activo" if SISTEMA_ACTIVO else "apagado",
         "hora_est":    ahora.strftime("%A %H:%M EST"),
         "mercado":     "abierto" if es_dia_mercado(ahora) else "cerrado",
@@ -1303,7 +1309,7 @@ def test():
         else:
             lineas_canal.append(f"  {a}: OFF")
     enviar_telegram(
-        f"✅ <b>AXIS Breakout Sentinel v8.33</b>\n"
+        f"✅ <b>AXIS Breakout Sentinel v8.34</b>\n"
         f"<b>Hora:</b> {ahora.strftime('%A %d/%m/%Y %H:%M EST')}\n"
         f"<b>Mercado:</b> {'Abierto' if es_dia_mercado(ahora) else 'Cerrado'}\n"
         f"<b>1VR:</b> {'ON' if VR1_ON else 'OFF'} | "
