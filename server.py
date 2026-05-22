@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v8.34
+AXIS Breakout Sentinel v8.35
 Estrategias: 1VR | 1VR+ | RPG | GNA | GBA | RCB/CNF
 Multi-activo: SPY, AAPL, BA, GLD
 Auto-P2 | Apagado automatico si nuevo P2 >= P1
@@ -1254,7 +1254,7 @@ def reporte_horario():
 # LOOP PRINCIPAL
 # ═══════════════════════════════════════════════════════════
 def monitor_loop():
-    print("AXIS Breakout Sentinel v8.34 iniciado...")
+    print("AXIS Breakout Sentinel v8.35 iniciado...")
     while True:
         ahora = datetime.now(EST)
         minutos_hasta_01 = (1 - ahora.minute) % 60
@@ -1286,7 +1286,7 @@ def home():
             "tipo":    "RCB" if c["p3"] else "CNF" if c["on"] else "OFF",
         }
     return jsonify({
-        "sistema":     "AXIS Breakout Sentinel v8.34",
+        "sistema":     "AXIS Breakout Sentinel v8.35",
         "estado":      "activo" if SISTEMA_ACTIVO else "apagado",
         "hora_est":    ahora.strftime("%A %H:%M EST"),
         "mercado":     "abierto" if es_dia_mercado(ahora) else "cerrado",
@@ -1309,7 +1309,7 @@ def test():
         else:
             lineas_canal.append(f"  {a}: OFF")
     enviar_telegram(
-        f"✅ <b>AXIS Breakout Sentinel v8.34</b>\n"
+        f"✅ <b>AXIS Breakout Sentinel v8.35</b>\n"
         f"<b>Hora:</b> {ahora.strftime('%A %d/%m/%Y %H:%M EST')}\n"
         f"<b>Mercado:</b> {'Abierto' if es_dia_mercado(ahora) else 'Cerrado'}\n"
         f"<b>1VR:</b> {'ON' if VR1_ON else 'OFF'} | "
@@ -2658,7 +2658,7 @@ def canal_lineas():
         return jsonify({"error": f"Activo no reconocido"}), 400
 
     c = canal[simbolo]
-    if not c["on"] or not c["p1"] or not c["p2_actual_high"] or not c["p2_actual_ts"]:
+    if not c["on"] or not c["p1"] or not c["p2"]:
         return jsonify({"activo": simbolo, "on": False, "lineas": []}), 200
 
     # Obtener velas del activo
