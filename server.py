@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v8.42
+AXIS Breakout Sentinel v8.43
 Estrategias: 1VR | 1VR+ | RPG | GNA | GBA | RCB/CNF
 Multi-activo: SPY, AAPL, BA, GLD
+v8.43: Portfolio fix — ejecutar_orden_tradier en webhook exec/reto | Panic Button al bid |
+       Reto con capital 80% + ±5 strikes + Claude fallback | Reset route | Sin precios live
 Auto-P2 | Apagado automatico si nuevo P2 >= P1
 Fix v8.2: 1VR envia alerta durante reconstruccion antes de marcar vr1_fired
 v8.3: 1VR+
@@ -293,27 +295,31 @@ def guardar_portfolio():
     except Exception as e:
         print(f"Error guardando portfolio: {e}")
 
-def registrar_posicion(opcion, estrategia, simbolo, precio_entrada, es_reto=False, carril_id=None):
+def registrar_posicion(opcion, estrategia, simbolo, precio_entrada, es_reto=False, carril_id=None,
+                       contratos=1, tradier_orden_id=None, tradier_gtc_id=None):
     """Registra una posición abierta en el portfolio."""
     global _portfolio
     if _portfolio is None:
         cargar_portfolio()
     import uuid
     pos = {
-        "id":             str(uuid.uuid4())[:8],
-        "simbolo":        simbolo,
-        "estrategia":     estrategia,
-        "tipo":           opcion["tipo"],
-        "strike":         opcion["strike"],
-        "expiration":     opcion["expiration"],
-        "option_symbol":  opcion["symbol"],
-        "precio_entrada": precio_entrada,
-        "contratos":      1,
-        "precio_gtc":     round(precio_entrada * 2, 2),
-        "ts_entrada":     datetime.now(EST).isoformat(),
-        "es_reto":        es_reto,
-        "carril_id":      carril_id,
-        "estado":         "abierta",
+        "id":               str(uuid.uuid4())[:8],
+        "simbolo":          simbolo,
+        "estrategia":       estrategia,
+        "tipo":             opcion["tipo"],
+        "strike":           opcion["strike"],
+        "expiration":       opcion["expiration"],
+        "option_symbol":    opcion["symbol"],
+        "precio_entrada":   precio_entrada,
+        "contratos":        contratos,
+        "costo_total":      round(precio_entrada * 100 * contratos, 2),
+        "precio_gtc":       round(precio_entrada * 2, 2),
+        "ts_entrada":       datetime.now(EST).isoformat(),
+        "es_reto":          es_reto,
+        "carril_id":        carril_id,
+        "estado":           "abierta",
+        "tradier_orden_id": tradier_orden_id,
+        "tradier_gtc_id":   tradier_gtc_id,
     }
     _portfolio["posiciones"].append(pos)
     if es_reto and carril_id:
@@ -325,6 +331,64 @@ def registrar_posicion(opcion, estrategia, simbolo, precio_entrada, es_reto=Fals
     guardar_portfolio()
     return pos
 
+def cancelar_orden_tradier(orden_id):
+    """Cancela una orden activa en Tradier sandbox."""
+    try:
+        r = requests.delete(
+            f"{TRADIER_BASE}/accounts/{TRADIER_ACCOUNT}/orders/{orden_id}",
+            headers=TRADIER_HEADERS,
+            timeout=10
+        )
+        print(f"Cancelar orden Tradier {orden_id}: HTTP {r.status_code}")
+        return r.status_code == 200
+    except Exception as e:
+        print(f"Error cancelar orden Tradier {orden_id}: {e}")
+        return False
+
+def get_bid_opcion_tradier(option_symbol):
+    """Obtiene el bid actual de una opción en Tradier sandbox."""
+    try:
+        r = requests.get(
+            f"{TRADIER_BASE}/markets/quotes",
+            headers=TRADIER_HEADERS,
+            params={"symbols": option_symbol, "greeks": "false"},
+            timeout=10
+        )
+        data  = r.json()
+        quote = data.get("quotes", {}).get("quote", {})
+        bid   = float(quote.get("bid", 0))
+        return bid if bid > 0 else None
+    except Exception as e:
+        print(f"Error bid opcion {option_symbol}: {e}")
+        return None
+
+def vender_opcion_tradier(option_symbol, simbolo, contratos, precio_limit):
+    """Coloca orden de venta limit al bid en Tradier sandbox (Panic)."""
+    try:
+        payload = {
+            "class":         "option",
+            "symbol":        simbolo,
+            "option_symbol": option_symbol,
+            "side":          "sell_to_close",
+            "quantity":      str(contratos),
+            "type":          "limit",
+            "price":         str(round(precio_limit, 2)),
+            "duration":      "day",
+        }
+        r = requests.post(
+            f"{TRADIER_BASE}/accounts/{TRADIER_ACCOUNT}/orders",
+            headers=TRADIER_HEADERS,
+            data=payload,
+            timeout=10
+        )
+        data     = r.json()
+        orden_id = data.get("order", {}).get("id")
+        status   = data.get("order", {}).get("status", "unknown")
+        return {"ok": True, "id": orden_id, "status": status}
+    except Exception as e:
+        print(f"Error vender opcion Tradier: {e}")
+        return {"ok": False, "error": str(e)}
+
 def cerrar_posicion(pos_id, precio_cierre, motivo="panic"):
     """Cierra una posición y la mueve al historial."""
     global _portfolio
@@ -333,35 +397,63 @@ def cerrar_posicion(pos_id, precio_cierre, motivo="panic"):
     pos = next((p for p in _portfolio["posiciones"] if p["id"] == pos_id), None)
     if not pos:
         return None
+
+    # Duración abierta
+    try:
+        ts_in = datetime.fromisoformat(str(pos["ts_entrada"]).replace("Z",""))
+        if ts_in.tzinfo is None:
+            ts_in = EST.localize(ts_in)
+        ts_out = datetime.now(EST)
+        minutos_abierta = int((ts_out - ts_in).total_seconds() / 60)
+    except:
+        minutos_abierta = 0
+
+    contratos = pos.get("contratos", 1)
     pl_pct = round((precio_cierre - pos["precio_entrada"]) / pos["precio_entrada"] * 100, 2)
-    pl_usd = round((precio_cierre - pos["precio_entrada"]) * 100 * pos["contratos"], 2)
-    pos["precio_cierre"] = precio_cierre
-    pos["pl_pct"]        = pl_pct
-    pos["pl_usd"]        = pl_usd
-    pos["motivo_cierre"] = motivo
-    pos["ts_cierre"]     = datetime.now(EST).isoformat()
-    pos["estado"]        = "cerrada"
+    pl_usd = round((precio_cierre - pos["precio_entrada"]) * 100 * contratos, 2)
+    pos["precio_cierre"]   = precio_cierre
+    pos["pl_pct"]          = pl_pct
+    pos["pl_usd"]          = pl_usd
+    pos["motivo_cierre"]   = motivo
+    pos["ts_cierre"]       = datetime.now(EST).isoformat()
+    pos["minutos_abierta"] = minutos_abierta
+    pos["estado"]          = "cerrada"
+
     # Actualizar carril del Reto si aplica
     if pos.get("es_reto") and pos.get("carril_id"):
         for c in _portfolio["reto"]["carriles"]:
             if c["id"] == pos["carril_id"]:
-                c["capital"]  = round(c["capital"] + pl_usd, 2)
+                nuevo_capital = round(c["capital"] + pl_usd, 2)
+                c["capital"]  = nuevo_capital
                 c["posicion"] = None
                 c["historial"].append({
-                    "ronda":          c["ronda"],
-                    "pl_usd":         pl_usd,
-                    "capital_final":  c["capital"],
+                    "ronda":         c["ronda"],
+                    "pl_usd":        pl_usd,
+                    "pl_pct":        pl_pct,
+                    "capital_final": nuevo_capital,
+                    "motivo":        motivo,
                 })
+                # Eliminar carril si capital < $200
+                if nuevo_capital < 200:
+                    c["eliminado"] = True
+                    enviar_telegram(
+                        f"💀 <b>Carril #{c['id']} ELIMINADO</b>\n"
+                        f"Capital final: ${nuevo_capital:.2f} — por debajo del mínimo $200"
+                    )
                 break
+
     _portfolio["posiciones"] = [p for p in _portfolio["posiciones"] if p["id"] != pos_id]
     _portfolio["historial"].append(pos)
     guardar_portfolio()
+
     # Notificar Telegram
-    emoji = "✅" if pl_pct > 0 else "🔴"
+    emoji  = "✅" if pl_pct > 0 else "🔴"
+    t_str  = f"{minutos_abierta//60}h {minutos_abierta%60}m" if minutos_abierta >= 60 else f"{minutos_abierta}m"
     enviar_telegram(
-        f"{emoji} <b>Posición cerrada — {simbolo if (simbolo := pos['simbolo']) else ''}</b>\n"
+        f"{emoji} <b>Posición cerrada — {pos['simbolo']}</b>\n"
         f"<b>Motivo:</b> {motivo}\n"
         f"<b>{pos['tipo']} ${pos['strike']} exp {pos['expiration']}</b>\n"
+        f"<b>Contratos:</b> {contratos} | <b>Tiempo:</b> {t_str}\n"
         f"<b>P&L:</b> {'+' if pl_pct > 0 else ''}{pl_pct}% | ${'+' if pl_usd > 0 else ''}{pl_usd:.2f}\n"
         f"<b>Entrada:</b> ${pos['precio_entrada']:.2f} → <b>Cierre:</b> ${precio_cierre:.2f}"
     )
@@ -1701,8 +1793,167 @@ def tradier_test():
     return jsonify(resultados), 200
 
 # ═══════════════════════════════════════════════════════════
-# PORTFOLIO MANAGER — RUTAS
+# RETO MILLONARIO — HELPERS
 # ═══════════════════════════════════════════════════════════
+def buscar_opcion_reto(opcion_original, presupuesto):
+    """
+    Busca opción alternativa en ±5 strikes del strike original
+    que quepa en el presupuesto del carril (80% capital).
+    Devuelve la más cercana al strike original que quepa, o None.
+    """
+    try:
+        simbolo      = opcion_original["subyacente"]
+        tipo         = opcion_original["tipo"].lower()
+        strike_orig  = float(opcion_original["strike"])
+        vencimiento  = opcion_original["expiration"]
+        precio_max   = presupuesto / 100  # precio máximo por contrato
+
+        r = requests.get(
+            f"{TRADIER_BASE}/markets/options/chains",
+            headers=TRADIER_HEADERS,
+            params={"symbol": simbolo, "expiration": vencimiento, "greeks": "false"},
+            timeout=10
+        )
+        data    = r.json()
+        opciones = data.get("options", {}).get("option", [])
+        if not opciones:
+            return None
+
+        # Filtrar: tipo correcto, ±5 strikes, ask > 0 y dentro del presupuesto
+        candidatas = []
+        for o in opciones:
+            if o.get("option_type") != tipo:
+                continue
+            strike = float(o.get("strike", 0))
+            ask    = float(o.get("ask", 0))
+            if ask <= 0:
+                continue
+            if abs(strike - strike_orig) > 5:
+                continue
+            if ask <= precio_max:
+                candidatas.append(o)
+
+        if not candidatas:
+            return None
+
+        # La más cercana al strike original
+        mejor = min(candidatas, key=lambda o: abs(float(o.get("strike", 0)) - strike_orig))
+        return {
+            "symbol":      mejor.get("symbol"),
+            "strike":      float(mejor.get("strike", 0)),
+            "expiration":  vencimiento,
+            "tipo":        tipo.upper(),
+            "ask":         float(mejor.get("ask", 0)),
+            "bid":         float(mejor.get("bid", 0)),
+            "subyacente":  simbolo,
+        }
+    except Exception as e:
+        print(f"Error buscar_opcion_reto: {e}")
+        return None
+
+def ejecutar_orden_tradier_contratos(opcion, contratos):
+    """Ejecuta compra de N contratos + GTC al doble en Tradier sandbox."""
+    try:
+        payload_compra = {
+            "class":         "option",
+            "symbol":        opcion["subyacente"],
+            "option_symbol": opcion["symbol"],
+            "side":          "buy_to_open",
+            "quantity":      str(contratos),
+            "type":          "market",
+            "duration":      "day",
+        }
+        r = requests.post(
+            f"{TRADIER_BASE}/accounts/{TRADIER_ACCOUNT}/orders",
+            headers=TRADIER_HEADERS,
+            data=payload_compra,
+            timeout=10
+        )
+        data     = r.json()
+        orden_id = data.get("order", {}).get("id")
+        status   = data.get("order", {}).get("status", "unknown")
+
+        precio_venta = round(opcion["ask"] * 2, 2)
+        payload_venta = {
+            "class":         "option",
+            "symbol":        opcion["subyacente"],
+            "option_symbol": opcion["symbol"],
+            "side":          "sell_to_close",
+            "quantity":      str(contratos),
+            "type":          "limit",
+            "price":         str(precio_venta),
+            "duration":      "gtc",
+        }
+        r2 = requests.post(
+            f"{TRADIER_BASE}/accounts/{TRADIER_ACCOUNT}/orders",
+            headers=TRADIER_HEADERS,
+            data=payload_venta,
+            timeout=10
+        )
+        data2         = r2.json()
+        orden_venta_id = data2.get("order", {}).get("id")
+        return {
+            "ok":           True,
+            "id":           orden_id,
+            "status":       status,
+            "venta_id":     orden_venta_id,
+            "precio_venta": precio_venta,
+        }
+    except Exception as e:
+        print(f"Error ejecutar_orden_tradier_contratos: {e}")
+        return {"ok": False, "error": str(e)}
+
+def recomendar_opcion_claude(opcion_original, capital_carril, presupuesto):
+    """Llama a Claude cuando no hay opción en ±5 strikes que quepa en el presupuesto."""
+    if not ANTHROPIC_API_KEY:
+        return "API key Anthropic no configurada."
+    try:
+        prompt = (
+            f"Eres el analista del sistema AXIS de trading de opciones.\n"
+            f"El Reto Millonario tiene un carril con capital ${capital_carril:.2f} "
+            f"(presupuesto disponible ${presupuesto:.2f} = 80%).\n"
+            f"La señal original recomienda: {opcion_original['tipo']} {opcion_original['subyacente']} "
+            f"strike ${opcion_original['strike']:.0f} exp {opcion_original['expiration']} "
+            f"ask ${opcion_original['ask']:.2f} (costo ${opcion_original['ask']*100:.2f}).\n"
+            f"No hay opciones disponibles en ±5 strikes que quepan en el presupuesto.\n"
+            f"Da una recomendación concreta en máximo 3 líneas: qué hacer con este carril "
+            f"(esperar, buscar vencimiento más corto, ajustar strike más alejado). "
+            f"Sin markdown, en español."
+        )
+        r = requests.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={
+                "x-api-key":         ANTHROPIC_API_KEY,
+                "anthropic-version": "2023-06-01",
+                "content-type":      "application/json",
+            },
+            json={
+                "model":    "claude-sonnet-4-5",
+                "max_tokens": 150,
+                "messages": [{"role": "user", "content": prompt}],
+            },
+            timeout=15
+        )
+        data = r.json()
+        if r.status_code == 200:
+            return data["content"][0]["text"]
+        return "No se pudo obtener recomendación de Claude."
+    except Exception as e:
+        return f"Error Claude: {str(e)}"
+
+# ═══════════════════════════════════════════════════════════
+# PORTFOLIO RESET — limpia posiciones para empezar de cero
+# GET /portfolio/reset
+# ═══════════════════════════════════════════════════════════
+@app.route("/portfolio/reset", methods=["GET"])
+def portfolio_reset():
+    """Resetea portfolio a cero — solo usar en desarrollo/pruebas."""
+    global _portfolio
+    _portfolio = portfolio_vacio()
+    guardar_portfolio()
+    enviar_telegram("🔄 <b>Portfolio reseteado</b> — todas las posiciones eliminadas")
+    return jsonify({"ok": True, "mensaje": "Portfolio reseteado a cero"}), 200
+
 @app.route("/portfolio", methods=["GET"])
 def serve_portfolio():
     from flask import Response
@@ -1717,37 +1968,54 @@ def portfolio_data():
     global _portfolio
     if _portfolio is None:
         cargar_portfolio()
-    # Enriquecer con precio actual de Tradier
-    posiciones = []
-    for pos in _portfolio["posiciones"]:
-        p = dict(pos)
-        try:
-            precio_actual = get_precio_tradier(pos["simbolo"])
-            if precio_actual and pos["precio_entrada"] > 0:
-                # Para opciones estimamos precio actual como % del movimiento del subyacente
-                p["precio_actual"] = precio_actual
-                # P&L estimado basado en precio ask de entrada
-                p["pl_pct"] = None  # Se calculará en el frontend con datos reales
-        except:
-            p["precio_actual"] = None
-        posiciones.append(p)
     return jsonify({
-        "posiciones": posiciones,
-        "historial":  _portfolio["historial"][-20:],  # últimas 20 cerradas
+        "posiciones": _portfolio["posiciones"],
+        "historial":  _portfolio["historial"][-20:],
         "reto":       _portfolio["reto"],
     }), 200
 
 @app.route("/portfolio/cerrar", methods=["GET", "POST"])
 def portfolio_cerrar():
-    pos_id       = request.args.get("id") or (request.get_json(silent=True) or {}).get("id")
-    precio_cierre = float(request.args.get("precio", 0) or (request.get_json(silent=True) or {}).get("precio", 0))
-    motivo       = request.args.get("motivo", "panic")
+    """Panic Button — vende al bid en Tradier, cancela GTC, cierra en portfolio."""
+    global _portfolio
+    if _portfolio is None:
+        cargar_portfolio()
+    pos_id = request.args.get("id") or (request.get_json(silent=True) or {}).get("id")
+    motivo = request.args.get("motivo", "panic")
     if not pos_id:
         return jsonify({"error": "id requerido"}), 400
-    pos = cerrar_posicion(pos_id, precio_cierre, motivo)
+
+    pos = next((p for p in _portfolio["posiciones"] if p["id"] == pos_id), None)
     if not pos:
         return jsonify({"error": "Posición no encontrada"}), 404
-    return jsonify({"ok": True, "posicion": pos}), 200
+
+    # 1 — Obtener bid actual de la opción en Tradier
+    bid = get_bid_opcion_tradier(pos["option_symbol"])
+    precio_cierre = bid if bid else 0.01  # fallback mínimo si no hay bid
+
+    # 2 — Cancelar orden GTC activa en Tradier
+    if pos.get("tradier_gtc_id"):
+        cancelar_orden_tradier(pos["tradier_gtc_id"])
+
+    # 3 — Colocar venta limit al bid en Tradier
+    if bid and bid > 0:
+        vender_opcion_tradier(
+            pos["option_symbol"],
+            pos["simbolo"],
+            pos.get("contratos", 1),
+            bid
+        )
+
+    # 4 — Registrar cierre en portfolio
+    pos_cerrada = cerrar_posicion(pos_id, precio_cierre, motivo)
+    if not pos_cerrada:
+        return jsonify({"error": "Error cerrando posición"}), 500
+
+    return jsonify({
+        "ok":          True,
+        "bid_usado":   precio_cierre,
+        "posicion":    pos_cerrada,
+    }), 200
 
 @app.route("/portfolio/claude", methods=["GET"])
 def portfolio_claude():
@@ -1870,16 +2138,23 @@ def telegram_webhook():
             if not datos:
                 editar_mensaje("⚠️ <b>Orden expirada o ya procesada.</b>")
                 return jsonify({"ok": True}), 200
-            opcion   = datos["opcion"]
+            opcion     = datos["opcion"]
             estrategia = datos.get("estrategia", "AXIS")
-            # Registrar en portfolio con precio ask como precio entrada
-            registrar_posicion(opcion, estrategia, opcion["subyacente"], opcion["ask"])
+            # Ejecutar en Tradier sandbox
+            resultado_tradier = ejecutar_orden_tradier(opcion)
+            tradier_orden_id = resultado_tradier.get("id") if resultado_tradier["ok"] else None
+            tradier_gtc_id   = resultado_tradier.get("venta_id") if resultado_tradier["ok"] else None
+            registrar_posicion(opcion, estrategia, opcion["subyacente"], opcion["ask"],
+                               tradier_orden_id=tradier_orden_id, tradier_gtc_id=tradier_gtc_id)
+            estado_tradier = "✅ Orden enviada a sandbox" if resultado_tradier["ok"] else f"⚠️ Error Tradier: {resultado_tradier.get('error','')}"
             agregar_recibo(
                 f"━━━━━━━━━━━━━━━━━━\n"
                 f"✅ <b>EJECUTADA</b> — registrada en Portfolio\n"
-                f"📈 <b>Objetivo GTC:</b> ${opcion['ask']*2:.2f} (+100%)"
+                f"📋 <b>Opción:</b> {opcion['symbol']}\n"
+                f"💰 <b>Costo:</b> ${opcion['ask']*100:.2f} | <b>GTC:</b> ${opcion['ask']*2:.2f}\n"
+                f"🏦 <b>Tradier:</b> {estado_tradier}"
             )
-            print(f"Posición registrada en portfolio — {opcion['subyacente']} {opcion['tipo']} ${opcion['strike']}")
+            print(f"Posición registrada — {opcion['subyacente']} {opcion['tipo']} ${opcion['strike']} | Tradier: {resultado_tradier['ok']}")
 
         elif accion == "reto":
             carril_id = carril_id_reto or 1
@@ -1889,13 +2164,49 @@ def telegram_webhook():
                 return jsonify({"ok": True}), 200
             opcion     = datos["opcion"]
             estrategia = datos.get("estrategia", "AXIS")
-            registrar_posicion(opcion, estrategia, opcion["subyacente"], opcion["ask"], es_reto=True, carril_id=carril_id)
+            # Verificar capital del carril
+            carril = next((c for c in _portfolio["reto"]["carriles"] if c["id"] == carril_id), None)
+            if not carril or carril.get("eliminado"):
+                agregar_recibo(f"━━━━━━━━━━━━━━━━━━\n⚠️ <b>Carril #{carril_id} no disponible</b>")
+                return jsonify({"ok": True}), 200
+            presupuesto   = round(carril["capital"] * 0.80, 2)  # 80% del capital
+            costo_1cont   = round(opcion["ask"] * 100, 2)
+            if costo_1cont > presupuesto:
+                # Capital insuficiente — buscar opción alternativa en ±5 strikes
+                opcion_reto = buscar_opcion_reto(opcion, presupuesto)
+                if not opcion_reto:
+                    # Llamar Claude para recomendación
+                    rec_claude = recomendar_opcion_claude(opcion, carril["capital"], presupuesto)
+                    agregar_recibo(
+                        f"━━━━━━━━━━━━━━━━━━\n"
+                        f"⚠️ <b>Capital insuficiente — Carril #{carril_id}</b>\n"
+                        f"Capital: ${carril['capital']:.2f} | Presupuesto: ${presupuesto:.2f}\n"
+                        f"Costo opción original: ${costo_1cont:.2f}\n\n"
+                        f"🤖 <b>Claude recomienda:</b>\n{rec_claude}"
+                    )
+                    return jsonify({"ok": True}), 200
+                opcion = opcion_reto
+                costo_1cont = round(opcion["ask"] * 100, 2)
+            contratos = max(1, int(presupuesto // costo_1cont))
+            # Ejecutar en Tradier sandbox
+            resultado_tradier = ejecutar_orden_tradier_contratos(opcion, contratos)
+            tradier_orden_id = resultado_tradier.get("id") if resultado_tradier["ok"] else None
+            tradier_gtc_id   = resultado_tradier.get("venta_id") if resultado_tradier["ok"] else None
+            costo_total = round(opcion["ask"] * 100 * contratos, 2)
+            registrar_posicion(opcion, estrategia, opcion["subyacente"], opcion["ask"],
+                               es_reto=True, carril_id=carril_id, contratos=contratos,
+                               tradier_orden_id=tradier_orden_id, tradier_gtc_id=tradier_gtc_id)
+            estado_tradier = "✅ Orden enviada a sandbox" if resultado_tradier["ok"] else f"⚠️ Error Tradier: {resultado_tradier.get('error','')}"
             agregar_recibo(
                 f"━━━━━━━━━━━━━━━━━━\n"
-                f"🏆 <b>EJECUTADA en RETO — Carril #{carril_id}</b>\n"
-                f"📈 <b>Objetivo GTC:</b> ${opcion['ask']*2:.2f} (+100%)"
+                f"🏆 <b>RETO C{carril_id} — EJECUTADO</b>\n"
+                f"📋 <b>Opción:</b> {opcion['symbol']}\n"
+                f"📊 <b>Contratos:</b> {contratos} × ${opcion['ask']:.2f} = ${costo_total:.2f}\n"
+                f"💰 <b>Capital restante:</b> ${carril['capital'] - costo_total:.2f}\n"
+                f"🎯 <b>GTC:</b> ${opcion['ask']*2:.2f} (+100%)\n"
+                f"🏦 <b>Tradier:</b> {estado_tradier}"
             )
-            print(f"Posición RETO registrada — Carril {carril_id} | {opcion['subyacente']} {opcion['tipo']} ${opcion['strike']}")
+            print(f"RETO C{carril_id} — {contratos} contratos {opcion['subyacente']} {opcion['tipo']} ${opcion['strike']}")
 
         elif accion == "skip":
             ordenes_pendientes.pop(orden_id, None)
