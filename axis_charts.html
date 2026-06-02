@@ -30,7 +30,7 @@
   .logo { font-family:var(--disp); font-size:24px; letter-spacing:3px; color:var(--accent); line-height:1; }
   .logo small { display:block; font-family:var(--mono); font-size:10px; color:var(--dim); letter-spacing:1px; }
 
-  .tabs { display:flex; gap:4px; }
+  .tabs { display:flex; gap:4px; flex-wrap:wrap; }
   .tab {
     padding:5px 14px; border:1px solid var(--border); background:transparent;
     color:var(--dim); font-family:var(--mono); font-size:12px; font-weight:600;
@@ -152,18 +152,26 @@
 <body>
 
 <header>
-  <div class="logo">AXIS<small>CHARTS v1.2.9 — SEÑALES</small></div>
+  <div class="logo">AXIS<small>CHARTS v1.3.0 — SEÑALES</small></div>
   <div class="tabs">
     <button class="tab on"  onclick="cambiar('SPY')">SPY</button>
     <button class="tab"     onclick="cambiar('AAPL')">AAPL</button>
     <button class="tab"     onclick="cambiar('BA')">BA</button>
     <button class="tab"     onclick="cambiar('GLD')">GLD</button>
+    <button class="tab"     onclick="cambiar('NVDA')">NVDA</button>
+    <button class="tab"     onclick="cambiar('AMZN')">AMZN</button>
+    <button class="tab"     onclick="cambiar('GOOG')">GOOG</button>
+    <button class="tab"     onclick="cambiar('META')">META</button>
   </div>
   <div class="price-box">
     <span id="reloj" style="font-size:11px;font-weight:600;color:var(--dim);letter-spacing:1px;margin-right:12px;font-family:'JetBrains Mono',monospace;"></span>
     <span id="activo-label" style="font-size:15px;font-weight:700;color:var(--dim);letter-spacing:2px;margin-right:4px;">SPY</span>
     <span class="pval" id="pval">—</span>
     <span class="pchg" id="pchg"></span>
+  </div>
+  <div style="display:flex;gap:8px;margin-left:auto;flex-shrink:0;">
+    <a href="/" style="padding:5px 12px;border:1px solid var(--border);border-radius:6px;color:var(--dim);font-size:11px;text-decoration:none;letter-spacing:1px;" onmouseover="this.style.borderColor='var(--accent)';this.style.color='var(--text)'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--dim)'">⌂ HOME</a>
+    <a href="/portfolio" style="padding:5px 12px;border:1px solid var(--border);border-radius:6px;color:var(--dim);font-size:11px;text-decoration:none;letter-spacing:1px;" onmouseover="this.style.borderColor='#ffd700';this.style.color='var(--text)'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--dim)'">🏆 PORTFOLIO</a>
   </div>
 </header>
 
@@ -252,7 +260,7 @@
 // CONFIG
 // ═══════════════════════════════════════
 const RAILWAY = 'https://web-production-bf9d0.up.railway.app';
-const ACTIVOS = ['SPY','AAPL','BA','GLD'];
+const ACTIVOS = ['SPY','AAPL','BA','GLD','NVDA','AMZN','GOOG','META'];
 
 // Colores
 const C = {

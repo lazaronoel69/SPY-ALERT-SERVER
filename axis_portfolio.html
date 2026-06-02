@@ -309,7 +309,11 @@
 <div class="header">
   <div class="logo">AXIS<span>PORTFOLIO</span></div>
   <div class="clock" id="clock">--:--:-- EST</div>
-  <button class="refresh-btn" onclick="cargarDatos()">↻ Refresh</button>
+  <div style="display:flex;gap:8px;align-items:center;">
+    <a href="/" style="background:var(--bg3);border:1px solid var(--border);color:var(--muted);padding:5px 12px;border-radius:6px;font-size:11px;text-decoration:none;letter-spacing:1px;">⌂ HOME</a>
+    <a href="/charts" style="background:var(--bg3);border:1px solid var(--border);color:var(--muted);padding:5px 12px;border-radius:6px;font-size:11px;text-decoration:none;letter-spacing:1px;">📊 CHARTS</a>
+    <button class="refresh-btn" onclick="cargarDatos()">↻ Refresh</button>
+  </div>
 </div>
 
 <!-- PANEL ANTHROPIC -->
