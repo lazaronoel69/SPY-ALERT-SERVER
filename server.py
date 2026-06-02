@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v8.45
+AXIS Breakout Sentinel v8.46
 Estrategias: 1VR | 1VR+ | RPG | GNA | GBA | RCB/CNF
 Multi-activo: SPY, AAPL, BA, GLD
 v8.43: Portfolio fix — ejecutar_orden_tradier en webhook exec/reto | Panic Button al bid |
        Reto con capital 80% + ±5 strikes + Claude fallback | Reset route | Sin precios live
 v8.44: Persistencia ordenes_pendientes en /data/axis_ordenes.json — sobrevive reinicios Railway
 v8.45: get_velas — rango único 40 días hábiles, elimina HTTP 400 en rangos viejos
+v8.46: Expand ACTIVOS (NVDA,AMZN,GOOG,META) | V7 SPY 4:14/4:16 | Polling GTC+vencimiento | Landing page
 Auto-P2 | Apagado automatico si nuevo P2 >= P1
 Fix v8.2: 1VR envia alerta durante reconstruccion antes de marcar vr1_fired
 v8.3: 1VR+
@@ -177,8 +178,10 @@ def loop_limpiar_ordenes():
         except Exception as e:
             print(f"Error loop_limpiar_ordenes: {e}")
 
-ACTIVOS          = ["SPY", "AAPL", "BA", "GLD"]
+ACTIVOS          = ["SPY", "AAPL", "BA", "GLD", "NVDA", "AMZN", "GOOG", "META"]
 HORAS_REPORTE    = [10, 11, 12, 13, 14, 15, 16]
+# SPY cierra 4:15 PM EST — excepción única
+ACTIVOS_SPY      = ["SPY"]
 SISTEMA_ACTIVO   = True
 
 # Switches estrategias globales
@@ -518,15 +521,9 @@ def cerrar_posicion(pos_id, precio_cierre, motivo="panic"):
     return pos
 
 CANALES_DEFAULT = {
-    "SPY": {
-        "on": True, "apagado": False, "v1_candidato": None,
-        "p1": {"fecha": "2026-05-14", "hora_est": 15, "high": 748.69},
-        "p2": {"fecha": "2026-05-15", "hora_est": 14, "high": 743.46},
-        "p2_actual_high": 743.46,
-        "p2_actual_ts": "2026-05-15T14:00:00",
-        "p3": None,
-    },
-    "GLD": {
+    "SPY":  {"on": False, "apagado": False, "p1": None, "p2": None, "p3": None,
+             "p2_actual_high": None, "p2_actual_ts": None, "v1_candidato": None},
+    "GLD":  {
         "on": True, "apagado": False, "v1_candidato": None,
         "p1": {"fecha": "2026-04-17", "hora_est": 10, "high": 448.70},
         "p2": {"fecha": "2026-05-07", "hora_est": 11, "high": 437.42},
@@ -537,6 +534,14 @@ CANALES_DEFAULT = {
     "AAPL": {"on": False, "apagado": False, "p1": None, "p2": None, "p3": None,
              "p2_actual_high": None, "p2_actual_ts": None, "v1_candidato": None},
     "BA":   {"on": False, "apagado": False, "p1": None, "p2": None, "p3": None,
+             "p2_actual_high": None, "p2_actual_ts": None, "v1_candidato": None},
+    "NVDA": {"on": False, "apagado": False, "p1": None, "p2": None, "p3": None,
+             "p2_actual_high": None, "p2_actual_ts": None, "v1_candidato": None},
+    "AMZN": {"on": False, "apagado": False, "p1": None, "p2": None, "p3": None,
+             "p2_actual_high": None, "p2_actual_ts": None, "v1_candidato": None},
+    "GOOG": {"on": False, "apagado": False, "p1": None, "p2": None, "p3": None,
+             "p2_actual_high": None, "p2_actual_ts": None, "v1_candidato": None},
+    "META": {"on": False, "apagado": False, "p1": None, "p2": None, "p3": None,
              "p2_actual_high": None, "p2_actual_ts": None, "v1_candidato": None},
 }
 
@@ -1619,7 +1624,7 @@ def reporte_horario():
 # LOOP PRINCIPAL
 # ═══════════════════════════════════════════════════════════
 def monitor_loop():
-    print("AXIS Breakout Sentinel v8.45 iniciado...")
+    print("AXIS Breakout Sentinel v8.46 iniciado...")
     while True:
         ahora = datetime.now(EST)
         mins  = ahora.hour * 60 + ahora.minute
@@ -1644,27 +1649,94 @@ def monitor_loop():
 # RUTAS FLASK
 # ═══════════════════════════════════════════════════════════
 @app.route("/", methods=["GET"])
-def home():
-    ahora = datetime.now(EST)
-    canales = {}
+@app.route("/", defaults={"path": ""}, methods=["GET"])
+def home(path=""):
+    ahora   = datetime.now(EST)
+    mercado = es_dia_mercado(ahora)
+    pos_count = len(_portfolio["posiciones"]) if _portfolio else 0
+    activos_str = " | ".join(ACTIVOS)
+    canales_html = ""
     for a in ACTIVOS:
         c = canal[a]
-        canales[a] = {
-            "on":      c["on"],
-            "apagado": c["apagado"],
-            "p1":      c["p1"]["high"] if c["p1"] else None,
-            "p2":      c["p2_actual_high"],
-            "tipo":    "RCB" if c["p3"] else "CNF" if c["on"] else "OFF",
-        }
-    return jsonify({
-        "sistema":     "AXIS Breakout Sentinel v8.45",
-        "estado":      "activo" if SISTEMA_ACTIVO else "apagado",
-        "hora_est":    ahora.strftime("%A %H:%M EST"),
-        "mercado":     "abierto" if es_dia_mercado(ahora) else "cerrado",
-        "estrategias": {"1VR": VR1_ON, "RPG": RPG_ON, "GNA": GNA_ON, "GBA": GBA_ON},
-        "canales":     canales,
-        "estado_dia":  {a: estado_dia[a] for a in ACTIVOS},
-    }), 200
+        tipo  = "RCB" if (c["on"] and c["p3"]) else "CNF" if c["on"] else "—"
+        color = "#00e676" if c["on"] and not c["apagado"] else "#666688"
+        canales_html += f'<div class="canal-item"><span style="color:{color}">●</span> {a} <span style="color:#666688">{tipo}</span></div>'
+    html = f"""<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AXIS Trading System</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Space+Grotesk:wght@300;400;600;700&display=swap" rel="stylesheet">
+<style>
+  * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+  body {{ background: #0a0a0f; color: #e8e8f0; font-family: 'Space Grotesk', sans-serif;
+         min-height: 100vh; display: flex; flex-direction: column; align-items: center;
+         justify-content: center; padding: 24px; }}
+  .logo {{ font-family: 'JetBrains Mono', monospace; font-size: 48px; font-weight: 700;
+           letter-spacing: -2px; margin-bottom: 6px; }}
+  .logo span {{ color: #4fc3f7; }}
+  .tagline {{ color: #666688; font-size: 14px; margin-bottom: 40px; letter-spacing: 2px;
+              text-transform: uppercase; }}
+  .status-bar {{ display: flex; gap: 20px; margin-bottom: 40px; flex-wrap: wrap;
+                 justify-content: center; }}
+  .status-pill {{ background: #111118; border: 1px solid #2a2a3a; border-radius: 20px;
+                  padding: 6px 16px; font-family: 'JetBrains Mono', monospace;
+                  font-size: 12px; }}
+  .mercado-on  {{ border-color: #00e676; color: #00e676; }}
+  .mercado-off {{ border-color: #666688; color: #666688; }}
+  .nav-grid {{ display: grid; grid-template-columns: 1fr 1fr; gap: 16px;
+               width: 100%; max-width: 560px; margin-bottom: 40px; }}
+  .nav-card {{ background: #111118; border: 1px solid #2a2a3a; border-radius: 16px;
+               padding: 28px; text-decoration: none; color: #e8e8f0;
+               transition: all 0.2s; text-align: center; }}
+  .nav-card:hover {{ border-color: #4fc3f7; transform: translateY(-2px); }}
+  .nav-card .icon {{ font-size: 36px; margin-bottom: 12px; }}
+  .nav-card .title {{ font-size: 18px; font-weight: 700; margin-bottom: 4px; }}
+  .nav-card .desc {{ font-size: 12px; color: #666688; }}
+  .nav-card.portfolio {{ border-color: #3d3000; }}
+  .nav-card.portfolio:hover {{ border-color: #ffd700; }}
+  .canales-grid {{ display: flex; flex-wrap: wrap; gap: 12px; justify-content: center;
+                   max-width: 560px; }}
+  .canal-item {{ background: #111118; border: 1px solid #2a2a3a; border-radius: 8px;
+                 padding: 6px 14px; font-family: 'JetBrains Mono', monospace; font-size: 12px; }}
+  .footer {{ margin-top: 40px; font-size: 11px; color: #444; font-family: 'JetBrains Mono', monospace; }}
+  .badge {{ background: #1a1a24; border: 1px solid #2a2a3a; border-radius: 12px;
+            padding: 2px 10px; font-size: 11px; color: #666688; margin-left: 6px; }}
+  @media (max-width: 480px) {{ .nav-grid {{ grid-template-columns: 1fr; }} }}
+</style>
+</head>
+<body>
+  <div class="logo">AX<span>IS</span></div>
+  <div class="tagline">Automated Options Trading System</div>
+  <div class="status-bar">
+    <div class="status-pill {'mercado-on' if mercado else 'mercado-off'}">
+      {'● MERCADO ABIERTO' if mercado else '○ MERCADO CERRADO'}
+    </div>
+    <div class="status-pill">{ahora.strftime('%H:%M EST')}</div>
+    <div class="status-pill">{pos_count} posición{'es' if pos_count != 1 else ''} abierta{'s' if pos_count != 1 else ''}</div>
+    <div class="status-pill">v8.46 · {len(ACTIVOS)} activos</div>
+  </div>
+  <div class="nav-grid">
+    <a href="/charts" class="nav-card">
+      <div class="icon">📊</div>
+      <div class="title">AXIS Charts</div>
+      <div class="desc">Gráficas · Señales · Canales · SMAs</div>
+    </a>
+    <a href="/portfolio" class="nav-card portfolio">
+      <div class="icon">🏆</div>
+      <div class="title">Portfolio</div>
+      <div class="desc">Posiciones · Reto Millonario · P&L</div>
+    </a>
+  </div>
+  <div class="canales-grid">
+    {canales_html}
+  </div>
+  <div class="footer">AXIS Breakout Sentinel v8.46 · {activos_str}</div>
+</body>
+</html>"""
+    from flask import Response
+    return Response(html, mimetype="text/html")
 
 @app.route("/test", methods=["GET"])
 def test():
@@ -1680,7 +1752,7 @@ def test():
         else:
             lineas_canal.append(f"  {a}: OFF")
     enviar_telegram(
-        f"✅ <b>AXIS Breakout Sentinel v8.45</b>\n"
+        f"✅ <b>AXIS Breakout Sentinel v8.46</b>\n"
         f"<b>Hora:</b> {ahora.strftime('%A %d/%m/%Y %H:%M EST')}\n"
         f"<b>Mercado:</b> {'Abierto' if es_dia_mercado(ahora) else 'Cerrado'}\n"
         f"<b>1VR:</b> {'ON' if VR1_ON else 'OFF'} | "
@@ -2517,27 +2589,88 @@ def verificar_velas():
 #   4:00 EST → lee cierre real → corrige v7_close interno → sin alerta
 # SPY no aplica — sigue evaluandose en monitor_loop a las 4:01 EST
 # ═══════════════════════════════════════════════════════════
-ACTIVOS_V7_ANTICIPADA = ["AAPL", "BA", "GLD"]
+ACTIVOS_V7_ANTICIPADA     = ["AAPL", "BA", "GLD", "NVDA", "AMZN", "GOOG", "META"]
+ACTIVOS_V7_ANTICIPADA_SPY = ["SPY"]
+
+def loop_v7_anticipada():
+    """
+    Thread independiente que vigila horarios V7 para todos los activos.
+    - AAPL/BA/GLD/NVDA/AMZN/GOOG/META: evalúa 3:58 EST, corrige 4:00 EST
+    - SPY: evalúa 4:14 EST, corrige 4:16 EST (cierra 4:15 PM)
+    """
+    print("Thread V7 anticipada iniciado...")
+    ejecutado_358  = set()
+    ejecutado_400  = set()
+    ejecutado_414  = set()
+    ejecutado_416  = set()
+    fecha_actual   = None
+
+    while True:
+        try:
+            ahora     = datetime.now(EST)
+            fecha_hoy = ahora.strftime("%Y-%m-%d")
+
+            # Reset diario
+            if fecha_hoy != fecha_actual:
+                fecha_actual  = fecha_hoy
+                ejecutado_358 = set()
+                ejecutado_400 = set()
+                ejecutado_414 = set()
+                ejecutado_416 = set()
+
+            if es_dia_mercado(ahora):
+                # 3:58 EST — V7 anticipada AAPL/BA/GLD/NVDA/AMZN/GOOG/META + HED
+                if ahora.hour == 15 and ahora.minute == 58:
+                    for simbolo in ACTIVOS_V7_ANTICIPADA:
+                        if simbolo not in ejecutado_358:
+                            evaluar_v7_anticipada(simbolo)
+                            evaluar_hed(simbolo)
+                            ejecutado_358.add(simbolo)
+
+                # 4:00 EST — correccion cierre real AAPL/BA/GLD/NVDA/AMZN/GOOG/META
+                if ahora.hour == 16 and ahora.minute == 0:
+                    for simbolo in ACTIVOS_V7_ANTICIPADA:
+                        if simbolo not in ejecutado_400:
+                            corregir_cierre_v7(simbolo)
+                            ejecutado_400.add(simbolo)
+
+                # 4:14 EST — V7 anticipada SPY + HED
+                if ahora.hour == 16 and ahora.minute == 14:
+                    for simbolo in ACTIVOS_V7_ANTICIPADA_SPY:
+                        if simbolo not in ejecutado_414:
+                            evaluar_v7_anticipada(simbolo)
+                            evaluar_hed(simbolo)
+                            ejecutado_414.add(simbolo)
+
+                # 4:16 EST — correccion cierre real SPY
+                if ahora.hour == 16 and ahora.minute == 16:
+                    for simbolo in ACTIVOS_V7_ANTICIPADA_SPY:
+                        if simbolo not in ejecutado_416:
+                            corregir_cierre_v7(simbolo)
+                            ejecutado_416.add(simbolo)
+
+            time.sleep(30)
+        except Exception as e:
+            print(f"Error loop V7 anticipada: {e}")
+            time.sleep(30)
 
 def evaluar_v7_anticipada(simbolo):
-    """Evalua V7 a las 3:58 EST para activos que cierran a las 4:00 EST."""
+    """Evalua V7 anticipada para activos no-SPY (3:58) y SPY (4:14)."""
     ahora = datetime.now(EST)
     print(f"V7 anticipada {simbolo} — {ahora.strftime('%H:%M EST')}")
     try:
         velas = get_velas(simbolo, outputsize=50)
         if velas:
-            evaluar_activo(simbolo, velas, ahora.replace(hour=16, minute=1))
+            # SPY usa hora 16:15 (4:15 cierre), resto 16:01
+            hora_eval = 16
+            evaluar_activo(simbolo, velas, ahora.replace(hour=hora_eval, minute=1))
         else:
-            print(f"V7 anticipada {simbolo}: sin datos TwelveData")
+            print(f"V7 anticipada {simbolo}: sin datos")
     except Exception as e:
         print(f"Error V7 anticipada {simbolo}: {e}")
 
 def corregir_cierre_v7(simbolo):
-    """
-    A las 4:00 EST lee el cierre real y corrige v7_close interno.
-    Sin alerta — solo actualiza el estado para que el sistema
-    tenga el dato correcto si lo necesita en sesiones futuras.
-    """
+    """Lee el cierre real de V7 y actualiza v7_ayer_close para mañana. Sin alerta."""
     print(f"Correccion cierre V7 {simbolo} — {datetime.now(EST).strftime('%H:%M EST')}")
     try:
         velas = get_velas(simbolo, outputsize=10)
@@ -2548,7 +2681,6 @@ def corregir_cierre_v7(simbolo):
             dt_str = v["datetime"]
             if dt_str.startswith(fecha_hoy) and int(dt_str[11:13]) == 15:
                 cierre_real = float(v["close"])
-                # Actualizar v7_ayer_close para que mañana lo use correctamente
                 estado_dia[simbolo]["v7_ayer_close"] = cierre_real
                 print(f"Correccion V7 {simbolo}: cierre real ${cierre_real:.2f} registrado")
                 return
@@ -3388,16 +3520,95 @@ def canal_lineas():
     }), 200
 
 # ═══════════════════════════════════════════════════════════
-# ARRANQUE
+# POLLING GTC Y VENCIMIENTO
+# Cada 5 min revisa posiciones abiertas:
+# - Si la orden GTC se ejecutó en Tradier → cierra posición como "gtc"
+# - Si la opción venció → cierra posición como "vencimiento"
 # ═══════════════════════════════════════════════════════════
+def get_estado_orden_tradier(orden_id):
+    """Consulta estado de una orden en Tradier sandbox."""
+    try:
+        r = requests.get(
+            f"{TRADIER_BASE}/accounts/{TRADIER_ACCOUNT}/orders/{orden_id}",
+            headers=TRADIER_HEADERS,
+            timeout=10
+        )
+        if r.status_code != 200:
+            return None
+        data = r.json()
+        orden = data.get("order", {})
+        return {
+            "status":       orden.get("status"),
+            "avg_fill_price": float(orden.get("avg_fill_price", 0) or 0),
+        }
+    except Exception as e:
+        print(f"Error estado orden {orden_id}: {e}")
+        return None
+
+def loop_polling_posiciones():
+    """
+    Thread que cada 5 min revisa posiciones abiertas.
+    Detecta GTC ejecutado y vencimientos.
+    Solo activo en horario de mercado.
+    """
+    print("Thread polling posiciones iniciado...")
+    while True:
+        try:
+            time.sleep(300)  # cada 5 minutos
+            ahora = datetime.now(EST)
+            if not es_dia_mercado(ahora):
+                continue
+            mins = ahora.hour * 60 + ahora.minute
+            if not (570 <= mins <= 1020):  # 9:30 — 5:00 PM
+                continue
+            if _portfolio is None:
+                continue
+
+            from datetime import date as date_cls
+            hoy = date_cls.today()
+            posiciones = list(_portfolio["posiciones"])
+
+            for pos in posiciones:
+                pos_id = pos["id"]
+
+                # 1 — Vencimiento: si expiration <= hoy → cerrar como vencimiento
+                try:
+                    exp = date_cls.fromisoformat(pos["expiration"])
+                    if exp < hoy:
+                        print(f"Posición {pos_id} vencida — {pos['option_symbol']}")
+                        cerrar_posicion(pos_id, 0.0, "vencimiento")
+                        continue
+                except Exception as e:
+                    print(f"Error check vencimiento {pos_id}: {e}")
+
+                # 2 — GTC: si hay orden GTC y su estado es "filled" → cerrar
+                gtc_id = pos.get("tradier_gtc_id")
+                if not gtc_id:
+                    continue
+                try:
+                    estado = get_estado_orden_tradier(gtc_id)
+                    if not estado:
+                        continue
+                    if estado["status"] == "filled" and estado["avg_fill_price"] > 0:
+                        precio_gtc = estado["avg_fill_price"]
+                        print(f"GTC ejecutado {pos_id} — ${precio_gtc:.2f}")
+                        cerrar_posicion(pos_id, precio_gtc, "gtc")
+                except Exception as e:
+                    print(f"Error check GTC {pos_id}: {e}")
+
+        except Exception as e:
+            print(f"Error loop_polling_posiciones: {e}")
+
+
 def arrancar_monitor():
     time.sleep(5)
     cargar_canales()
     cargar_portfolio()
     cargar_ordenes()
-    threading.Thread(target=monitor_loop,         daemon=True).start()
-    threading.Thread(target=loop_v7_anticipada,   daemon=True).start()
-    threading.Thread(target=loop_limpiar_ordenes, daemon=True).start()
+    threading.Thread(target=monitor_loop,              daemon=True).start()
+    threading.Thread(target=loop_v7_anticipada,        daemon=True).start()
+    threading.Thread(target=loop_limpiar_ordenes,      daemon=True).start()
+    threading.Thread(target=loop_polling_posiciones,   daemon=True).start()
 
 threading.Thread(target=arrancar_monitor, daemon=True).start()
 
