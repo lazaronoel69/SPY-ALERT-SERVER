@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v8.43
+AXIS Breakout Sentinel v8.44
 Estrategias: 1VR | 1VR+ | RPG | GNA | GBA | RCB/CNF
 Multi-activo: SPY, AAPL, BA, GLD
 v8.43: Portfolio fix — ejecutar_orden_tradier en webhook exec/reto | Panic Button al bid |
        Reto con capital 80% + ±5 strikes + Claude fallback | Reset route | Sin precios live
+v8.44: Persistencia ordenes_pendientes en /data/axis_ordenes.json — sobrevive reinicios Railway
 Auto-P2 | Apagado automatico si nuevo P2 >= P1
 Fix v8.2: 1VR envia alerta durante reconstruccion antes de marcar vr1_fired
 v8.3: 1VR+
@@ -87,6 +88,60 @@ TRADIER_HEADERS_REAL = {
 ordenes_pendientes = {}
 ORDEN_TIMEOUT_MIN = 15  # minutos antes de expirar
 
+def guardar_ordenes():
+    """Persiste ordenes_pendientes en /data para sobrevivir reinicios."""
+    try:
+        data = {}
+        for oid, d in ordenes_pendientes.items():
+            data[oid] = {
+                "opcion":         d["opcion"],
+                "estrategia":     d.get("estrategia", "AXIS"),
+                "ts":             d["ts"].isoformat() if hasattr(d["ts"], "isoformat") else str(d["ts"]),
+                "message_id":     d["message_id"],
+                "chat_id":        d["chat_id"],
+                "texto_original": d.get("texto_original", ""),
+            }
+        with open(ORDENES_FILE, "w") as f:
+            json.dump(data, f, indent=2)
+    except Exception as e:
+        print(f"Error guardando ordenes: {e}")
+
+def cargar_ordenes():
+    """Carga ordenes_pendientes desde /data al arrancar."""
+    global ordenes_pendientes
+    try:
+        if not os.path.exists(ORDENES_FILE):
+            return
+        with open(ORDENES_FILE, "r") as f:
+            data = json.load(f)
+        ahora = datetime.now(pytz.utc)
+        recuperadas = 0
+        for oid, d in data.items():
+            try:
+                ts = datetime.fromisoformat(d["ts"])
+                if ts.tzinfo is None:
+                    ts = pytz.utc.localize(ts)
+                # Descartar órdenes ya expiradas
+                if (ahora - ts).total_seconds() > ORDEN_TIMEOUT_MIN * 60:
+                    continue
+                ordenes_pendientes[oid] = {
+                    "opcion":         d["opcion"],
+                    "estrategia":     d.get("estrategia", "AXIS"),
+                    "ts":             ts,
+                    "message_id":     d["message_id"],
+                    "chat_id":        d["chat_id"],
+                    "texto_original": d.get("texto_original", ""),
+                }
+                recuperadas += 1
+            except Exception as e:
+                print(f"Error recuperando orden {oid}: {e}")
+        if recuperadas:
+            print(f"Ordenes pendientes recuperadas: {recuperadas}")
+        # Limpiar archivo dejando solo las vigentes
+        guardar_ordenes()
+    except Exception as e:
+        print(f"Error cargando ordenes: {e}")
+
 def loop_limpiar_ordenes():
     """Thread que cada 60s revisa ordenes expiradas y las cancela con aviso a Telegram"""
     while True:
@@ -101,6 +156,7 @@ def loop_limpiar_ordenes():
                 datos = ordenes_pendientes.pop(oid, None)
                 if not datos:
                     continue
+                guardar_ordenes()
                 # Editar mensaje original en Telegram
                 try:
                     texto_original = datos.get("texto_original", "")
@@ -194,6 +250,7 @@ canal      = {a: canal_vacio()         for a in ACTIVOS}
 # ═══════════════════════════════════════════════════════════
 CANALES_FILE    = "/data/axis_canales.json"
 PORTFOLIO_FILE  = "/data/axis_portfolio.json"
+ORDENES_FILE    = "/data/axis_ordenes.json"
 
 # ═══════════════════════════════════════════════════════════
 # ANTHROPIC — ANÁLISIS DE PORTFOLIO
@@ -1533,6 +1590,7 @@ def enviar_senal_con_botones(simbolo, estrategia, hora_label, precio_vela, tipo_
             "chat_id":         chat_id,
             "texto_original":  msg,
         }
+        guardar_ordenes()
         print(f"{simbolo}: señal enviada con botones — {estrategia} | opcion {opcion['tipo']} ${opcion['strike']:.0f}")
     else:
         # Tradier no disponible — alerta simple sin botones pero con toda la info
@@ -1568,7 +1626,7 @@ def reporte_horario():
 # LOOP PRINCIPAL
 # ═══════════════════════════════════════════════════════════
 def monitor_loop():
-    print("AXIS Breakout Sentinel v8.43 iniciado...")
+    print("AXIS Breakout Sentinel v8.44 iniciado...")
     while True:
         ahora = datetime.now(EST)
         mins  = ahora.hour * 60 + ahora.minute
@@ -1606,7 +1664,7 @@ def home():
             "tipo":    "RCB" if c["p3"] else "CNF" if c["on"] else "OFF",
         }
     return jsonify({
-        "sistema":     "AXIS Breakout Sentinel v8.43",
+        "sistema":     "AXIS Breakout Sentinel v8.44",
         "estado":      "activo" if SISTEMA_ACTIVO else "apagado",
         "hora_est":    ahora.strftime("%A %H:%M EST"),
         "mercado":     "abierto" if es_dia_mercado(ahora) else "cerrado",
@@ -1629,7 +1687,7 @@ def test():
         else:
             lineas_canal.append(f"  {a}: OFF")
     enviar_telegram(
-        f"✅ <b>AXIS Breakout Sentinel v8.43</b>\n"
+        f"✅ <b>AXIS Breakout Sentinel v8.44</b>\n"
         f"<b>Hora:</b> {ahora.strftime('%A %d/%m/%Y %H:%M EST')}\n"
         f"<b>Mercado:</b> {'Abierto' if es_dia_mercado(ahora) else 'Cerrado'}\n"
         f"<b>1VR:</b> {'ON' if VR1_ON else 'OFF'} | "
@@ -2135,6 +2193,7 @@ def telegram_webhook():
 
         if accion == "exec":
             datos = ordenes_pendientes.pop(orden_id, None)
+            guardar_ordenes()
             if not datos:
                 editar_mensaje("⚠️ <b>Orden expirada o ya procesada.</b>")
                 return jsonify({"ok": True}), 200
@@ -2159,6 +2218,7 @@ def telegram_webhook():
         elif accion == "reto":
             carril_id = carril_id_reto or 1
             datos = ordenes_pendientes.pop(orden_id, None)
+            guardar_ordenes()
             if not datos:
                 editar_mensaje("⚠️ <b>Orden expirada o ya procesada.</b>")
                 return jsonify({"ok": True}), 200
@@ -2210,6 +2270,7 @@ def telegram_webhook():
 
         elif accion == "skip":
             ordenes_pendientes.pop(orden_id, None)
+            guardar_ordenes()
             agregar_recibo("━━━━━━━━━━━━━━━━━━\n❌ <b>Orden ignorada</b>")
             print(f"Orden ignorada — ID: {orden_id}")
 
@@ -3340,6 +3401,7 @@ def arrancar_monitor():
     time.sleep(5)
     cargar_canales()
     cargar_portfolio()
+    cargar_ordenes()
     threading.Thread(target=monitor_loop,         daemon=True).start()
     threading.Thread(target=loop_v7_anticipada,   daemon=True).start()
     threading.Thread(target=loop_limpiar_ordenes, daemon=True).start()
