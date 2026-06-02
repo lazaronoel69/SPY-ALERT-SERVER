@@ -359,21 +359,6 @@
   <div class="empty-state">Sin posiciones cerradas aún</div>
 </div>
 
-<!-- MODAL PANIC -->
-<div class="modal-overlay" id="modal">
-  <div class="modal">
-    <h3>⚠️ PANIC BUTTON</h3>
-    <p id="modal-desc">¿Cerrar esta posición ahora?</p>
-    <div class="modal-precio">
-      <label>Precio de cierre estimado</label>
-      <input type="number" id="modal-precio" step="0.01" placeholder="0.00">
-    </div>
-    <div class="modal-btns">
-      <button class="btn-cancelar" onclick="cerrarModal()">Cancelar</button>
-      <button class="btn-confirmar" onclick="confirmarPanic()">CERRAR</button>
-    </div>
-  </div>
-</div>
 
 <div class="toast" id="toast"></div>
 
@@ -415,9 +400,8 @@ function renderPosiciones(posiciones) {
     return;
   }
   grid.innerHTML = posiciones.map(pos => {
-    const plClass = pos.pl_pct > 0 ? 'positive' : pos.pl_pct < 0 ? 'negative' : 'neutral';
-    const plStr = pos.pl_pct != null ? `${pos.pl_pct > 0 ? '+' : ''}${pos.pl_pct}%` : '—';
     const tagClass = pos.tipo === 'PUT' ? 'tag-put' : 'tag-call';
+    const costoTotal = pos.costo_total ? `$${pos.costo_total.toFixed(2)}` : `$${(pos.precio_entrada * 100 * pos.contratos).toFixed(2)}`;
     return `
       <div class="pos-card ${pos.es_reto ? 'reto' : ''}">
         <div class="pos-header">
@@ -425,18 +409,22 @@ function renderPosiciones(posiciones) {
           <span class="pos-estrategia ${tagClass}">${pos.tipo}</span>
           <span style="font-size:11px;color:var(--muted)">${pos.estrategia}</span>
         </div>
-        <div class="pos-opcion">
-          $${pos.strike} • exp ${pos.expiration} • ${pos.contratos} contrato${pos.contratos > 1 ? 's' : ''}
+        <div class="pos-opcion" style="font-size:11px;color:var(--muted);margin-bottom:8px;">
+          ${pos.option_symbol || ''}
         </div>
-        <div class="pos-pl ${plClass}">${plStr}</div>
         <div class="pos-prices">
-          <span><label>Entrada</label><value>$${pos.precio_entrada.toFixed(2)}</value></span>
-          <span><label>Actual</label><value>${pos.precio_actual ? '$'+pos.precio_actual.toFixed(2) : '—'}</value></span>
+          <span><label>Strike</label><value>$${pos.strike}</value></span>
+          <span><label>Exp</label><value>${pos.expiration}</value></span>
+          <span><label>Contratos</label><value>${pos.contratos}</value></span>
         </div>
-        <div class="pos-gtc">🎯 Objetivo GTC: $${pos.precio_gtc.toFixed(2)}</div>
-        <div class="pos-footer">
+        <div class="pos-prices" style="margin-top:8px;">
+          <span><label>Entrada</label><value>$${pos.precio_entrada.toFixed(2)}</value></span>
+          <span><label>Costo Total</label><value>${costoTotal}</value></span>
+          <span><label>GTC Limit</label><value style="color:var(--gold)">$${pos.precio_gtc.toFixed(2)}</value></span>
+        </div>
+        <div class="pos-footer" style="margin-top:14px;">
           <span class="pos-tiempo">${tiempoAbierto(pos.ts_entrada)}</span>
-          <button class="panic-btn" onclick="abrirPanic('${pos.id}', '${pos.simbolo}', ${pos.precio_entrada})">
+          <button class="panic-btn" onclick="confirmarPanic('${pos.id}')">
             PANIC
           </button>
         </div>
@@ -479,14 +467,34 @@ function renderReto(reto) {
   document.getElementById('reto-progress').style.width = `${Math.max(0.2, pct)}%`;
 
   const grid = document.getElementById('carriles-grid');
-  grid.innerHTML = reto.carriles.map(c => `
-    <div class="carril ${c.posicion ? 'activo' : ''}">
-      <div class="carril-num">C${c.id}</div>
-      <div class="carril-capital">$${c.capital.toFixed(0)}</div>
-      <div class="carril-ronda">Ronda ${c.ronda}</div>
-      ${c.posicion ? '<div class="carril-pos">● EN POSICIÓN</div>' : ''}
-    </div>
-  `).join('');
+  grid.innerHTML = reto.carriles.map(c => {
+    if (c.eliminado) {
+      return `
+        <div class="carril" style="opacity:0.4;border-color:#333;">
+          <div class="carril-num">C${c.id}</div>
+          <div style="font-size:10px;color:var(--red);">ELIMINADO</div>
+          <div class="carril-capital" style="color:var(--red)">$${c.capital.toFixed(0)}</div>
+        </div>`;
+    }
+    // Buscar posición activa del carril
+    let posInfo = '';
+    if (c.posicion && _datos && _datos.posiciones) {
+      const pos = _datos.posiciones.find(p => p.id === c.posicion);
+      if (pos) {
+        posInfo = `
+          <div class="carril-pos">${pos.simbolo} ${pos.tipo}</div>
+          <div style="font-size:9px;color:var(--muted);">$${pos.strike} exp ${pos.expiration}</div>
+          <div style="font-size:9px;color:var(--muted);">${pos.contratos}ct × $${pos.precio_entrada.toFixed(2)}</div>`;
+      }
+    }
+    return `
+      <div class="carril ${c.posicion ? 'activo' : ''}">
+        <div class="carril-num">C${c.id}</div>
+        <div class="carril-capital">$${c.capital.toFixed(0)}</div>
+        <div class="carril-ronda">Ronda ${c.ronda}</div>
+        ${posInfo || (c.posicion ? '<div class="carril-pos">● EN POSICIÓN</div>' : '')}
+      </div>`;
+  }).join('');
 }
 
 async function cargarDatos() {
@@ -501,25 +509,13 @@ async function cargarDatos() {
   }
 }
 
-function abrirPanic(posId, simbolo, precioEntrada) {
-  _posId = posId;
-  document.getElementById('modal-desc').textContent = `Cerrar ${simbolo} — precio entrada $${precioEntrada.toFixed(2)}`;
-  document.getElementById('modal-precio').value = '';
-  document.getElementById('modal').classList.add('show');
-}
-function cerrarModal() {
-  document.getElementById('modal').classList.remove('show');
-  _posId = null;
-}
-async function confirmarPanic() {
-  if (!_posId) return;
-  const precio = parseFloat(document.getElementById('modal-precio').value) || 0;
+async function confirmarPanic(posId) {
   try {
-    const r = await fetch(`${RAILWAY}/portfolio/cerrar?id=${_posId}&precio=${precio}&motivo=panic`);
+    const r = await fetch(`${RAILWAY}/portfolio/cerrar?id=${posId}&motivo=panic`);
     const d = await r.json();
     if (d.ok) {
-      toast('✅ Posición cerrada');
-      cerrarModal();
+      const bid = d.bid_usado ? ` — Bid: $${d.bid_usado.toFixed(2)}` : '';
+      toast(`✅ Posición cerrada${bid}`);
       cargarDatos();
     } else {
       toast('Error cerrando posición');
@@ -557,12 +553,10 @@ async function cargarClaude() {
   }
 }
 
-// Cargar al inicio y cada 30 segundos
+// Cargar al inicio y cada 60 minutos
 cargarDatos();
-cargarClaude();
-setInterval(cargarDatos, 30000);
-// Claude cada 5 minutos — no necesita ser tan frecuente
-setInterval(cargarClaude, 5 * 60 * 1000);
+setInterval(cargarDatos, 60 * 60 * 1000);
+// Claude solo manual — no auto
 </script>
 </body>
 </html>
