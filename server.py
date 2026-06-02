@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v8.44
+AXIS Breakout Sentinel v8.45
 Estrategias: 1VR | 1VR+ | RPG | GNA | GBA | RCB/CNF
 Multi-activo: SPY, AAPL, BA, GLD
 v8.43: Portfolio fix — ejecutar_orden_tradier en webhook exec/reto | Panic Button al bid |
        Reto con capital 80% + ±5 strikes + Claude fallback | Reset route | Sin precios live
 v8.44: Persistencia ordenes_pendientes en /data/axis_ordenes.json — sobrevive reinicios Railway
+v8.45: get_velas — rango único 40 días hábiles, elimina HTTP 400 en rangos viejos
 Auto-P2 | Apagado automatico si nuevo P2 >= P1
 Fix v8.2: 1VR envia alerta durante reconstruccion antes de marcar vr1_fired
 v8.3: 1VR+
@@ -690,45 +691,37 @@ def get_velas(simbolo, outputsize=50):
         from datetime import date, datetime as dt2
         from collections import defaultdict
 
-        fecha_fin  = date.today()
-        fecha_mid2 = restar_dias_habiles(fecha_fin, 40)
-        fecha_mid1 = restar_dias_habiles(fecha_fin, 80)
-        fecha_ini  = restar_dias_habiles(fecha_fin, 120)
+        # Tradier soporta ~40 dias habiles de timesales 15min
+        # Un solo rango elimina los HTTP 400 de rangos viejos
+        fecha_fin = date.today()
+        fecha_ini = restar_dias_habiles(fecha_fin, 40)
 
         todas_barras = []
 
-        for (f_ini, f_fin) in [
-            (fecha_ini.strftime("%Y-%m-%d"),  fecha_mid1.strftime("%Y-%m-%d")),
-            (fecha_mid1.strftime("%Y-%m-%d"), fecha_mid2.strftime("%Y-%m-%d")),
-            (fecha_mid2.strftime("%Y-%m-%d"), fecha_fin.strftime("%Y-%m-%d")),
-        ]:
-            r = requests.get(
-                f"{TRADIER_BASE_REAL}/markets/timesales",
-                headers=TRADIER_HEADERS_REAL,
-                params={
-                    "symbol":         simbolo,
-                    "interval":       "15min",
-                    "start":          f"{f_ini} 09:00",
-                    "end":            f"{f_fin} 16:30",
-                    "session_filter": "open",
-                },
-                timeout=30
-            )
-            if r.status_code != 200:
-                print(f"Tradier error {simbolo} {f_ini}-{f_fin}: HTTP {r.status_code}")
-                continue
-            data   = r.json()
-            series = data.get("series")
-            if not series or series == "null":
-                continue
-            barras = series.get("data", [])
-            if isinstance(barras, dict):
-                barras = [barras]
-            todas_barras.extend(barras)
-
-        if not todas_barras:
+        r = requests.get(
+            f"{TRADIER_BASE_REAL}/markets/timesales",
+            headers=TRADIER_HEADERS_REAL,
+            params={
+                "symbol":         simbolo,
+                "interval":       "15min",
+                "start":          f"{fecha_ini.strftime('%Y-%m-%d')} 09:00",
+                "end":            f"{fecha_fin.strftime('%Y-%m-%d')} 16:30",
+                "session_filter": "open",
+            },
+            timeout=30
+        )
+        if r.status_code != 200:
+            print(f"Tradier error {simbolo}: HTTP {r.status_code}")
+            return None
+        data   = r.json()
+        series = data.get("series")
+        if not series or series == "null":
             print(f"Tradier sin datos {simbolo}")
             return None
+        barras = series.get("data", [])
+        if isinstance(barras, dict):
+            barras = [barras]
+        todas_barras = barras
 
         # Agrupar barras por fecha y vela AXIS
         # Estructura: { "2026-05-12": { "V1": [barras], ... }, ... }
@@ -1626,7 +1619,7 @@ def reporte_horario():
 # LOOP PRINCIPAL
 # ═══════════════════════════════════════════════════════════
 def monitor_loop():
-    print("AXIS Breakout Sentinel v8.44 iniciado...")
+    print("AXIS Breakout Sentinel v8.45 iniciado...")
     while True:
         ahora = datetime.now(EST)
         mins  = ahora.hour * 60 + ahora.minute
@@ -1664,7 +1657,7 @@ def home():
             "tipo":    "RCB" if c["p3"] else "CNF" if c["on"] else "OFF",
         }
     return jsonify({
-        "sistema":     "AXIS Breakout Sentinel v8.44",
+        "sistema":     "AXIS Breakout Sentinel v8.45",
         "estado":      "activo" if SISTEMA_ACTIVO else "apagado",
         "hora_est":    ahora.strftime("%A %H:%M EST"),
         "mercado":     "abierto" if es_dia_mercado(ahora) else "cerrado",
@@ -1687,7 +1680,7 @@ def test():
         else:
             lineas_canal.append(f"  {a}: OFF")
     enviar_telegram(
-        f"✅ <b>AXIS Breakout Sentinel v8.44</b>\n"
+        f"✅ <b>AXIS Breakout Sentinel v8.45</b>\n"
         f"<b>Hora:</b> {ahora.strftime('%A %d/%m/%Y %H:%M EST')}\n"
         f"<b>Mercado:</b> {'Abierto' if es_dia_mercado(ahora) else 'Cerrado'}\n"
         f"<b>1VR:</b> {'ON' if VR1_ON else 'OFF'} | "
