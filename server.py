@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v8.50
+AXIS Breakout Sentinel v8.51
 Estrategias: 1VR | 1VR+ | RPG | GNA | GBA | RCB/CNF
 Multi-activo: SPY, AAPL, BA, GLD
 v8.43: Portfolio fix — ejecutar_orden_tradier en webhook exec/reto | Panic Button al bid |
@@ -255,6 +255,38 @@ canal      = {a: canal_vacio()         for a in ACTIVOS}
 CANALES_FILE    = "/data/axis_canales.json"
 PORTFOLIO_FILE  = "/data/axis_portfolio.json"
 ORDENES_FILE    = "/data/axis_ordenes.json"
+ESTADO_FILE     = "/data/axis_estado_dia.json"
+
+def guardar_estado_dia():
+    """Persiste estado_dia en /data para sobrevivir reinicios."""
+    try:
+        with open(ESTADO_FILE, "w") as f:
+            json.dump(estado_dia, f, indent=2)
+    except Exception as e:
+        print(f"Error guardando estado_dia: {e}")
+
+def cargar_estado_dia():
+    """Carga estado_dia desde /data al arrancar. Descarta si es de otro día."""
+    global estado_dia
+    try:
+        if not os.path.exists(ESTADO_FILE):
+            return
+        with open(ESTADO_FILE, "r") as f:
+            data = json.load(f)
+        from datetime import date
+        hoy = date.today().isoformat()
+        recuperados = 0
+        for a in ACTIVOS:
+            if a in data and data[a].get("fecha") == hoy:
+                # Fusionar con el estado vacío para garantizar todas las keys
+                base = estado_diario_vacio()
+                base.update(data[a])
+                estado_dia[a] = base
+                recuperados += 1
+        if recuperados:
+            print(f"Estado día recuperado — {recuperados} activos con señales de hoy")
+    except Exception as e:
+        print(f"Error cargando estado_dia: {e}")
 
 # ═══════════════════════════════════════════════════════════
 # ANTHROPIC — ANÁLISIS DE PORTFOLIO
@@ -932,6 +964,7 @@ def evaluar_activo(simbolo, velas, ahora):
                             f"<b>Open:</b> ${v1_open_r:.2f} | <b>Close:</b> ${v1_close_r:.2f}\n{extra}"
                         )
                     ed["vr1_fired"] = True
+                    guardar_estado_dia()
 
                 # Reconstruir RPG
                 if RPG_ON and v7_c and v1_close_r > v1_open_r:
@@ -1002,6 +1035,7 @@ def evaluar_activo(simbolo, velas, ahora):
             # Necesita UNA de las dos condiciones
             if en_rcb_30 or sma40_gt_sma20:
                 ed["vr1_fired"] = True
+                guardar_estado_dia()
                 label_vr = "1VR+" if en_rcb_30 else "1VR"
                 extra_vr = f"<b>Canal RCB:</b> Techo ${techo_vr:.2f} | Zona 30%: ${zona_30:.2f}\n" if en_rcb_30 else \
                            f"<b>SMA40:</b> ${sma40_vr:.2f} > <b>SMA20:</b> ${sma20_vr:.2f}\n"
@@ -1149,6 +1183,7 @@ def evaluar_activo(simbolo, velas, ahora):
             if en_rcb_30_rpg or sma20_gt_sma40:
                 ed["rpg_fired"]  = True
                 ed["rpg_activo"] = False
+                guardar_estado_dia()
                 label_rpg = "RPG+" if en_rcb_30_rpg else "RPG"
                 extra_rpg = f"<b>Canal RCB:</b> Techo ${techo_rpg:.2f} | Zona 30%: ${zona_30_rpg:.2f}\n" if en_rcb_30_rpg else \
                             f"<b>SMA20:</b> ${s20_rpg:.2f} > <b>SMA40:</b> ${s40_rpg:.2f}\n"
@@ -1165,6 +1200,7 @@ def evaluar_activo(simbolo, velas, ahora):
         if v_alcista and v_close > v1_close:
             ed["gna_fired"]  = True
             ed["gna_activo"] = False
+            guardar_estado_dia()
             tipo = "GNA" if hora_vela == 10 else "GNA+2"
             enviar_senal_con_botones(
                 simbolo, f"{tipo} — GAP NORMAL ALZA",
@@ -1177,6 +1213,7 @@ def evaluar_activo(simbolo, velas, ahora):
         if v_alcista and v_close > v1_close:
             ed["gba_fired"]  = True
             ed["gba_activo"] = False
+            guardar_estado_dia()
             tipo = "GBA" if hora_vela == 10 else "GBA+2"
             enviar_senal_con_botones(
                 simbolo, f"{tipo} — GAP BAJISTA ALZA",
@@ -1258,6 +1295,7 @@ def evaluar_activo(simbolo, velas, ahora):
                         if v_alcista and hora_vela > 9:
                             # SEÑAL PM40
                             ed["pm40_fired"]  = True
+                            guardar_estado_dia()
                             ed["pm40_activo"] = False
                             enviar_senal_con_botones(
                                 simbolo, "PM40 — RUPTURA CANAL BAJISTA",
@@ -1360,6 +1398,7 @@ def evaluar_activo(simbolo, velas, ahora):
                     # Señal — vela roja rompe el soporte + en zona válida (25% superior)
                     elif v_roja and v_close < piso_slope and en_zona_valida:
                         ed["4ps_fired"]  = True
+                        guardar_estado_dia()
                         ed["4ps_activo"] = False
                         enviar_senal_con_botones(
                             simbolo, "4PASOS — RUPTURA SOPORTE ALCISTA",
@@ -1664,7 +1703,7 @@ def reporte_horario():
 # LOOP PRINCIPAL
 # ═══════════════════════════════════════════════════════════
 def monitor_loop():
-    print("AXIS Breakout Sentinel v8.50 iniciado...")
+    print("AXIS Breakout Sentinel v8.51 iniciado...")
     while True:
         ahora = datetime.now(EST)
         mins  = ahora.hour * 60 + ahora.minute
@@ -1772,7 +1811,7 @@ def home(path=""):
   <div class="canales-grid">
     {canales_html}
   </div>
-  <div class="footer">AXIS Breakout Sentinel v8.50 · {activos_str}</div>
+  <div class="footer">AXIS Breakout Sentinel v8.51 · {activos_str}</div>
 </body>
 </html>"""
     from flask import Response
@@ -1792,7 +1831,7 @@ def test():
         else:
             lineas_canal.append(f"  {a}: OFF")
     enviar_telegram(
-        f"✅ <b>AXIS Breakout Sentinel v8.50</b>\n"
+        f"✅ <b>AXIS Breakout Sentinel v8.51</b>\n"
         f"<b>Hora:</b> {ahora.strftime('%A %d/%m/%Y %H:%M EST')}\n"
         f"<b>Mercado:</b> {'Abierto' if es_dia_mercado(ahora) else 'Cerrado'}\n"
         f"<b>1VR:</b> {'ON' if VR1_ON else 'OFF'} | "
@@ -3380,7 +3419,7 @@ def system_status():
 
     # ── Archivos /data
     archivos_data = {}
-    for fname in ["axis_canales.json", "axis_portfolio.json", "axis_ordenes.json"]:
+    for fname in ["axis_canales.json", "axis_portfolio.json", "axis_ordenes.json", "axis_estado_dia.json"]:
         path = f"/data/{fname}"
         try:
             size = os.path.getsize(path)
@@ -3389,7 +3428,7 @@ def system_status():
             archivos_data[fname] = "NO ENCONTRADO ❌"
 
     return jsonify({
-        "sistema":          "AXIS Breakout Sentinel v8.50",
+        "sistema":          "AXIS Breakout Sentinel v8.51",
         "hora_est":         ahora.strftime("%Y-%m-%d %H:%M:%S EST"),
         "mercado":          "ABIERTO ✅" if mercado_abierto else "CERRADO ⏸",
         "threads":          threads_vivos,
@@ -4078,6 +4117,7 @@ def arrancar_monitor():
     cargar_canales()
     cargar_portfolio()
     cargar_ordenes()
+    cargar_estado_dia()
     threading.Thread(target=monitor_loop,              daemon=True).start()
     threading.Thread(target=loop_v7_anticipada,        daemon=True).start()
     threading.Thread(target=loop_limpiar_ordenes,      daemon=True).start()
