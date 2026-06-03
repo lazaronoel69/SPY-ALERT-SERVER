@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v8.47
+AXIS Breakout Sentinel v8.48
 Estrategias: 1VR | 1VR+ | RPG | GNA | GBA | RCB/CNF
 Multi-activo: SPY, AAPL, BA, GLD
 v8.43: Portfolio fix — ejecutar_orden_tradier en webhook exec/reto | Panic Button al bid |
@@ -320,13 +320,21 @@ def analizar_portfolio_claude(posiciones, reto):
 # ═══════════════════════════════════════════════════════════
 def portfolio_vacio():
     return {
-        "posiciones":  [],   # posiciones abiertas
-        "historial":   [],   # posiciones cerradas
+        "posiciones":  [],
+        "historial":   [],
         "reto": {
-            "activo":         False,
-            "capital_inicial": 2000,
+            "activo":          False,
+            "turno_actual":    1,      # próximo carril en orden rotativo
             "carriles": [
-                {"id": i+1, "capital": 200, "ronda": 0, "posicion": None, "historial": []}
+                {
+                    "id":              i+1,
+                    "capital":         0,       # empieza en 0 — se asigna en primera compra
+                    "capital_inicial": 0,       # se fija en primera compra real
+                    "ronda":           0,
+                    "posicion":        None,
+                    "eliminado":       False,
+                    "historial":       []
+                }
                 for i in range(10)
             ]
         }
@@ -494,12 +502,15 @@ def cerrar_posicion(pos_id, precio_cierre, motivo="panic"):
                     "capital_final": nuevo_capital,
                     "motivo":        motivo,
                 })
-                # Eliminar carril si capital < $200
-                if nuevo_capital < 200:
+                # Eliminar carril si capital insuficiente para comprar 1 contrato mínimo
+                # Mínimo referencial: $280 (SPY ~$350 × 80% presupuesto)
+                CAPITAL_MINIMO = 280
+                if nuevo_capital < CAPITAL_MINIMO:
                     c["eliminado"] = True
                     enviar_telegram(
                         f"💀 <b>Carril #{c['id']} ELIMINADO</b>\n"
-                        f"Capital final: ${nuevo_capital:.2f} — por debajo del mínimo $200"
+                        f"Capital final: ${nuevo_capital:.2f} — insuficiente para siguiente ronda\n"
+                        f"Capital inicial fue: ${c.get('capital_inicial', 0):.2f}"
                     )
                 break
 
@@ -1514,11 +1525,16 @@ def enviar_telegram_botones(mensaje, orden_id):
     if _portfolio is None:
         cargar_portfolio()
     reto_activo = _portfolio["reto"]["activo"]
-    # Buscar carril disponible en el Reto
+    # Buscar carril disponible — rotación secuencial C1→C2→...→C10→C1
     carril_disponible = None
     if reto_activo:
-        for c in _portfolio["reto"]["carriles"]:
-            if c["posicion"] is None and c["capital"] > 0:
+        turno = _portfolio["reto"].get("turno_actual", 1)
+        carriles = _portfolio["reto"]["carriles"]
+        # Buscar desde turno_actual en adelante, luego volver al inicio
+        orden = list(range(turno - 1, 10)) + list(range(0, turno - 1))
+        for idx in orden:
+            c = carriles[idx]
+            if not c.get("eliminado") and c["posicion"] is None:
                 carril_disponible = c["id"]
                 break
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
@@ -1624,7 +1640,7 @@ def reporte_horario():
 # LOOP PRINCIPAL
 # ═══════════════════════════════════════════════════════════
 def monitor_loop():
-    print("AXIS Breakout Sentinel v8.47 iniciado...")
+    print("AXIS Breakout Sentinel v8.48 iniciado...")
     while True:
         ahora = datetime.now(EST)
         mins  = ahora.hour * 60 + ahora.minute
@@ -1732,7 +1748,7 @@ def home(path=""):
   <div class="canales-grid">
     {canales_html}
   </div>
-  <div class="footer">AXIS Breakout Sentinel v8.47 · {activos_str}</div>
+  <div class="footer">AXIS Breakout Sentinel v8.48 · {activos_str}</div>
 </body>
 </html>"""
     from flask import Response
@@ -1752,7 +1768,7 @@ def test():
         else:
             lineas_canal.append(f"  {a}: OFF")
     enviar_telegram(
-        f"✅ <b>AXIS Breakout Sentinel v8.47</b>\n"
+        f"✅ <b>AXIS Breakout Sentinel v8.48</b>\n"
         f"<b>Hora:</b> {ahora.strftime('%A %d/%m/%Y %H:%M EST')}\n"
         f"<b>Mercado:</b> {'Abierto' if es_dia_mercado(ahora) else 'Cerrado'}\n"
         f"<b>1VR:</b> {'ON' if VR1_ON else 'OFF'} | "
@@ -2289,49 +2305,76 @@ def telegram_webhook():
                 return jsonify({"ok": True}), 200
             opcion     = datos["opcion"]
             estrategia = datos.get("estrategia", "AXIS")
-            # Verificar capital del carril
+
             carril = next((c for c in _portfolio["reto"]["carriles"] if c["id"] == carril_id), None)
             if not carril or carril.get("eliminado"):
                 agregar_recibo(f"━━━━━━━━━━━━━━━━━━\n⚠️ <b>Carril #{carril_id} no disponible</b>")
                 return jsonify({"ok": True}), 200
-            presupuesto   = round(carril["capital"] * 0.80, 2)  # 80% del capital
-            costo_1cont   = round(opcion["ask"] * 100, 2)
-            if costo_1cont > presupuesto:
-                # Capital insuficiente — buscar opción alternativa en ±5 strikes
-                opcion_reto = buscar_opcion_reto(opcion, presupuesto)
-                if not opcion_reto:
-                    # Llamar Claude para recomendación
-                    rec_claude = recomendar_opcion_claude(opcion, carril["capital"], presupuesto)
-                    agregar_recibo(
-                        f"━━━━━━━━━━━━━━━━━━\n"
-                        f"⚠️ <b>Capital insuficiente — Carril #{carril_id}</b>\n"
-                        f"Capital: ${carril['capital']:.2f} | Presupuesto: ${presupuesto:.2f}\n"
-                        f"Costo opción original: ${costo_1cont:.2f}\n\n"
-                        f"🤖 <b>Claude recomienda:</b>\n{rec_claude}"
-                    )
-                    return jsonify({"ok": True}), 200
-                opcion = opcion_reto
-                costo_1cont = round(opcion["ask"] * 100, 2)
-            contratos = max(1, int(presupuesto // costo_1cont))
+
+            costo_1cont = round(opcion["ask"] * 100, 2)
+
+            # PRIMERA RONDA: capital=0 → el costo de esta opción ES el capital inicial
+            if carril["capital"] == 0:
+                # Asignar capital inicial = costo real de esta opción (1 contrato)
+                carril["capital"]         = costo_1cont
+                carril["capital_inicial"] = costo_1cont
+                contratos  = 1
+                presupuesto = costo_1cont
+            else:
+                # RONDAS SIGUIENTES: solo usa lo acumulado, nunca capital externo
+                presupuesto = round(carril["capital"] * 0.80, 2)
+                if costo_1cont > presupuesto:
+                    opcion_reto = buscar_opcion_reto(opcion, presupuesto)
+                    if not opcion_reto:
+                        rec_claude = recomendar_opcion_claude(opcion, carril["capital"], presupuesto)
+                        agregar_recibo(
+                            f"━━━━━━━━━━━━━━━━━━\n"
+                            f"⚠️ <b>Capital insuficiente — Carril #{carril_id}</b>\n"
+                            f"Capital: ${carril['capital']:.2f} | Presupuesto: ${presupuesto:.2f}\n"
+                            f"Costo opción: ${costo_1cont:.2f}\n\n"
+                            f"🤖 <b>Claude recomienda:</b>\n{rec_claude}"
+                        )
+                        return jsonify({"ok": True}), 200
+                    opcion = opcion_reto
+                    costo_1cont = round(opcion["ask"] * 100, 2)
+                contratos = max(1, int(presupuesto // costo_1cont))
+
+            # Avanzar turno al siguiente carril disponible
+            carriles = _portfolio["reto"]["carriles"]
+            turno_actual = carril_id  # acaba de jugar este carril
+            siguiente = None
+            orden = list(range(turno_actual, 10)) + list(range(0, turno_actual))
+            for idx in orden:
+                c = carriles[idx]
+                if not c.get("eliminado") and c["posicion"] is None and c["id"] != carril_id:
+                    siguiente = c["id"]
+                    break
+            _portfolio["reto"]["turno_actual"] = siguiente if siguiente else carril_id
+
             # Ejecutar en Tradier sandbox
             resultado_tradier = ejecutar_orden_tradier_contratos(opcion, contratos)
-            tradier_orden_id = resultado_tradier.get("id") if resultado_tradier["ok"] else None
+            tradier_orden_id = resultado_tradier.get("id")    if resultado_tradier["ok"] else None
             tradier_gtc_id   = resultado_tradier.get("venta_id") if resultado_tradier["ok"] else None
             costo_total = round(opcion["ask"] * 100 * contratos, 2)
+
             registrar_posicion(opcion, estrategia, opcion["subyacente"], opcion["ask"],
                                es_reto=True, carril_id=carril_id, contratos=contratos,
                                tradier_orden_id=tradier_orden_id, tradier_gtc_id=tradier_gtc_id)
-            estado_tradier = "✅ Orden enviada a sandbox" if resultado_tradier["ok"] else f"⚠️ Error Tradier: {resultado_tradier.get('error','')}"
+
+            estado_tradier = "✅ Orden enviada a sandbox" if resultado_tradier["ok"] else f"⚠️ Error: {resultado_tradier.get('error','')}"
+            es_primera = carril["capital_inicial"] == costo_1cont and carril["ronda"] == 1
             agregar_recibo(
                 f"━━━━━━━━━━━━━━━━━━\n"
-                f"🏆 <b>RETO C{carril_id} — EJECUTADO</b>\n"
+                f"🏆 <b>RETO C{carril_id} — {'PRIMERA ENTRADA' if es_primera else 'EJECUTADO'}</b>\n"
                 f"📋 <b>Opción:</b> {opcion['symbol']}\n"
                 f"📊 <b>Contratos:</b> {contratos} × ${opcion['ask']:.2f} = ${costo_total:.2f}\n"
-                f"💰 <b>Capital restante:</b> ${carril['capital'] - costo_total:.2f}\n"
+                f"💰 <b>Capital carril:</b> ${carril['capital']:.2f}"
+                + (f" (inicial asignado)" if es_primera else f" | Usado: ${costo_total:.2f}") + "\n"
                 f"🎯 <b>GTC:</b> ${opcion['ask']*2:.2f} (+100%)\n"
+                f"🔄 <b>Siguiente turno:</b> C{_portfolio['reto']['turno_actual']}\n"
                 f"🏦 <b>Tradier:</b> {estado_tradier}"
             )
-            print(f"RETO C{carril_id} — {contratos} contratos {opcion['subyacente']} {opcion['tipo']} ${opcion['strike']}")
+            print(f"RETO C{carril_id} — {contratos}ct {opcion['subyacente']} {opcion['tipo']} ${opcion['strike']} | siguiente: C{_portfolio['reto']['turno_actual']}")
 
         elif accion == "skip":
             ordenes_pendientes.pop(orden_id, None)
@@ -3178,7 +3221,121 @@ def ruta_velas():
     }), 200
 
 # ═══════════════════════════════════════════════════════════
-# COTIZAR OPCIONES — ruta temporal para análisis de precios
+# SYSTEM STATUS — diagnóstico completo del sistema
+# GET /status
+# ═══════════════════════════════════════════════════════════
+@app.route("/status", methods=["GET"])
+def system_status():
+    from datetime import date
+    ahora    = datetime.now(EST)
+    hoy      = date.today()
+
+    # ── Threads activos
+    import threading
+    threads_vivos = [t.name for t in threading.enumerate()]
+
+    # ── Estado de mercado
+    mercado_abierto = es_dia_mercado(ahora)
+
+    # ── Canales
+    canales_resumen = {}
+    for a in ACTIVOS:
+        c = canal[a]
+        canales_resumen[a] = {
+            "on":      c["on"],
+            "tipo":    "RCB" if (c["on"] and c.get("p3")) else "CNF" if c["on"] else "OFF",
+            "p1":      c["p1"]["high"] if c.get("p1") else None,
+            "p2":      c.get("p2_actual_high"),
+        }
+
+    # ── Estado día (señales de hoy)
+    señales_hoy = {}
+    for a in ACTIVOS:
+        ed = estado_dia.get(a, {})
+        señales_hoy[a] = {
+            "fecha":       ed.get("fecha"),
+            "1VR":         ed.get("vr1_fired", False),
+            "RPG":         ed.get("rpg_fired", False),
+            "GNA":         ed.get("gna_fired", False),
+            "GBA":         ed.get("gba_fired", False),
+            "PM40":        ed.get("pm40_fired", False),
+            "4PS":         ed.get("4ps_fired", False),
+        }
+
+    # ── Portfolio
+    if _portfolio is None:
+        cargar_portfolio()
+    pos_abiertas   = len(_portfolio["posiciones"])
+    pos_historial  = len(_portfolio["historial"])
+    reto           = _portfolio["reto"]
+    carriles_vivos = [c for c in reto["carriles"] if not c.get("eliminado")]
+    carriles_elim  = [c for c in reto["carriles"] if c.get("eliminado")]
+    carriles_en_pos = [c for c in carriles_vivos if c["posicion"]]
+
+    reto_resumen = {
+        "activo":         reto["activo"],
+        "turno_actual":   reto.get("turno_actual", 1),
+        "carriles_vivos": len(carriles_vivos),
+        "carriles_elim":  len(carriles_elim),
+        "carriles_en_pos": len(carriles_en_pos),
+        "capital_total":  round(sum(c["capital"] for c in carriles_vivos), 2),
+        "detalle": [
+            {
+                "id":              c["id"],
+                "capital":         c["capital"],
+                "capital_inicial": c.get("capital_inicial", 0),
+                "ronda":           c["ronda"],
+                "en_posicion":     c["posicion"] is not None,
+                "eliminado":       c.get("eliminado", False),
+                "multiplicador":   round(c["capital"] / c["capital_inicial"], 2) if c.get("capital_inicial", 0) > 0 else None,
+            }
+            for c in reto["carriles"]
+        ]
+    }
+
+    # ── Órdenes pendientes
+    ordenes_vivas = []
+    for oid, d in ordenes_pendientes.items():
+        try:
+            ts   = d["ts"]
+            mins = round((datetime.now(pytz.utc) - ts).total_seconds() / 60, 1)
+            ordenes_vivas.append({
+                "id":       oid,
+                "activo":   d["opcion"].get("subyacente"),
+                "tipo":     d["opcion"].get("tipo"),
+                "strike":   d["opcion"].get("strike"),
+                "mins_ago": mins,
+            })
+        except:
+            pass
+
+    # ── Archivos /data
+    archivos_data = {}
+    for fname in ["axis_canales.json", "axis_portfolio.json", "axis_ordenes.json"]:
+        path = f"/data/{fname}"
+        try:
+            size = os.path.getsize(path)
+            archivos_data[fname] = f"{size} bytes ✅"
+        except:
+            archivos_data[fname] = "NO ENCONTRADO ❌"
+
+    return jsonify({
+        "sistema":          "AXIS Breakout Sentinel v8.48",
+        "hora_est":         ahora.strftime("%Y-%m-%d %H:%M:%S EST"),
+        "mercado":          "ABIERTO ✅" if mercado_abierto else "CERRADO ⏸",
+        "threads":          threads_vivos,
+        "activos":          ACTIVOS,
+        "canales":          canales_resumen,
+        "señales_hoy":      señales_hoy,
+        "portfolio": {
+            "posiciones_abiertas": pos_abiertas,
+            "historial_total":     pos_historial,
+            "posiciones":          _portfolio["posiciones"],
+        },
+        "reto":             reto_resumen,
+        "ordenes_pendientes": ordenes_vivas,
+        "archivos_data":    archivos_data,
+    }), 200
 # GET /cotizar_opciones
 # ═══════════════════════════════════════════════════════════
 @app.route("/cotizar_opciones", methods=["GET"])

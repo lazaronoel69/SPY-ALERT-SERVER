@@ -276,6 +276,7 @@ let activo    = 'SPY';
 let allVelas  = [];
 window.canalRailway = { on: false };
 window.canalLineas  = null;
+window.senalesHoy   = [];
 let smaState  = { 20:true, 40:true, 100:true, 200:true };
 let drawMode  = false, drawing = false, p0 = null;
 let userLines = {};
@@ -367,6 +368,8 @@ async function cargarDatos(sym, silencioso=false) {
     });
 
     allVelas = velas;
+    // Guardar señales que Railway ya disparó hoy — se usan en render()
+    window.senalesHoy = data.senales_hoy || [];
     if (!silencioso) { zoomStart=0; zoomEnd=velas.length-1; }
     else { zoomEnd=velas.length-1; zoomStart=Math.max(0,zoomEnd-(panZ0?.rango||zoomEnd)); }
 
@@ -1198,7 +1201,7 @@ function render() {
   }); // fin canalesPM40
   } // fin if !canal manual
 
-  // Dibujar etiquetas de señales
+  // Dibujar etiquetas de señales recalculadas (históricas)
   todasSeñales.forEach(s => {
     const visIdx = s.idx - zoomStart;
     if (visIdx < 0 || visIdx >= visible.length) return;
@@ -1206,6 +1209,31 @@ function render() {
     const x  = xOf(visIdx);
     const y  = s.arriba ? yOf(v.h) : yOf(v.l);
     dibujarSeñal(ctx, x, y, s.tipo, s.color, s.textColor, s.arriba);
+  });
+
+  // Dibujar señales que Railway disparó hoy — fuente de verdad
+  // Estas sobreescriben cualquier recálculo del dashboard
+  const fechaHoyNY = new Date().toLocaleDateString('en-US',{timeZone:'America/New_York'});
+  (window.senalesHoy || []).forEach(s => {
+    // Buscar la vela V1 de hoy para anclar la etiqueta
+    for (let i = zoomStart; i <= zoomEnd; i++) {
+      const v = allVelas[i];
+      const fv = new Date(v.x).toLocaleDateString('en-US',{timeZone:'America/New_York'});
+      if (fv === fechaHoyNY && v.vela === 'V1') {
+        const visIdx = i - zoomStart;
+        const x = xOf(visIdx);
+        const y = yOf(v.h);
+        const color     = s.tipo === '1VR' ? '#f85149' :
+                          s.tipo === 'RPG' ? '#9c27b0' :
+                          s.tipo === 'GNA' ? '#00bcd4' :
+                          s.tipo === 'GBA' ? '#f0b429' :
+                          s.tipo === 'PM40'? '#3fb950' :
+                          s.tipo === '4PS' ? '#e74c3c' : '#ffffff';
+        const textColor = ['GBA','PM40'].includes(s.tipo) ? '#000' : '#fff';
+        dibujarSeñal(ctx, x, y, s.tipo, color, textColor, true);
+        break;
+      }
+    }
   });
 
   // ── Canales RCB/CNF — misma lógica que PM40 ──
@@ -1467,6 +1495,7 @@ async function cambiar(sym) {
   activo = sym;
   clearTimeout(refreshTimer);
   allVelas=[]; zoomStart=0; zoomEnd=0;
+  window.senalesHoy = [];
   document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('on',b.textContent===sym));
   document.getElementById('activo-label').textContent = sym;
   await cargarEstadoCanal(sym);
