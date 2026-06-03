@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v8.48
+AXIS Breakout Sentinel v8.50
 Estrategias: 1VR | 1VR+ | RPG | GNA | GBA | RCB/CNF
 Multi-activo: SPY, AAPL, BA, GLD
 v8.43: Portfolio fix — ejecutar_orden_tradier en webhook exec/reto | Panic Button al bid |
@@ -1394,56 +1394,78 @@ def get_precio_tradier(simbolo):
 # ═══════════════════════════════════════════════════════════
 # TRADIER — BUSCAR OPCION
 # ═══════════════════════════════════════════════════════════
+def get_pct_otm(precio):
+    """Porcentaje OTM según rango de precio del subyacente."""
+    if precio < 150:  return 1.50
+    if precio < 300:  return 1.25
+    if precio < 500:  return 0.85
+    if precio < 700:  return 0.65
+    return 0.50
+
 def get_opcion_tradier(simbolo, tipo, precio_actual):
     """
     tipo: 'call' o 'put'
-    Busca el contrato con strike precio+-3, vencimiento minimo 4 dias
+    Busca el contrato con strike OTM según sistema de rangos por precio,
+    vencimiento mínimo 7 días calendario.
+    Sistema de rangos:
+      < $150  → 1.50% OTM
+      $150-300 → 1.25% OTM
+      $300-500 → 0.85% OTM
+      $500-700 → 0.65% OTM
+      > $700   → 0.50% OTM
     """
     try:
         from datetime import date, timedelta
         hoy = date.today()
-        # Buscar vencimientos disponibles
+
+        # Vencimientos disponibles
         r = requests.get(
             f"{TRADIER_BASE}/markets/options/expirations",
             headers=TRADIER_HEADERS,
             params={"symbol": simbolo, "includeAllRoots": "true"},
             timeout=10
         )
-        data = r.json()
+        data  = r.json()
         fechas = data.get("expirations", {}).get("date", [])
         if isinstance(fechas, str):
             fechas = [fechas]
 
-        # Primer vencimiento con al menos 4 dias calendario
+        # Primer vencimiento con mínimo 7 días calendario
         vencimiento = None
         for f in sorted(fechas):
             fd = date.fromisoformat(f)
-            if (fd - hoy).days >= 4:
+            if (fd - hoy).days >= 7:
                 vencimiento = f
                 break
 
         if not vencimiento:
-            print(f"Sin vencimiento disponible para {simbolo}")
+            print(f"Sin vencimiento ≥7 días para {simbolo}")
             return None
 
-        # Strike objetivo
-        strike_obj = precio_actual + 3 if tipo == 'call' else precio_actual - 3
-        strike_obj = round(strike_obj)
+        # Strike objetivo según sistema de rangos OTM
+        pct  = get_pct_otm(precio_actual)
+        dist = precio_actual * pct / 100
+        if tipo == 'call':
+            strike_obj = round(precio_actual + dist)
+        else:
+            strike_obj = round(precio_actual - dist)
 
-        # Buscar cadena de opciones
+        print(f"  {simbolo} {tipo.upper()} — precio ${precio_actual:.2f} | {pct}% OTM | strike obj ${strike_obj} | venc {vencimiento}")
+
+        # Cadena de opciones
         r2 = requests.get(
             f"{TRADIER_BASE}/markets/options/chains",
             headers=TRADIER_HEADERS,
             params={"symbol": simbolo, "expiration": vencimiento, "greeks": "false"},
             timeout=10
         )
-        data2 = r2.json()
+        data2   = r2.json()
         opciones = data2.get("options", {}).get("option", [])
         if not opciones:
             return None
 
-        # Filtrar por tipo y buscar strike mas cercano
-        filtradas = [o for o in opciones if o.get("option_type") == tipo]
+        # Filtrar por tipo y buscar strike más cercano al objetivo
+        filtradas = [o for o in opciones if o.get("option_type") == tipo and float(o.get("ask", 0)) > 0]
         if not filtradas:
             return None
 
@@ -1455,6 +1477,8 @@ def get_opcion_tradier(simbolo, tipo, precio_actual):
             "tipo":        tipo.upper(),
             "ask":         float(mejor.get("ask", 0)),
             "bid":         float(mejor.get("bid", 0)),
+            "subyacente":  simbolo,
+            "pct_otm":     pct,
         }
     except Exception as e:
         print(f"Error opcion Tradier {simbolo}: {e}")
@@ -1640,7 +1664,7 @@ def reporte_horario():
 # LOOP PRINCIPAL
 # ═══════════════════════════════════════════════════════════
 def monitor_loop():
-    print("AXIS Breakout Sentinel v8.48 iniciado...")
+    print("AXIS Breakout Sentinel v8.50 iniciado...")
     while True:
         ahora = datetime.now(EST)
         mins  = ahora.hour * 60 + ahora.minute
@@ -1748,7 +1772,7 @@ def home(path=""):
   <div class="canales-grid">
     {canales_html}
   </div>
-  <div class="footer">AXIS Breakout Sentinel v8.48 · {activos_str}</div>
+  <div class="footer">AXIS Breakout Sentinel v8.50 · {activos_str}</div>
 </body>
 </html>"""
     from flask import Response
@@ -1768,7 +1792,7 @@ def test():
         else:
             lineas_canal.append(f"  {a}: OFF")
     enviar_telegram(
-        f"✅ <b>AXIS Breakout Sentinel v8.48</b>\n"
+        f"✅ <b>AXIS Breakout Sentinel v8.50</b>\n"
         f"<b>Hora:</b> {ahora.strftime('%A %d/%m/%Y %H:%M EST')}\n"
         f"<b>Mercado:</b> {'Abierto' if es_dia_mercado(ahora) else 'Cerrado'}\n"
         f"<b>1VR:</b> {'ON' if VR1_ON else 'OFF'} | "
@@ -1938,14 +1962,34 @@ def buscar_opcion_reto(opcion_original, presupuesto):
     """
     Busca opción alternativa en ±5 strikes del strike original
     que quepa en el presupuesto del carril (80% capital).
-    Devuelve la más cercana al strike original que quepa, o None.
+    Vencimiento mínimo 7 días.
     """
     try:
-        simbolo      = opcion_original["subyacente"]
-        tipo         = opcion_original["tipo"].lower()
-        strike_orig  = float(opcion_original["strike"])
-        vencimiento  = opcion_original["expiration"]
-        precio_max   = presupuesto / 100  # precio máximo por contrato
+        from datetime import date
+        simbolo     = opcion_original["subyacente"]
+        tipo        = opcion_original["tipo"].lower()
+        strike_orig = float(opcion_original["strike"])
+        vencimiento = opcion_original["expiration"]
+        precio_max  = presupuesto / 100
+
+        # Verificar que el vencimiento sigue siendo válido (≥7 días)
+        hoy = date.today()
+        if (date.fromisoformat(vencimiento) - hoy).days < 7:
+            r0 = requests.get(
+                f"{TRADIER_BASE}/markets/options/expirations",
+                headers=TRADIER_HEADERS,
+                params={"symbol": simbolo, "includeAllRoots": "true"},
+                timeout=10
+            )
+            fechas = r0.json().get("expirations", {}).get("date", [])
+            if isinstance(fechas, str): fechas = [fechas]
+            vencimiento = None
+            for f in sorted(fechas):
+                if (date.fromisoformat(f) - hoy).days >= 7:
+                    vencimiento = f
+                    break
+            if not vencimiento:
+                return None
 
         r = requests.get(
             f"{TRADIER_BASE}/markets/options/chains",
@@ -1953,21 +1997,17 @@ def buscar_opcion_reto(opcion_original, presupuesto):
             params={"symbol": simbolo, "expiration": vencimiento, "greeks": "false"},
             timeout=10
         )
-        data    = r.json()
-        opciones = data.get("options", {}).get("option", [])
+        opciones = r.json().get("options", {}).get("option", [])
         if not opciones:
             return None
 
-        # Filtrar: tipo correcto, ±5 strikes, ask > 0 y dentro del presupuesto
         candidatas = []
         for o in opciones:
             if o.get("option_type") != tipo:
                 continue
             strike = float(o.get("strike", 0))
             ask    = float(o.get("ask", 0))
-            if ask <= 0:
-                continue
-            if abs(strike - strike_orig) > 5:
+            if ask <= 0 or abs(strike - strike_orig) > 5:
                 continue
             if ask <= precio_max:
                 candidatas.append(o)
@@ -1975,7 +2015,6 @@ def buscar_opcion_reto(opcion_original, presupuesto):
         if not candidatas:
             return None
 
-        # La más cercana al strike original
         mejor = min(candidatas, key=lambda o: abs(float(o.get("strike", 0)) - strike_orig))
         return {
             "symbol":      mejor.get("symbol"),
@@ -2635,6 +2674,74 @@ def verificar_velas():
 ACTIVOS_V7_ANTICIPADA     = ["AAPL", "BA", "GLD", "NVDA", "AMZN", "GOOG", "META"]
 ACTIVOS_V7_ANTICIPADA_SPY = ["SPY"]
 
+def enviar_resumen_diario(ahora):
+    """Envía resumen del día a Telegram a las 4:16 PM EST."""
+    try:
+        if _portfolio is None:
+            cargar_portfolio()
+
+        fecha_hoy = ahora.strftime("%Y-%m-%d")
+
+        # Señales del día
+        señales_lineas = []
+        for activo in ACTIVOS:
+            ed = estado_dia.get(activo, {})
+            if ed.get("fecha") != fecha_hoy:
+                continue
+            disparadas = []
+            if ed.get("vr1_fired"):  disparadas.append("1VR")
+            if ed.get("rpg_fired"):  disparadas.append("RPG")
+            if ed.get("gna_fired"):  disparadas.append("GNA")
+            if ed.get("gba_fired"):  disparadas.append("GBA")
+            if ed.get("pm40_fired"): disparadas.append("PM40")
+            if ed.get("4ps_fired"):  disparadas.append("4PS")
+            if disparadas:
+                señales_lineas.append(f"  • {activo}: {', '.join(disparadas)}")
+
+        # Posiciones cerradas hoy
+        cerradas_hoy = [
+            p for p in _portfolio["historial"]
+            if str(p.get("ts_cierre", "")).startswith(fecha_hoy)
+        ]
+        pl_dia = sum(p.get("pl_usd", 0) or 0 for p in cerradas_hoy)
+        wins   = sum(1 for p in cerradas_hoy if (p.get("pl_usd", 0) or 0) > 0)
+
+        # Estado reto
+        reto     = _portfolio["reto"]
+        cap_reto = sum(c["capital"] for c in reto["carriles"] if not c.get("eliminado"))
+        vivos    = sum(1 for c in reto["carriles"] if not c.get("eliminado"))
+        elim     = sum(1 for c in reto["carriles"] if c.get("eliminado"))
+
+        # Historial win rate global
+        hist_total = len(_portfolio["historial"])
+        hist_wins  = sum(1 for p in _portfolio["historial"] if (p.get("pl_usd", 0) or 0) > 0)
+        wr         = f"{round(hist_wins/hist_total*100,1)}%" if hist_total else "—"
+
+        # Posiciones abiertas
+        pos_abiertas = len(_portfolio["posiciones"])
+
+        emoji_pl = "✅" if pl_dia >= 0 else "🔴"
+
+        msg = (
+            f"📊 <b>AXIS — Resumen {ahora.strftime('%m/%d/%Y')}</b>\n"
+            f"━━━━━━━━━━━━━━━━━━\n\n"
+            f"<b>Señales del día:</b>\n"
+            + (("\n".join(señales_lineas) + "\n") if señales_lineas else "  Sin señales hoy\n")
+            + f"\n<b>Operaciones cerradas hoy:</b> {len(cerradas_hoy)}"
+            + (f" ({wins}W / {len(cerradas_hoy)-wins}L)" if cerradas_hoy else "")
+            + f"\n{emoji_pl} <b>P&L del día:</b> ${pl_dia:+.2f}\n"
+            f"📈 <b>Posiciones abiertas:</b> {pos_abiertas}\n\n"
+            f"<b>Win Rate global:</b> {wr} ({hist_wins}/{hist_total})\n\n"
+            f"🏆 <b>Reto Millonario:</b> {'Activo' if reto['activo'] else 'Inactivo'}\n"
+            f"  Carriles vivos: {vivos}/10 | Eliminados: {elim}\n"
+            f"  Capital total: ${cap_reto:,.2f}\n\n"
+            f"<i>AXIS v8.50 | {ahora.strftime('%H:%M EST')}</i>"
+        )
+        enviar_telegram(msg)
+        print(f"Resumen diario enviado — {fecha_hoy}")
+    except Exception as e:
+        print(f"Error enviar_resumen_diario: {e}")
+
 def loop_v7_anticipada():
     """
     Thread independiente que vigila horarios V7 para todos los activos.
@@ -2685,12 +2792,16 @@ def loop_v7_anticipada():
                             evaluar_hed(simbolo)
                             ejecutado_414.add(simbolo)
 
-                # 4:16 EST — correccion cierre real SPY
+                # 4:16 EST — correccion cierre real SPY + resumen diario
                 if ahora.hour == 16 and ahora.minute == 16:
                     for simbolo in ACTIVOS_V7_ANTICIPADA_SPY:
                         if simbolo not in ejecutado_416:
                             corregir_cierre_v7(simbolo)
                             ejecutado_416.add(simbolo)
+                    # Resumen diario — se ejecuta una sola vez al cierre
+                    if "resumen" not in ejecutado_416:
+                        ejecutado_416.add("resumen")
+                        enviar_resumen_diario(ahora)
 
             time.sleep(30)
         except Exception as e:
@@ -2828,48 +2939,6 @@ def evaluar_hed(simbolo):
     except Exception as e:
         print(f"Error evaluar_hed {simbolo}: {e}")
 
-
-def loop_v7_anticipada():
-    """
-    Thread independiente que vigila 3:58 y 4:00 EST
-    solo en dias de mercado para AAPL, BA, GLD.
-    """
-    print("Thread V7 anticipada iniciado...")
-    ejecutado_358 = set()   # activos evaluados a las 3:58 hoy
-    ejecutado_400 = set()   # activos corregidos a las 4:00 hoy
-    fecha_actual  = None
-
-    while True:
-        try:
-            ahora      = datetime.now(EST)
-            fecha_hoy  = ahora.strftime("%Y-%m-%d")
-
-            # Reset diario
-            if fecha_hoy != fecha_actual:
-                fecha_actual  = fecha_hoy
-                ejecutado_358 = set()
-                ejecutado_400 = set()
-
-            if es_dia_mercado(ahora):
-                # 3:58 EST — evaluacion anticipada V7 + HED
-                if ahora.hour == 15 and ahora.minute == 58:
-                    for simbolo in ACTIVOS_V7_ANTICIPADA:
-                        if simbolo not in ejecutado_358:
-                            evaluar_v7_anticipada(simbolo)
-                            evaluar_hed(simbolo)
-                            ejecutado_358.add(simbolo)
-
-                # 4:00 EST — correccion cierre real sin alerta
-                if ahora.hour == 16 and ahora.minute == 0:
-                    for simbolo in ACTIVOS_V7_ANTICIPADA:
-                        if simbolo not in ejecutado_400:
-                            corregir_cierre_v7(simbolo)
-                            ejecutado_400.add(simbolo)
-
-            time.sleep(30)   # chequea cada 30 segundos — liviano y preciso
-        except Exception as e:
-            print(f"Error loop V7 anticipada: {e}")
-            time.sleep(30)
 
 # ═══════════════════════════════════════════════════════════
 # TEST TRADIER 30MIN — v8.13
@@ -3320,7 +3389,7 @@ def system_status():
             archivos_data[fname] = "NO ENCONTRADO ❌"
 
     return jsonify({
-        "sistema":          "AXIS Breakout Sentinel v8.48",
+        "sistema":          "AXIS Breakout Sentinel v8.50",
         "hora_est":         ahora.strftime("%Y-%m-%d %H:%M:%S EST"),
         "mercado":          "ABIERTO ✅" if mercado_abierto else "CERRADO ⏸",
         "threads":          threads_vivos,
@@ -3338,6 +3407,136 @@ def system_status():
     }), 200
 # GET /cotizar_opciones
 # ═══════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════
+# ESTADÍSTICAS — win rate por estrategia, activo, vela, hora
+# GET /estadisticas
+# ═══════════════════════════════════════════════════════════
+@app.route("/estadisticas", methods=["GET"])
+def estadisticas():
+    if _portfolio is None:
+        cargar_portfolio()
+
+    historial = _portfolio.get("historial", [])
+    if not historial:
+        return jsonify({"mensaje": "Sin historial aún — opera primero para generar estadísticas"}), 200
+
+    from collections import defaultdict
+
+    # Acumuladores
+    por_estrategia = defaultdict(lambda: {"total": 0, "wins": 0, "pl_usd": 0.0, "pl_pcts": []})
+    por_activo     = defaultdict(lambda: {"total": 0, "wins": 0, "pl_usd": 0.0, "pl_pcts": []})
+    por_motivo     = defaultdict(lambda: {"total": 0, "pl_usd": 0.0})
+    por_vela       = defaultdict(lambda: {"total": 0, "wins": 0, "pl_usd": 0.0})
+    rachas         = []
+    racha_actual   = 0
+    mejor_racha    = 0
+
+    pl_total       = 0.0
+    wins_total     = 0
+    total          = len(historial)
+
+    for pos in historial:
+        pl_pct  = pos.get("pl_pct", 0) or 0
+        pl_usd  = pos.get("pl_usd", 0) or 0
+        es_win  = pl_usd > 0
+        strat   = pos.get("estrategia", "?")
+        activo  = pos.get("simbolo", "?")
+        motivo  = pos.get("motivo_cierre", "?")
+        pl_total += pl_usd
+
+        if es_win:
+            wins_total  += 1
+            racha_actual += 1
+            mejor_racha  = max(mejor_racha, racha_actual)
+        else:
+            racha_actual = 0
+
+        # Por estrategia
+        por_estrategia[strat]["total"]   += 1
+        por_estrategia[strat]["pl_usd"]  += pl_usd
+        por_estrategia[strat]["pl_pcts"].append(pl_pct)
+        if es_win:
+            por_estrategia[strat]["wins"] += 1
+
+        # Por activo
+        por_activo[activo]["total"]   += 1
+        por_activo[activo]["pl_usd"]  += pl_usd
+        por_activo[activo]["pl_pcts"].append(pl_pct)
+        if es_win:
+            por_activo[activo]["wins"] += 1
+
+        # Por motivo de cierre
+        por_motivo[motivo]["total"]  += 1
+        por_motivo[motivo]["pl_usd"] += pl_usd
+
+        # Por vela de entrada (extraer de ts_entrada)
+        try:
+            ts_in = datetime.fromisoformat(str(pos["ts_entrada"]).replace("Z", ""))
+            hora  = ts_in.hour
+            if hora == 10:   vela = "V1(10h)"
+            elif hora == 11: vela = "V2(11h)"
+            elif hora == 12: vela = "V3(12h)"
+            elif hora == 13: vela = "V4(13h)"
+            elif hora == 14: vela = "V5(14h)"
+            elif hora == 15: vela = "V6(15h)"
+            elif hora == 16: vela = "V7(16h)"
+            else:            vela = f"V?({hora}h)"
+            por_vela[vela]["total"]  += 1
+            por_vela[vela]["pl_usd"] += pl_usd
+            if es_win:
+                por_vela[vela]["wins"] += 1
+        except:
+            pass
+
+    def resumen(d):
+        return {
+            "total":      d["total"],
+            "wins":       d["wins"],
+            "losses":     d["total"] - d["wins"],
+            "win_rate":   f"{round(d['wins']/d['total']*100, 1)}%" if d["total"] else "—",
+            "pl_usd":     round(d["pl_usd"], 2),
+            "pl_pct_avg": f"{round(sum(d['pl_pcts'])/len(d['pl_pcts']), 1)}%" if d.get("pl_pcts") else "—",
+        }
+
+    return jsonify({
+        "resumen_general": {
+            "total_operaciones": total,
+            "wins":              wins_total,
+            "losses":            total - wins_total,
+            "win_rate":          f"{round(wins_total/total*100, 1)}%" if total else "—",
+            "pl_total_usd":      round(pl_total, 2),
+            "mejor_racha":       mejor_racha,
+            "racha_actual":      racha_actual,
+        },
+        "por_estrategia": {k: resumen(v) for k, v in sorted(por_estrategia.items())},
+        "por_activo":     {k: resumen(v) for k, v in sorted(por_activo.items())},
+        "por_vela":       {
+            k: {
+                "total":    v["total"],
+                "wins":     v["wins"],
+                "win_rate": f"{round(v['wins']/v['total']*100,1)}%" if v["total"] else "—",
+                "pl_usd":   round(v["pl_usd"], 2),
+            }
+            for k, v in sorted(por_vela.items())
+        },
+        "por_motivo_cierre": {
+            k: {"total": v["total"], "pl_usd": round(v["pl_usd"], 2)}
+            for k, v in sorted(por_motivo.items())
+        },
+        "ultimas_10": [
+            {
+                "simbolo":   p.get("simbolo"),
+                "estrategia":p.get("estrategia"),
+                "tipo":      p.get("tipo"),
+                "pl_pct":    p.get("pl_pct"),
+                "pl_usd":    p.get("pl_usd"),
+                "motivo":    p.get("motivo_cierre"),
+                "ts_cierre": p.get("ts_cierre"),
+            }
+            for p in historial[-10:]
+        ],
+    }), 200
+
 @app.route("/cotizar_opciones", methods=["GET"])
 def cotizar_opciones():
     from datetime import date, timedelta
