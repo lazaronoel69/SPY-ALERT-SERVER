@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v8.46
+AXIS Breakout Sentinel v8.47
 Estrategias: 1VR | 1VR+ | RPG | GNA | GBA | RCB/CNF
 Multi-activo: SPY, AAPL, BA, GLD
 v8.43: Portfolio fix — ejecutar_orden_tradier en webhook exec/reto | Panic Button al bid |
@@ -1624,7 +1624,7 @@ def reporte_horario():
 # LOOP PRINCIPAL
 # ═══════════════════════════════════════════════════════════
 def monitor_loop():
-    print("AXIS Breakout Sentinel v8.46 iniciado...")
+    print("AXIS Breakout Sentinel v8.47 iniciado...")
     while True:
         ahora = datetime.now(EST)
         mins  = ahora.hour * 60 + ahora.minute
@@ -1732,7 +1732,7 @@ def home(path=""):
   <div class="canales-grid">
     {canales_html}
   </div>
-  <div class="footer">AXIS Breakout Sentinel v8.46 · {activos_str}</div>
+  <div class="footer">AXIS Breakout Sentinel v8.47 · {activos_str}</div>
 </body>
 </html>"""
     from flask import Response
@@ -1752,7 +1752,7 @@ def test():
         else:
             lineas_canal.append(f"  {a}: OFF")
     enviar_telegram(
-        f"✅ <b>AXIS Breakout Sentinel v8.46</b>\n"
+        f"✅ <b>AXIS Breakout Sentinel v8.47</b>\n"
         f"<b>Hora:</b> {ahora.strftime('%A %d/%m/%Y %H:%M EST')}\n"
         f"<b>Mercado:</b> {'Abierto' if es_dia_mercado(ahora) else 'Cerrado'}\n"
         f"<b>1VR:</b> {'ON' if VR1_ON else 'OFF'} | "
@@ -3149,15 +3149,132 @@ def ruta_velas():
     velas   = get_velas(simbolo, outputsize=280)
     if not velas:
         return jsonify({"error": f"Sin datos para {simbolo}"}), 500
+
+    # Señales que Railway ya disparó hoy — dashboard las dibuja directamente
+    # sin recalcular condiciones (SMAs, canales) que pueden diferir
+    ed = estado_dia.get(simbolo, {})
+    senales_hoy = []
+    fecha_hoy = datetime.now(EST).strftime("%Y-%m-%d")
+    if ed.get("fecha") == fecha_hoy:
+        if ed.get("vr1_fired"):
+            senales_hoy.append({"tipo": "1VR",  "fecha": fecha_hoy})
+        if ed.get("rpg_fired"):
+            senales_hoy.append({"tipo": "RPG",  "fecha": fecha_hoy})
+        if ed.get("gna_fired"):
+            senales_hoy.append({"tipo": "GNA",  "fecha": fecha_hoy})
+        if ed.get("gba_fired"):
+            senales_hoy.append({"tipo": "GBA",  "fecha": fecha_hoy})
+        if ed.get("pm40_fired"):
+            senales_hoy.append({"tipo": "PM40", "fecha": fecha_hoy})
+        if ed.get("4ps_fired"):
+            senales_hoy.append({"tipo": "4PS",  "fecha": fecha_hoy})
+
     return jsonify({
-        "simbolo": simbolo,
-        "fuente":  "Tradier 15min",
-        "total":   len(velas),
-        "velas":   velas,
+        "simbolo":     simbolo,
+        "fuente":      "Tradier 15min",
+        "total":       len(velas),
+        "velas":       velas,
+        "senales_hoy": senales_hoy,
     }), 200
 
 # ═══════════════════════════════════════════════════════════
-# TEST RANGO — v8.20
+# COTIZAR OPCIONES — ruta temporal para análisis de precios
+# GET /cotizar_opciones
+# ═══════════════════════════════════════════════════════════
+@app.route("/cotizar_opciones", methods=["GET"])
+def cotizar_opciones():
+    from datetime import date, timedelta
+    hoy = date.today()
+
+    def get_pct_otm(precio):
+        if precio < 150:  return 1.50
+        if precio < 300:  return 1.25
+        if precio < 500:  return 0.85
+        if precio < 700:  return 0.65
+        return 0.50
+
+    resultado = {}
+    for simbolo in ACTIVOS:
+        try:
+            # Precio actual del subyacente
+            r0 = requests.get(
+                f"{TRADIER_BASE_REAL}/markets/quotes",
+                headers=TRADIER_HEADERS_REAL,
+                params={"symbols": simbolo, "greeks": "false"},
+                timeout=10
+            )
+            precio_actual = float(r0.json().get("quotes", {}).get("quote", {}).get("last", 0))
+            if not precio_actual:
+                resultado[simbolo] = {"error": "Sin precio"}
+                continue
+
+            # Primer vencimiento con mínimo 7 días
+            r1 = requests.get(
+                f"{TRADIER_BASE_REAL}/markets/options/expirations",
+                headers=TRADIER_HEADERS_REAL,
+                params={"symbol": simbolo, "includeAllRoots": "true"},
+                timeout=10
+            )
+            fechas = r1.json().get("expirations", {}).get("date", [])
+            if isinstance(fechas, str): fechas = [fechas]
+            vencimiento = None
+            for f in sorted(fechas):
+                if (date.fromisoformat(f) - hoy).days >= 7:
+                    vencimiento = f
+                    break
+            if not vencimiento:
+                resultado[simbolo] = {"error": "Sin vencimiento"}
+                continue
+
+            # Calcular strikes objetivo
+            pct = get_pct_otm(precio_actual)
+            dist = round(precio_actual * pct / 100, 1)
+            strike_call = round(precio_actual + dist)
+            strike_put  = round(precio_actual - dist)
+
+            # Cadena de opciones
+            r2 = requests.get(
+                f"{TRADIER_BASE_REAL}/markets/options/chains",
+                headers=TRADIER_HEADERS_REAL,
+                params={"symbol": simbolo, "expiration": vencimiento, "greeks": "false"},
+                timeout=10
+            )
+            opciones = r2.json().get("options", {}).get("option", [])
+            if not opciones:
+                resultado[simbolo] = {"error": "Sin cadena de opciones"}
+                continue
+
+            calls = [o for o in opciones if o.get("option_type") == "call"]
+            puts  = [o for o in opciones if o.get("option_type") == "put"]
+
+            mejor_call = min(calls, key=lambda o: abs(float(o.get("strike",0)) - strike_call)) if calls else None
+            mejor_put  = min(puts,  key=lambda o: abs(float(o.get("strike",0)) - strike_put))  if puts  else None
+
+            resultado[simbolo] = {
+                "precio_actual":  round(precio_actual, 2),
+                "vencimiento":    vencimiento,
+                "dias_venc":      (date.fromisoformat(vencimiento) - hoy).days,
+                "pct_otm":        f"{pct}%",
+                "distancia_pts":  dist,
+                "CALL": {
+                    "strike":       float(mejor_call.get("strike", 0)) if mejor_call else None,
+                    "ask":          float(mejor_call.get("ask", 0))    if mejor_call else None,
+                    "bid":          float(mejor_call.get("bid", 0))    if mejor_call else None,
+                    "costo_1cont":  round(float(mejor_call.get("ask", 0)) * 100, 2) if mejor_call else None,
+                    "symbol":       mejor_call.get("symbol")           if mejor_call else None,
+                } if mejor_call else None,
+                "PUT": {
+                    "strike":       float(mejor_put.get("strike", 0))  if mejor_put else None,
+                    "ask":          float(mejor_put.get("ask", 0))     if mejor_put else None,
+                    "bid":          float(mejor_put.get("bid", 0))     if mejor_put else None,
+                    "costo_1cont":  round(float(mejor_put.get("ask", 0)) * 100, 2) if mejor_put else None,
+                    "symbol":       mejor_put.get("symbol")            if mejor_put else None,
+                } if mejor_put else None,
+            }
+        except Exception as e:
+            resultado[simbolo] = {"error": str(e)}
+
+    return jsonify(resultado), 200
 # Prueba diferentes rangos de fechas en Tradier timesales
 # para encontrar el limite exacto de datos disponibles
 # ═══════════════════════════════════════════════════════════
