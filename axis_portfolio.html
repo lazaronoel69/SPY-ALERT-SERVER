@@ -312,6 +312,7 @@
   <div style="display:flex;gap:8px;align-items:center;">
     <a href="/" style="background:var(--bg3);border:1px solid var(--border);color:var(--muted);padding:5px 12px;border-radius:6px;font-size:11px;text-decoration:none;letter-spacing:1px;">⌂ HOME</a>
     <a href="/charts" style="background:var(--bg3);border:1px solid var(--border);color:var(--muted);padding:5px 12px;border-radius:6px;font-size:11px;text-decoration:none;letter-spacing:1px;">📊 CHARTS</a>
+    <a href="/analisis" style="background:var(--bg3);border:1px solid var(--border);color:var(--muted);padding:5px 12px;border-radius:6px;font-size:11px;text-decoration:none;letter-spacing:1px;">📈 ANÁLISIS</a>
     <button class="refresh-btn" onclick="cargarDatos()">↻ Refresh</button>
   </div>
 </div>
@@ -396,6 +397,57 @@ function tiempoAbierto(tsEntrada) {
   return `${Math.floor(diff/60)}h ${diff%60}m abierta`;
 }
 
+function plColor(pct) {
+  if (pct === null || pct === undefined) return 'var(--muted)';
+  return pct >= 0 ? '#00e676' : '#f85149';
+}
+
+function plBadge(pos) {
+  const pct = pos.pl_pct_actual;
+  const max = pos.pl_pct_maximo;
+  const fechaMax = pos.fecha_maximo || '';
+  if (pct === null || pct === undefined) return '';
+  const pctStr = `${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%`;
+  const maxStr = max !== null && max !== undefined ? `${max >= 0 ? '+' : ''}${max.toFixed(1)}%` : '—';
+  return `
+    <div style="display:flex;gap:12px;align-items:center;margin:10px 0 4px;flex-wrap:wrap;">
+      <div style="font-size:13px;font-weight:700;color:${plColor(pct)};">
+        Cierre ayer: ${pctStr}
+      </div>
+      <div style="font-size:11px;color:var(--muted);">
+        Máx: <span style="color:${plColor(max)};font-weight:600;">${maxStr}</span>
+        ${fechaMax ? `<span style="color:var(--muted);font-size:10px;"> (${fechaMax})</span>` : ''}
+      </div>
+    </div>`;
+}
+
+function historialTable(pos) {
+  const hist = pos.historial_precios || [];
+  if (!hist.length) return '<div style="color:var(--muted);font-size:11px;padding:8px 0;">Sin datos aún — primer snapshot a las 4:15 PM</div>';
+  return `
+    <table style="width:100%;border-collapse:collapse;font-size:11px;margin-top:8px;">
+      <thead>
+        <tr style="color:var(--muted);text-transform:uppercase;letter-spacing:1px;">
+          <th style="text-align:left;padding:4px 0;">Fecha</th>
+          <th style="text-align:right;padding:4px 0;">Bid</th>
+          <th style="text-align:right;padding:4px 0;">P&L%</th>
+          <th style="text-align:right;padding:4px 0;">Nota</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${hist.map(h => `
+          <tr style="border-top:1px solid #1a1a24;">
+            <td style="padding:4px 0;color:var(--text);">${h.fecha}</td>
+            <td style="text-align:right;padding:4px 0;color:var(--text);">$${(h.bid||0).toFixed(2)}</td>
+            <td style="text-align:right;padding:4px 0;font-weight:600;color:${plColor(h.pl_pct)};">
+              ${h.pl_pct !== undefined ? (h.pl_pct >= 0 ? '+' : '') + h.pl_pct.toFixed(1) + '%' : '—'}
+            </td>
+            <td style="text-align:right;padding:4px 0;color:var(--muted);font-size:10px;">${h.nota||''}</td>
+          </tr>`).join('')}
+      </tbody>
+    </table>`;
+}
+
 function renderPosiciones(posiciones) {
   const grid = document.getElementById('posiciones-grid');
   document.getElementById('badge-pos').textContent = posiciones.length;
@@ -404,8 +456,9 @@ function renderPosiciones(posiciones) {
     return;
   }
   grid.innerHTML = posiciones.map(pos => {
-    const tagClass = pos.tipo === 'PUT' ? 'tag-put' : 'tag-call';
+    const tagClass  = pos.tipo === 'PUT' ? 'tag-put' : 'tag-call';
     const costoTotal = pos.costo_total ? `$${pos.costo_total.toFixed(2)}` : `$${(pos.precio_entrada * 100 * pos.contratos).toFixed(2)}`;
+    const posId     = pos.id;
     return `
       <div class="pos-card ${pos.es_reto ? 'reto' : ''}">
         <div class="pos-header">
@@ -426,15 +479,30 @@ function renderPosiciones(posiciones) {
           <span><label>Costo Total</label><value>${costoTotal}</value></span>
           <span><label>GTC Limit</label><value style="color:var(--gold)">$${pos.precio_gtc.toFixed(2)}</value></span>
         </div>
+        ${plBadge(pos)}
+        <div style="margin-top:6px;">
+          <button onclick="toggleHistorial('${posId}')"
+            style="background:none;border:1px solid #2a2a3a;color:var(--muted);font-size:10px;
+                   padding:3px 10px;border-radius:6px;cursor:pointer;letter-spacing:1px;">
+            📋 VER HISTORIAL ▼
+          </button>
+          <div id="hist-${posId}" style="display:none;margin-top:8px;">
+            ${historialTable(pos)}
+          </div>
+        </div>
         <div class="pos-footer" style="margin-top:14px;">
           <span class="pos-tiempo">${tiempoAbierto(pos.ts_entrada)}</span>
-          <button class="panic-btn" onclick="confirmarPanic('${pos.id}')">
-            PANIC
-          </button>
+          <button class="panic-btn" onclick="confirmarPanic('${pos.id}')">PANIC</button>
         </div>
       </div>
     `;
   }).join('');
+}
+
+function toggleHistorial(posId) {
+  const el = document.getElementById('hist-' + posId);
+  if (!el) return;
+  el.style.display = el.style.display === 'none' ? 'block' : 'none';
 }
 
 function renderHistorial(historial) {

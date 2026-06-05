@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v8.51
+AXIS Breakout Sentinel v8.52
 Estrategias: 1VR | 1VR+ | RPG | GNA | GBA | RCB/CNF
 Multi-activo: SPY, AAPL, BA, GLD
 v8.43: Portfolio fix — ejecutar_orden_tradier en webhook exec/reto | Panic Button al bid |
@@ -421,6 +421,17 @@ def registrar_posicion(opcion, estrategia, simbolo, precio_entrada, es_reto=Fals
         "estado":           "abierta",
         "tradier_orden_id": tradier_orden_id,
         "tradier_gtc_id":   tradier_gtc_id,
+        "historial_precios": [
+            {
+                "fecha":   datetime.now(EST).strftime("%Y-%m-%d"),
+                "bid":     precio_entrada,
+                "pl_pct":  0.0,
+                "nota":    "entrada",
+            }
+        ],
+        "pl_pct_actual":  0.0,
+        "pl_pct_maximo":  0.0,
+        "fecha_maximo":   datetime.now(EST).strftime("%Y-%m-%d"),
     }
     _portfolio["posiciones"].append(pos)
     if es_reto and carril_id:
@@ -519,6 +530,32 @@ def cerrar_posicion(pos_id, precio_cierre, motivo="panic"):
     pos["ts_cierre"]       = datetime.now(EST).isoformat()
     pos["minutos_abierta"] = minutos_abierta
     pos["estado"]          = "cerrada"
+    pos["pl_pct_actual"]   = pl_pct
+
+    # Agregar entrada final al historial de precios
+    fecha_cierre = datetime.now(EST).strftime("%Y-%m-%d")
+    historial_p  = pos.get("historial_precios", [])
+    fechas_exist = [h["fecha"] for h in historial_p]
+    if fecha_cierre not in fechas_exist:
+        historial_p.append({
+            "fecha":  fecha_cierre,
+            "bid":    precio_cierre,
+            "pl_pct": pl_pct,
+            "nota":   motivo,
+        })
+    else:
+        # Actualizar entrada del día con precio de cierre real
+        for h in historial_p:
+            if h["fecha"] == fecha_cierre:
+                h["bid"]    = precio_cierre
+                h["pl_pct"] = pl_pct
+                h["nota"]   = motivo
+    pos["historial_precios"] = historial_p
+
+    # Actualizar máximo si el cierre supera el máximo previo
+    if pl_pct > pos.get("pl_pct_maximo", 0):
+        pos["pl_pct_maximo"] = pl_pct
+        pos["fecha_maximo"]  = fecha_cierre
 
     # Actualizar carril del Reto si aplica
     if pos.get("es_reto") and pos.get("carril_id"):
@@ -1703,7 +1740,7 @@ def reporte_horario():
 # LOOP PRINCIPAL
 # ═══════════════════════════════════════════════════════════
 def monitor_loop():
-    print("AXIS Breakout Sentinel v8.51 iniciado...")
+    print("AXIS Breakout Sentinel v8.52 iniciado...")
     while True:
         ahora = datetime.now(EST)
         mins  = ahora.hour * 60 + ahora.minute
@@ -1764,8 +1801,8 @@ def home(path=""):
                   font-size: 12px; }}
   .mercado-on  {{ border-color: #00e676; color: #00e676; }}
   .mercado-off {{ border-color: #666688; color: #666688; }}
-  .nav-grid {{ display: grid; grid-template-columns: 1fr 1fr; gap: 16px;
-               width: 100%; max-width: 560px; margin-bottom: 40px; }}
+  .nav-grid {{ display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px;
+               width: 100%; max-width: 700px; margin-bottom: 40px; }}
   .nav-card {{ background: #111118; border: 1px solid #2a2a3a; border-radius: 16px;
                padding: 28px; text-decoration: none; color: #e8e8f0;
                transition: all 0.2s; text-align: center; }}
@@ -1807,11 +1844,16 @@ def home(path=""):
       <div class="title">Portfolio</div>
       <div class="desc">Posiciones · Reto Millonario · P&L</div>
     </a>
+    <a href="/analisis" class="nav-card" style="border-color:#1a3a2a;">
+      <div class="icon">📈</div>
+      <div class="title">Análisis</div>
+      <div class="desc">Historial · Win Rate · Comportamiento</div>
+    </a>
   </div>
   <div class="canales-grid">
     {canales_html}
   </div>
-  <div class="footer">AXIS Breakout Sentinel v8.51 · {activos_str}</div>
+  <div class="footer">AXIS Breakout Sentinel v8.52 · {activos_str}</div>
 </body>
 </html>"""
     from flask import Response
@@ -1831,7 +1873,7 @@ def test():
         else:
             lineas_canal.append(f"  {a}: OFF")
     enviar_telegram(
-        f"✅ <b>AXIS Breakout Sentinel v8.51</b>\n"
+        f"✅ <b>AXIS Breakout Sentinel v8.52</b>\n"
         f"<b>Hora:</b> {ahora.strftime('%A %d/%m/%Y %H:%M EST')}\n"
         f"<b>Mercado:</b> {'Abierto' if es_dia_mercado(ahora) else 'Cerrado'}\n"
         f"<b>1VR:</b> {'ON' if VR1_ON else 'OFF'} | "
@@ -2713,6 +2755,65 @@ def verificar_velas():
 ACTIVOS_V7_ANTICIPADA     = ["AAPL", "BA", "GLD", "NVDA", "AMZN", "GOOG", "META"]
 ACTIVOS_V7_ANTICIPADA_SPY = ["SPY"]
 
+def guardar_snapshot_precios(ahora):
+    """
+    Cada día a las 4:15 PM EST guarda el bid de cada opción abierta.
+    Actualiza historial_precios, pl_pct_actual, pl_pct_maximo y fecha_maximo.
+    """
+    global _portfolio
+    if _portfolio is None:
+        cargar_portfolio()
+    if not _portfolio["posiciones"]:
+        return
+
+    fecha_hoy = ahora.strftime("%Y-%m-%d")
+    actualizadas = 0
+
+    for pos in _portfolio["posiciones"]:
+        try:
+            option_symbol = pos.get("option_symbol")
+            precio_entrada = pos.get("precio_entrada", 0)
+            if not option_symbol or not precio_entrada:
+                continue
+
+            # Obtener bid actual de Tradier
+            bid = get_bid_opcion_tradier(option_symbol)
+            if not bid or bid <= 0:
+                bid = 0.01  # opción sin bid — prácticamente sin valor
+
+            pl_pct = round((bid - precio_entrada) / precio_entrada * 100, 2)
+
+            # Actualizar historial — no duplicar si ya existe entrada de hoy
+            historial = pos.get("historial_precios", [])
+            fechas_existentes = [h["fecha"] for h in historial]
+            if fecha_hoy not in fechas_existentes:
+                historial.append({
+                    "fecha":  fecha_hoy,
+                    "bid":    bid,
+                    "pl_pct": pl_pct,
+                    "nota":   "cierre",
+                })
+                pos["historial_precios"] = historial
+
+            # Actualizar pl_pct_actual
+            pos["pl_pct_actual"] = pl_pct
+
+            # Actualizar máximo si aplica
+            maximo_actual = pos.get("pl_pct_maximo", 0)
+            if pl_pct > maximo_actual:
+                pos["pl_pct_maximo"] = pl_pct
+                pos["fecha_maximo"]  = fecha_hoy
+
+            actualizadas += 1
+            print(f"Snapshot {pos['simbolo']} {option_symbol}: bid ${bid:.2f} | {'+' if pl_pct >= 0 else ''}{pl_pct}%")
+
+        except Exception as e:
+            print(f"Error snapshot {pos.get('option_symbol','?')}: {e}")
+
+    if actualizadas:
+        guardar_portfolio()
+        print(f"Snapshots guardados: {actualizadas} posiciones")
+
 def enviar_resumen_diario(ahora):
     """Envía resumen del día a Telegram a las 4:16 PM EST."""
     try:
@@ -2840,6 +2941,7 @@ def loop_v7_anticipada():
                     # Resumen diario — se ejecuta una sola vez al cierre
                     if "resumen" not in ejecutado_416:
                         ejecutado_416.add("resumen")
+                        guardar_snapshot_precios(ahora)   # snapshot precios primero
                         enviar_resumen_diario(ahora)
 
             time.sleep(30)
@@ -3428,7 +3530,7 @@ def system_status():
             archivos_data[fname] = "NO ENCONTRADO ❌"
 
     return jsonify({
-        "sistema":          "AXIS Breakout Sentinel v8.51",
+        "sistema":          "AXIS Breakout Sentinel v8.52",
         "hora_est":         ahora.strftime("%Y-%m-%d %H:%M:%S EST"),
         "mercado":          "ABIERTO ✅" if mercado_abierto else "CERRADO ⏸",
         "threads":          threads_vivos,
@@ -3576,17 +3678,32 @@ def estadisticas():
         ],
     }), 200
 
+@app.route("/analisis", methods=["GET"])
+def serve_analisis():
+    from flask import Response
+    html_path = os.path.join(os.path.dirname(__file__), "axis_analisis.html")
+    if os.path.exists(html_path):
+        with open(html_path, "r") as f:
+            return Response(f.read(), mimetype="text/html")
+    return Response("<h1>axis_analisis.html no encontrado</h1>", mimetype="text/html"), 404
+
+@app.route("/analisis/data", methods=["GET"])
+def analisis_data():
+    """Devuelve todas las posiciones (abiertas + historial) con historial_precios."""
+    if _portfolio is None:
+        cargar_portfolio()
+    return jsonify({
+        "posiciones_abiertas": _portfolio["posiciones"],
+        "historial":           _portfolio["historial"],
+        "total_abiertas":      len(_portfolio["posiciones"]),
+        "total_cerradas":      len(_portfolio["historial"]),
+    }), 200
+
 @app.route("/cotizar_opciones", methods=["GET"])
 def cotizar_opciones():
     from datetime import date, timedelta
     hoy = date.today()
-
-    def get_pct_otm(precio):
-        if precio < 150:  return 1.50
-        if precio < 300:  return 1.25
-        if precio < 500:  return 0.85
-        if precio < 700:  return 0.65
-        return 0.50
+    # get_pct_otm disponible como función global
 
     resultado = {}
     for simbolo in ACTIVOS:
