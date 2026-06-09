@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v8.53
+AXIS Breakout Sentinel v8.54
 Estrategias: 1VR | 1VR+ | RPG | GNA | GBA | RCB/CNF
 Multi-activo: SPY, AAPL, BA, GLD
 v8.43: Portfolio fix — ejecutar_orden_tradier en webhook exec/reto | Panic Button al bid |
@@ -1768,7 +1768,21 @@ def reporte_horario():
                 print(f"Datos: Tradier 15min ✅")
                 evaluar_activo(simbolo, velas, ahora)
             else:
-                print(f"{simbolo}: sin datos")
+                # Reintento único después de 2 minutos
+                print(f"Tradier sin datos {simbolo} — reintentando en 2 min...")
+                time.sleep(120)
+                velas = get_velas(simbolo, outputsize=50)
+                if velas:
+                    print(f"Datos: Tradier 15min ✅ (reintento)")
+                    evaluar_activo(simbolo, velas, ahora)
+                else:
+                    print(f"{simbolo}: sin datos tras reintento — omitiendo evaluación")
+                    enviar_telegram(
+                        f"⚠️ <b>AXIS — Sin datos Tradier</b>\n"
+                        f"<b>Activo:</b> {simbolo}\n"
+                        f"<b>Hora:</b> {ahora.strftime('%H:%M EST')}\n"
+                        f"Evaluación omitida. Revisar manualmente."
+                    )
             time.sleep(2)
         except Exception as e:
             print(f"Error evaluando {simbolo}: {e}")
@@ -1777,7 +1791,7 @@ def reporte_horario():
 # LOOP PRINCIPAL
 # ═══════════════════════════════════════════════════════════
 def monitor_loop():
-    print("AXIS Breakout Sentinel v8.53 iniciado...")
+    print("AXIS Breakout Sentinel v8.54 iniciado...")
     while True:
         ahora = datetime.now(EST)
         mins  = ahora.hour * 60 + ahora.minute
@@ -1890,7 +1904,7 @@ def home(path=""):
   <div class="canales-grid">
     {canales_html}
   </div>
-  <div class="footer">AXIS Breakout Sentinel v8.53 · {activos_str}</div>
+  <div class="footer">AXIS Breakout Sentinel v8.54 · {activos_str}</div>
 </body>
 </html>"""
     from flask import Response
@@ -1910,7 +1924,7 @@ def test():
         else:
             lineas_canal.append(f"  {a}: OFF")
     enviar_telegram(
-        f"✅ <b>AXIS Breakout Sentinel v8.53</b>\n"
+        f"✅ <b>AXIS Breakout Sentinel v8.54</b>\n"
         f"<b>Hora:</b> {ahora.strftime('%A %d/%m/%Y %H:%M EST')}\n"
         f"<b>Mercado:</b> {'Abierto' if es_dia_mercado(ahora) else 'Cerrado'}\n"
         f"<b>1VR:</b> {'ON' if VR1_ON else 'OFF'} | "
@@ -3004,12 +3018,21 @@ def evaluar_v7_anticipada(simbolo):
     print(f"V7 anticipada {simbolo} — {ahora.strftime('%H:%M EST')}")
     try:
         velas = get_velas(simbolo, outputsize=50)
+        if not velas:
+            # Reintento único
+            time.sleep(60)
+            velas = get_velas(simbolo, outputsize=50)
         if velas:
-            # SPY usa hora 16:15 (4:15 cierre), resto 16:01
             hora_eval = 16
             evaluar_activo(simbolo, velas, ahora.replace(hour=hora_eval, minute=1))
         else:
-            print(f"V7 anticipada {simbolo}: sin datos")
+            print(f"V7 anticipada {simbolo}: sin datos tras reintento")
+            enviar_telegram(
+                f"⚠️ <b>AXIS — Sin datos Tradier</b>\n"
+                f"<b>Activo:</b> {simbolo}\n"
+                f"<b>Hora:</b> V7 anticipada {ahora.strftime('%H:%M EST')}\n"
+                f"Evaluación V7 omitida."
+            )
     except Exception as e:
         print(f"Error V7 anticipada {simbolo}: {e}")
 
@@ -3586,7 +3609,7 @@ def system_status():
             archivos_data[fname] = "NO ENCONTRADO ❌"
 
     return jsonify({
-        "sistema":          "AXIS Breakout Sentinel v8.53",
+        "sistema":          "AXIS Breakout Sentinel v8.54",
         "hora_est":         ahora.strftime("%Y-%m-%d %H:%M:%S EST"),
         "mercado":          "ABIERTO ✅" if mercado_abierto else "CERRADO ⏸",
         "threads":          threads_vivos,
