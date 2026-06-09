@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v8.52
+AXIS Breakout Sentinel v8.53
 Estrategias: 1VR | 1VR+ | RPG | GNA | GBA | RCB/CNF
 Multi-activo: SPY, AAPL, BA, GLD
 v8.43: Portfolio fix — ejecutar_orden_tradier en webhook exec/reto | Panic Button al bid |
@@ -195,21 +195,29 @@ GBA_ON  = True
 # ═══════════════════════════════════════════════════════════
 def estado_diario_vacio():
     return {
-        "fecha":         None,
-        "v1_close":      None,
-        "v1_open":       None,
-        "v1_low":        None,
-        "v7_ayer_close": None,
-        "rpg_piso":      None,
-        "rpg_activo":    False,
-        "rpg_fired":     False,
-        "rpg_s20":       None,
-        "rpg_s40":       None,
-        "gna_activo":    False,
-        "gna_fired":     False,
-        "gba_activo":    False,
-        "gba_fired":     False,
-        "vr1_fired":     False,
+        "fecha":              None,
+        "v1_close":           None,
+        "v1_open":            None,
+        "v1_low":             None,
+        "v7_ayer_close":      None,
+        # ── Lista maestra de señales disparadas ──────────────────
+        # Se actualiza automáticamente desde enviar_senal_con_botones()
+        # y evaluar_hed(). Cubre TODAS las estrategias presentes y futuras.
+        "señales_disparadas": [],
+        # ── Flags de estado interno ───────────────────────────────
+        "rpg_piso":           None,
+        "rpg_activo":         False,
+        "rpg_fired":          False,
+        "rpg_s20":            None,
+        "rpg_s40":            None,
+        "gna_activo":         False,
+        "gna_fired":          False,
+        "gba_activo":         False,
+        "gba_fired":          False,
+        "vr1_fired":          False,
+        "hed_fired":          False,
+        "cnf_fired":          False,
+        "rcb_fired":          False,
         # PM40
         "pm40_p1_high":       None,
         "pm40_p1_idx":        None,
@@ -1663,7 +1671,36 @@ def enviar_telegram_botones(mensaje, orden_id):
 # ═══════════════════════════════════════════════════════════
 # PREPARAR Y ENVIAR SEÑAL CON BOTONES
 # ═══════════════════════════════════════════════════════════
+def registrar_senal_disparada(simbolo, estrategia):
+    """
+    Registra cualquier señal disparada en estado_dia[simbolo]['señales_disparadas'].
+    Se llama automáticamente desde enviar_senal_con_botones() y evaluar_hed().
+    Cubre TODAS las estrategias presentes y futuras sin modificación adicional.
+    No duplica si la misma estrategia ya fue registrada.
+    """
+    ed = estado_dia.get(simbolo)
+    if ed is None:
+        return
+    if "señales_disparadas" not in ed:
+        ed["señales_disparadas"] = []
+    if estrategia not in ed["señales_disparadas"]:
+        ed["señales_disparadas"].append(estrategia)
+    # Actualizar flags individuales para compatibilidad con lógica interna
+    s = estrategia.upper()
+    if "1VR"    in s: ed["vr1_fired"]  = True
+    if "RPG"    in s: ed["rpg_fired"]  = True
+    if "GNA"    in s: ed["gna_fired"]  = True
+    if "GBA"    in s: ed["gba_fired"]  = True
+    if "PM40"   in s: ed["pm40_fired"] = True
+    if "4PS"    in s or "4PASOS" in s: ed["4ps_fired"] = True
+    if "HED"    in s: ed["hed_fired"]  = True
+    if "CNF"    in s: ed["cnf_fired"]  = True
+    if "RCB"    in s: ed["rcb_fired"]  = True
+    guardar_estado_dia()
+
 def enviar_senal_con_botones(simbolo, estrategia, hora_label, precio_vela, tipo_opcion, extra=""):
+    # Registrar señal automáticamente — cubre todas las estrategias
+    registrar_senal_disparada(simbolo, estrategia)
     try:
         precio = get_precio_tradier(simbolo)
         if not precio:
@@ -1740,7 +1777,7 @@ def reporte_horario():
 # LOOP PRINCIPAL
 # ═══════════════════════════════════════════════════════════
 def monitor_loop():
-    print("AXIS Breakout Sentinel v8.52 iniciado...")
+    print("AXIS Breakout Sentinel v8.53 iniciado...")
     while True:
         ahora = datetime.now(EST)
         mins  = ahora.hour * 60 + ahora.minute
@@ -1853,7 +1890,7 @@ def home(path=""):
   <div class="canales-grid">
     {canales_html}
   </div>
-  <div class="footer">AXIS Breakout Sentinel v8.52 · {activos_str}</div>
+  <div class="footer">AXIS Breakout Sentinel v8.53 · {activos_str}</div>
 </body>
 </html>"""
     from flask import Response
@@ -1873,7 +1910,7 @@ def test():
         else:
             lineas_canal.append(f"  {a}: OFF")
     enviar_telegram(
-        f"✅ <b>AXIS Breakout Sentinel v8.52</b>\n"
+        f"✅ <b>AXIS Breakout Sentinel v8.53</b>\n"
         f"<b>Hora:</b> {ahora.strftime('%A %d/%m/%Y %H:%M EST')}\n"
         f"<b>Mercado:</b> {'Abierto' if es_dia_mercado(ahora) else 'Cerrado'}\n"
         f"<b>1VR:</b> {'ON' if VR1_ON else 'OFF'} | "
@@ -2431,6 +2468,24 @@ def telegram_webhook():
                 agregar_recibo(f"━━━━━━━━━━━━━━━━━━\n⚠️ <b>Carril #{carril_id} no disponible</b>")
                 return jsonify({"ok": True}), 200
 
+            # FIX: si el carril ya tiene posición (asignado por alerta simultánea anterior)
+            # redirigir automáticamente al siguiente carril disponible
+            if carril["posicion"] is not None:
+                turno = carril_id + 1
+                nuevo_id = None
+                orden_b  = list(range(turno - 1, 10)) + list(range(0, turno - 1))
+                for idx in orden_b:
+                    c = _portfolio["reto"]["carriles"][idx]
+                    if not c.get("eliminado") and c["posicion"] is None:
+                        nuevo_id = c["id"]
+                        break
+                if not nuevo_id:
+                    agregar_recibo(f"━━━━━━━━━━━━━━━━━━\n⚠️ <b>Sin carriles disponibles — todos ocupados</b>")
+                    return jsonify({"ok": True}), 200
+                print(f"RETO: C{carril_id} ya ocupado → redirigiendo a C{nuevo_id}")
+                carril_id = nuevo_id
+                carril    = next((c for c in _portfolio["reto"]["carriles"] if c["id"] == carril_id), None)
+
             costo_1cont = round(opcion["ask"] * 100, 2)
 
             # PRIMERA RONDA: capital=0 → el costo de esta opción ES el capital inicial
@@ -2822,19 +2877,13 @@ def enviar_resumen_diario(ahora):
 
         fecha_hoy = ahora.strftime("%Y-%m-%d")
 
-        # Señales del día
+        # Señales del día — lista maestra que incluye TODAS las estrategias
         señales_lineas = []
         for activo in ACTIVOS:
             ed = estado_dia.get(activo, {})
             if ed.get("fecha") != fecha_hoy:
                 continue
-            disparadas = []
-            if ed.get("vr1_fired"):  disparadas.append("1VR")
-            if ed.get("rpg_fired"):  disparadas.append("RPG")
-            if ed.get("gna_fired"):  disparadas.append("GNA")
-            if ed.get("gba_fired"):  disparadas.append("GBA")
-            if ed.get("pm40_fired"): disparadas.append("PM40")
-            if ed.get("4ps_fired"):  disparadas.append("4PS")
+            disparadas = ed.get("señales_disparadas", [])
             if disparadas:
                 señales_lineas.append(f"  • {activo}: {', '.join(disparadas)}")
 
@@ -3062,6 +3111,7 @@ def evaluar_hed(simbolo):
         cond_str = "RCB 30%" if cond_b else f"SMA20({sma20:.2f})>SMA40({sma40:.2f})"
 
         if resultado["ok"]:
+            registrar_senal_disparada(simbolo, "HED — SHOOTING STAR DIARIA")
             enviar_telegram(
                 f"🕯 <b>HED — SHOOTING STAR DIARIA</b>\n"
                 f"<b>Activo:</b> {simbolo} {color_vela}\n"
@@ -3463,13 +3513,19 @@ def system_status():
     for a in ACTIVOS:
         ed = estado_dia.get(a, {})
         señales_hoy[a] = {
-            "fecha":       ed.get("fecha"),
-            "1VR":         ed.get("vr1_fired", False),
-            "RPG":         ed.get("rpg_fired", False),
-            "GNA":         ed.get("gna_fired", False),
-            "GBA":         ed.get("gba_fired", False),
-            "PM40":        ed.get("pm40_fired", False),
-            "4PS":         ed.get("4ps_fired", False),
+            "fecha":              ed.get("fecha"),
+            "señales_disparadas": ed.get("señales_disparadas", []),
+            "total":              len(ed.get("señales_disparadas", [])),
+            # Flags individuales para compatibilidad
+            "1VR":   ed.get("vr1_fired",  False),
+            "RPG":   ed.get("rpg_fired",  False),
+            "GNA":   ed.get("gna_fired",  False),
+            "GBA":   ed.get("gba_fired",  False),
+            "PM40":  ed.get("pm40_fired", False),
+            "4PS":   ed.get("4ps_fired",  False),
+            "HED":   ed.get("hed_fired",  False),
+            "CNF":   ed.get("cnf_fired",  False),
+            "RCB":   ed.get("rcb_fired",  False),
         }
 
     # ── Portfolio
@@ -3530,7 +3586,7 @@ def system_status():
             archivos_data[fname] = "NO ENCONTRADO ❌"
 
     return jsonify({
-        "sistema":          "AXIS Breakout Sentinel v8.52",
+        "sistema":          "AXIS Breakout Sentinel v8.53",
         "hora_est":         ahora.strftime("%Y-%m-%d %H:%M:%S EST"),
         "mercado":          "ABIERTO ✅" if mercado_abierto else "CERRADO ⏸",
         "threads":          threads_vivos,
