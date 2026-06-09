@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v8.54
+AXIS Breakout Sentinel v8.55
 Estrategias: 1VR | 1VR+ | RPG | GNA | GBA | RCB/CNF
 Multi-activo: SPY, AAPL, BA, GLD
 v8.43: Portfolio fix — ejecutar_orden_tradier en webhook exec/reto | Panic Button al bid |
@@ -1266,13 +1266,14 @@ def evaluar_activo(simbolo, velas, ahora):
                 f"<b>Techo V1:</b> ${v1_close:.2f} | <b>Cierre:</b> ${v_close:.2f}\n"
             )
 
-    # RCB/CNF — ruptura con botones igual que todas las estrategias
+    # RCB/CNF — ruptura con botones — una sola vez por día por tipo de canal
     if c["on"] and not c["apagado"]:
-        ahora_dt = EST.localize(datetime.strptime(vela_actual["datetime"], "%Y-%m-%d %H:%M:%S"))
-        techo = calcular_techo_canal(simbolo, ahora_dt)
+        ahora_dt  = EST.localize(datetime.strptime(vela_actual["datetime"], "%Y-%m-%d %H:%M:%S"))
+        techo     = calcular_techo_canal(simbolo, ahora_dt)
+        tipo_canal = "RCB" if c["p3"] else "CNF"
+        flag_fired = "rcb_fired" if c["p3"] else "cnf_fired"
 
-        if techo and v_alcista and v_close > techo:
-            tipo_canal = "RCB" if c["p3"] else "CNF"
+        if techo and v_alcista and v_close > techo and not ed[flag_fired]:
             if v_high < c["p1"]["high"]:
                 # Ruptura válida — señal con botones
                 enviar_senal_con_botones(
@@ -1791,7 +1792,7 @@ def reporte_horario():
 # LOOP PRINCIPAL
 # ═══════════════════════════════════════════════════════════
 def monitor_loop():
-    print("AXIS Breakout Sentinel v8.54 iniciado...")
+    print("AXIS Breakout Sentinel v8.55 iniciado...")
     while True:
         ahora = datetime.now(EST)
         mins  = ahora.hour * 60 + ahora.minute
@@ -1904,7 +1905,7 @@ def home(path=""):
   <div class="canales-grid">
     {canales_html}
   </div>
-  <div class="footer">AXIS Breakout Sentinel v8.54 · {activos_str}</div>
+  <div class="footer">AXIS Breakout Sentinel v8.55 · {activos_str}</div>
 </body>
 </html>"""
     from flask import Response
@@ -1924,7 +1925,7 @@ def test():
         else:
             lineas_canal.append(f"  {a}: OFF")
     enviar_telegram(
-        f"✅ <b>AXIS Breakout Sentinel v8.54</b>\n"
+        f"✅ <b>AXIS Breakout Sentinel v8.55</b>\n"
         f"<b>Hora:</b> {ahora.strftime('%A %d/%m/%Y %H:%M EST')}\n"
         f"<b>Mercado:</b> {'Abierto' if es_dia_mercado(ahora) else 'Cerrado'}\n"
         f"<b>1VR:</b> {'ON' if VR1_ON else 'OFF'} | "
@@ -3059,9 +3060,15 @@ def evaluar_hed(simbolo):
     """
     HED — Hanger en Diario
     Evalúa si la vela del día forma una shooting star a las 3:58:01 EST
-    Ejecución automática sin botón si cumple condiciones
+    Ejecución automática sin botón si cumple condiciones.
+    Una sola vez por activo por día.
     """
     try:
+        # Verificar si ya disparó hoy
+        ed = estado_dia.get(simbolo, {})
+        if ed.get("hed_fired"):
+            print(f"{simbolo} HED: ya disparada hoy — omitiendo")
+            return
         velas = get_velas(simbolo, outputsize=2)
         if not velas:
             return
@@ -3609,7 +3616,7 @@ def system_status():
             archivos_data[fname] = "NO ENCONTRADO ❌"
 
     return jsonify({
-        "sistema":          "AXIS Breakout Sentinel v8.54",
+        "sistema":          "AXIS Breakout Sentinel v8.55",
         "hora_est":         ahora.strftime("%Y-%m-%d %H:%M:%S EST"),
         "mercado":          "ABIERTO ✅" if mercado_abierto else "CERRADO ⏸",
         "threads":          threads_vivos,

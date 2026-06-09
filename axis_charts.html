@@ -207,6 +207,9 @@
   <div id="panel-ps">
     <h4 id="ps-titulo">Canal — SPY</h4>
     <div class="ps-tipo none" id="ps-tipo">SIN CANAL</div>
+    <div id="ps-apagado-banner" style="display:none;background:rgba(248,81,73,0.12);border:1px solid #f85149;border-radius:6px;padding:6px 10px;margin-bottom:8px;font-size:11px;color:#f85149;font-family:'JetBrains Mono',monospace;letter-spacing:0.5px;">
+      🔕 CANAL DESACTIVADO
+    </div>
     <div class="ps-status" id="ps-status">Cargando...</div>
     <div class="ps-row">
       <span class="ps-lbl">P1</span>
@@ -850,13 +853,21 @@ async function cargarEstadoCanal(sym) {
 
     document.getElementById('ps-titulo').textContent = `Canal — ${sym}`;
 
-    const tipoEl = document.getElementById('ps-tipo');
+    const tipoEl   = document.getElementById('ps-tipo');
+    const bannerEl = document.getElementById('ps-apagado-banner');
+
     if (c.on) {
       tipoEl.textContent = c.tipo;
-      tipoEl.className = `ps-tipo ${c.tipo.toLowerCase()}`;
+      tipoEl.className   = `ps-tipo ${c.tipo.toLowerCase()}`;
+      bannerEl.style.display = 'none';
+    } else if (c.apagado) {
+      tipoEl.textContent = 'CANAL APAGADO';
+      tipoEl.className   = 'ps-tipo none';
+      bannerEl.style.display = 'block';
     } else {
       tipoEl.textContent = 'SIN CANAL';
-      tipoEl.className = 'ps-tipo none';
+      tipoEl.className   = 'ps-tipo none';
+      bannerEl.style.display = 'none';
     }
 
     // Llenar campos con valores actuales
