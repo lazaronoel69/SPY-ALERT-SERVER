@@ -7,300 +7,144 @@
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Space+Grotesk:wght@300;400;600;700&display=swap" rel="stylesheet">
 <style>
   :root {
-    --bg:        #0a0a0f;
-    --bg2:       #111118;
-    --bg3:       #1a1a24;
-    --border:    #2a2a3a;
-    --text:      #e8e8f0;
-    --muted:     #666688;
-    --green:     #00e676;
-    --red:       #ff3d57;
-    --gold:      #ffd700;
-    --blue:      #4fc3f7;
-    --purple:    #b39ddb;
-    --panic:     #ff1744;
+    --bg:     #0a0a0f;
+    --bg2:    #111118;
+    --bg3:    #1a1a24;
+    --border: #2a2a3a;
+    --text:   #e8e8f0;
+    --muted:  #666688;
+    --green:  #1D9E75;
+    --red:    #E24B4A;
+    --gold:   #BA7517;
+    --blue:   #4fc3f7;
+    --purple: #b39ddb;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body {
-    background: var(--bg);
-    color: var(--text);
-    font-family: 'Space Grotesk', sans-serif;
-    min-height: 100vh;
-    padding: 16px;
-  }
+  body { background: var(--bg); color: var(--text); font-family: 'Space Grotesk', sans-serif; min-height: 100vh; padding: 16px; }
 
   /* HEADER */
-  .header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 20px;
-    padding-bottom: 16px;
-    border-bottom: 1px solid var(--border);
-  }
-  .logo { font-family: 'JetBrains Mono', monospace; font-weight: 700; font-size: 20px; }
+  .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; padding-bottom: 14px; border-bottom: 1px solid var(--border); flex-wrap: wrap; gap: 10px; }
+  .logo { font-family: 'JetBrains Mono', monospace; font-weight: 700; font-size: 18px; letter-spacing: -0.5px; }
   .logo span { color: var(--blue); }
-  .clock { font-family: 'JetBrains Mono', monospace; font-size: 13px; color: var(--muted); }
-  .refresh-btn {
-    background: var(--bg3); border: 1px solid var(--border);
-    color: var(--muted); padding: 6px 12px; border-radius: 6px;
-    cursor: pointer; font-size: 12px; transition: all 0.2s;
-  }
+  .clock { font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--muted); }
+  .nav { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  .nav a { background: var(--bg3); border: 1px solid var(--border); color: var(--muted); padding: 5px 11px; border-radius: 6px; font-size: 11px; text-decoration: none; letter-spacing: 1px; transition: all 0.15s; }
+  .nav a:hover { color: var(--text); border-color: var(--blue); }
+  .refresh-btn { background: var(--bg3); border: 1px solid var(--border); color: var(--muted); padding: 5px 11px; border-radius: 6px; font-size: 12px; cursor: pointer; transition: all 0.15s; }
   .refresh-btn:hover { color: var(--text); border-color: var(--blue); }
 
-  /* CLAUDE PANEL */
-  .claude-panel {
-    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
-    border: 1px solid #2d3561;
-    border-radius: 12px;
-    padding: 16px;
-    margin-bottom: 20px;
-  }
-  .claude-header {
-    display: flex; align-items: center; gap: 8px;
-    font-size: 12px; color: var(--purple); font-weight: 600;
-    margin-bottom: 10px; text-transform: uppercase; letter-spacing: 1px;
-  }
-  .claude-dot {
-    width: 8px; height: 8px; border-radius: 50%;
-    background: var(--purple); animation: pulse 2s infinite;
-  }
+  /* CLAUDE */
+  .claude-panel { background: linear-gradient(135deg,#1a1a2e,#16213e); border: 1px solid #2d3561; border-radius: 12px; padding: 14px 16px; margin-bottom: 20px; }
+  .claude-header { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--purple); font-weight: 600; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 1px; }
+  .claude-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--purple); animation: pulse 2s infinite; }
   @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
-  .claude-text { font-size: 14px; color: #c5cae9; line-height: 1.6; }
-  .claude-empty { font-size: 13px; color: var(--muted); font-style: italic; }
+  .claude-text { font-size: 13px; color: #c5cae9; line-height: 1.6; }
+  .claude-empty { color: var(--muted); font-style: italic; font-size: 12px; }
+  .claude-update-btn { margin-left: auto; background: none; border: 1px solid #3d3561; color: var(--purple); padding: 3px 10px; border-radius: 10px; font-size: 11px; cursor: pointer; }
 
-  /* SECCIONES */
-  .section-title {
-    font-size: 11px; font-weight: 600; text-transform: uppercase;
-    letter-spacing: 2px; color: var(--muted); margin-bottom: 12px;
-    display: flex; align-items: center; gap: 8px;
-  }
-  .section-title::after {
-    content: ''; flex: 1; height: 1px; background: var(--border);
-  }
-  .badge {
-    background: var(--bg3); border: 1px solid var(--border);
-    padding: 2px 8px; border-radius: 20px; font-size: 11px; color: var(--muted);
-  }
+  /* SECTION */
+  .section-title { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 2px; color: var(--muted); margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
+  .section-title::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+  .badge { background: var(--bg3); border: 1px solid var(--border); padding: 1px 7px; border-radius: 20px; font-size: 10px; color: var(--muted); }
 
-  /* POSICIONES */
-  .posiciones-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-    gap: 12px;
-    margin-bottom: 24px;
-  }
-  .pos-card {
-    background: var(--bg2);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 16px;
-    position: relative;
-    transition: border-color 0.2s;
-  }
-  .pos-card:hover { border-color: #444; }
-  .pos-card.reto { border-color: #3d3000; background: #0f0d00; }
-  .pos-card.reto::before {
-    content: '🏆';
-    position: absolute; top: 12px; right: 12px; font-size: 14px;
-  }
+  /* GRID */
+  .posiciones-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; margin-bottom: 24px; }
+  @media (max-width: 600px) { .posiciones-grid { grid-template-columns: 1fr; } }
 
-  .pos-header {
-    display: flex; align-items: center; gap: 8px; margin-bottom: 12px;
-  }
-  .pos-simbolo {
-    font-family: 'JetBrains Mono', monospace;
-    font-weight: 700; font-size: 18px;
-  }
-  .pos-estrategia {
-    font-size: 11px; padding: 2px 8px; border-radius: 20px;
-    font-weight: 600; text-transform: uppercase;
-  }
-  .tag-put  { background: #3d0010; color: #ff6b8a; }
-  .tag-call { background: #003d1a; color: #69f0ae; }
+  /* CARD */
+  .pos-card { background: var(--bg2); border: 1px solid var(--border); border-radius: 12px; padding: 0; position: relative; overflow: hidden; transition: border-color 0.2s; }
+  .pos-card:hover { border-color: #3a3a4a; }
+  .pos-card.reto { border-color: rgba(186,117,23,0.35); }
+  .card-stripe { position: absolute; left: 0; top: 0; bottom: 0; width: 3px; }
+  .stripe-put  { background: var(--red); }
+  .stripe-call { background: var(--green); }
+  .card-body { padding: 14px 16px; }
 
-  .pos-opcion {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 13px; color: var(--muted); margin-bottom: 12px;
-  }
+  /* RETO BADGE */
+  .reto-tag { position: absolute; top: 10px; right: 12px; font-size: 9px; letter-spacing: 1.5px; color: var(--gold); font-weight: 600; font-family: 'JetBrains Mono', monospace; }
 
-  .pos-pl {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 32px; font-weight: 700; margin-bottom: 4px;
-  }
-  .pos-pl.positive { color: var(--green); }
-  .pos-pl.negative { color: var(--red); }
-  .pos-pl.neutral  { color: var(--muted); }
+  /* CARD HEADER */
+  .card-header { display: flex; align-items: center; gap: 9px; margin-bottom: 4px; }
+  .simbolo { font-family: 'JetBrains Mono', monospace; font-size: 20px; font-weight: 700; }
+  .tipo-badge { font-size: 10px; font-weight: 600; letter-spacing: 1px; padding: 2px 8px; border-radius: 4px; }
+  .tipo-put  { background: rgba(226,75,74,0.15); color: #f28b8a; }
+  .tipo-call { background: rgba(29,158,117,0.15); color: #5ecba8; }
+  .estrategia-txt { font-size: 11px; color: var(--muted); }
+  .option-sym { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--muted); margin-bottom: 12px; letter-spacing: 0.3px; }
 
-  .pos-prices {
-    display: flex; gap: 16px; margin-bottom: 14px;
-    font-size: 12px; color: var(--muted);
-    font-family: 'JetBrains Mono', monospace;
-  }
-  .pos-prices span { display: flex; flex-direction: column; gap: 2px; }
-  .pos-prices label { font-size: 10px; text-transform: uppercase; letter-spacing: 1px; }
-  .pos-prices value { color: var(--text); font-size: 13px; }
+  /* PL */
+  .pl-row { display: flex; align-items: flex-end; gap: 12px; margin-bottom: 12px; }
+  .pl-main { font-family: 'JetBrains Mono', monospace; font-size: 26px; font-weight: 700; line-height: 1; }
+  .pl-pos { color: var(--green); }
+  .pl-neg { color: var(--red); }
+  .pl-zero { color: var(--muted); }
+  .pl-side { display: flex; flex-direction: column; gap: 2px; padding-bottom: 2px; }
+  .pl-max-label { font-size: 10px; color: var(--muted); font-family: 'JetBrains Mono', monospace; }
+  .pl-max-val { font-size: 11px; font-family: 'JetBrains Mono', monospace; }
 
-  .pos-gtc {
-    font-size: 12px; color: var(--gold);
-    font-family: 'JetBrains Mono', monospace;
-    margin-bottom: 14px;
-  }
+  /* METRICS */
+  .metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 12px; }
+  .metric-lbl { font-size: 9px; text-transform: uppercase; letter-spacing: 1.2px; color: var(--muted); margin-bottom: 3px; }
+  .metric-val { font-size: 12px; color: var(--text); font-family: 'JetBrains Mono', monospace; }
+  .metric-val.gold { color: var(--gold); }
 
-  .pos-footer {
-    display: flex; align-items: center; justify-content: space-between;
-  }
-  .pos-tiempo { font-size: 11px; color: var(--muted); }
+  /* DAYS */
+  .days-val { font-family: 'JetBrains Mono', monospace; font-size: 14px; font-weight: 700; }
+  .days-ok   { color: var(--green); }
+  .days-warn { color: var(--gold); }
+  .days-crit { color: var(--red); }
 
-  .panic-btn {
-    background: var(--panic);
-    color: white; border: none; border-radius: 8px;
-    padding: 8px 18px; font-size: 13px; font-weight: 700;
-    cursor: pointer; letter-spacing: 1px;
-    transition: all 0.15s; text-transform: uppercase;
-  }
-  .panic-btn:hover { background: #ff4569; transform: scale(1.04); }
-  .panic-btn:active { transform: scale(0.97); }
+  /* FOOTER */
+  .card-footer { display: flex; align-items: center; justify-content: space-between; padding: 10px 16px; border-top: 1px solid var(--border); gap: 8px; }
+  .footer-left { display: flex; flex-direction: column; gap: 2px; }
+  .tiempo-txt { font-size: 10px; color: var(--muted); font-family: 'JetBrains Mono', monospace; }
+  .costo-txt  { font-size: 10px; color: var(--muted); font-family: 'JetBrains Mono', monospace; }
+  .footer-right { display: flex; gap: 6px; align-items: center; }
+  .hist-btn { background: none; border: 1px solid var(--border); color: var(--muted); font-size: 10px; padding: 4px 9px; border-radius: 4px; cursor: pointer; font-family: 'JetBrains Mono', monospace; transition: all 0.15s; white-space: nowrap; }
+  .hist-btn:hover { border-color: var(--blue); color: var(--text); }
+  .panic-btn { background: var(--red); color: white; border: none; border-radius: 6px; padding: 6px 14px; font-size: 11px; font-weight: 700; cursor: pointer; letter-spacing: 1px; transition: all 0.15s; text-transform: uppercase; }
+  .panic-btn:hover { opacity: 0.85; }
 
-  .empty-state {
-    text-align: center; padding: 40px;
-    color: var(--muted); font-size: 14px;
-    background: var(--bg2); border: 1px dashed var(--border);
-    border-radius: 12px; margin-bottom: 24px;
-  }
+  /* HISTORIAL EXPANDIBLE */
+  .hist-expand { padding: 10px 16px 12px; border-top: 1px solid var(--border); }
+  .hist-table { width: 100%; border-collapse: collapse; font-size: 11px; font-family: 'JetBrains Mono', monospace; }
+  .hist-table th { padding: 3px 6px; color: var(--muted); font-size: 9px; text-transform: uppercase; letter-spacing: 1px; text-align: left; border-bottom: 1px solid var(--border); }
+  .hist-table td { padding: 5px 6px; border-bottom: 1px solid rgba(42,42,58,0.5); }
+  .hist-table tr:last-child td { border-bottom: none; }
 
-  /* RETO MILLONARIO */
-  .reto-panel {
-    background: var(--bg2);
-    border: 1px solid #3d3000;
-    border-radius: 12px;
-    padding: 16px;
-    margin-bottom: 24px;
-  }
-  .reto-header {
-    display: flex; align-items: center; justify-content: space-between;
-    margin-bottom: 16px;
-  }
-  .reto-title {
-    display: flex; align-items: center; gap: 8px;
-    font-size: 15px; font-weight: 700; color: var(--gold);
-  }
-  .reto-toggle {
-    padding: 6px 14px; border-radius: 20px;
-    font-size: 12px; font-weight: 600; cursor: pointer; border: none;
-    transition: all 0.2s;
-  }
-  .reto-toggle.on  { background: #3d3000; color: var(--gold); }
+  /* EMPTY */
+  .empty-state { text-align: center; padding: 36px; color: var(--muted); font-size: 13px; background: var(--bg2); border: 1px dashed var(--border); border-radius: 12px; margin-bottom: 24px; }
+
+  /* RETO */
+  .reto-panel { background: var(--bg2); border: 1px solid rgba(186,117,23,0.3); border-radius: 12px; padding: 14px 16px; margin-bottom: 24px; }
+  .reto-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+  .reto-title { font-size: 14px; font-weight: 700; color: var(--gold); letter-spacing: 0.3px; }
+  .reto-toggle { padding: 5px 14px; border-radius: 20px; font-size: 11px; font-weight: 600; cursor: pointer; border: none; transition: all 0.2s; }
+  .reto-toggle.on  { background: rgba(186,117,23,0.2); color: var(--gold); border: 1px solid rgba(186,117,23,0.4); }
   .reto-toggle.off { background: var(--bg3); color: var(--muted); border: 1px solid var(--border); }
-
-  .reto-progress {
-    margin-bottom: 16px;
-  }
-  .reto-meta {
-    display: flex; justify-content: space-between;
-    font-size: 12px; color: var(--muted); margin-bottom: 6px;
-    font-family: 'JetBrains Mono', monospace;
-  }
-  .progress-bar {
-    height: 6px; background: var(--bg3);
-    border-radius: 3px; overflow: hidden;
-  }
-  .progress-fill {
-    height: 100%; background: linear-gradient(90deg, var(--gold), #ff9800);
-    border-radius: 3px; transition: width 0.5s ease;
-  }
-
-  .carriles-grid {
-    display: grid;
-    grid-template-columns: repeat(5, 1fr);
-    gap: 8px;
-  }
-  @media (max-width: 600px) {
-    .carriles-grid { grid-template-columns: repeat(2, 1fr); }
-    .posiciones-grid { grid-template-columns: 1fr; }
-  }
-  .carril {
-    background: var(--bg3); border: 1px solid var(--border);
-    border-radius: 8px; padding: 10px; text-align: center;
-    transition: border-color 0.2s;
-  }
+  .reto-meta { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); margin-bottom: 6px; font-family: 'JetBrains Mono', monospace; }
+  .progress-bar { height: 4px; background: var(--bg3); border-radius: 2px; overflow: hidden; margin-bottom: 14px; }
+  .progress-fill { height: 100%; background: linear-gradient(90deg, var(--gold), #ff9800); border-radius: 2px; transition: width 0.5s ease; }
+  .carriles-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 7px; }
+  @media (max-width: 600px) { .carriles-grid { grid-template-columns: repeat(2, 1fr); } }
+  .carril { background: var(--bg3); border: 1px solid var(--border); border-radius: 8px; padding: 8px; text-align: center; transition: border-color 0.2s; }
   .carril.activo { border-color: var(--gold); }
-  .carril-num {
-    font-size: 10px; color: var(--muted); margin-bottom: 4px;
-    text-transform: uppercase; letter-spacing: 1px;
-  }
-  .carril-capital {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 14px; font-weight: 700; color: var(--gold);
-  }
-  .carril-ronda {
-    font-size: 10px; color: var(--muted); margin-top: 2px;
-  }
-  .carril-pos {
-    font-size: 10px; color: var(--green); margin-top: 4px;
-  }
+  .carril.eliminado { opacity: 0.35; }
+  .carril-num { font-size: 9px; color: var(--muted); margin-bottom: 3px; text-transform: uppercase; letter-spacing: 1px; }
+  .carril-capital { font-family: 'JetBrains Mono', monospace; font-size: 13px; font-weight: 700; color: var(--gold); }
+  .carril-ronda { font-size: 9px; color: var(--muted); margin-top: 2px; }
+  .carril-pos { font-size: 9px; color: var(--green); margin-top: 3px; font-family: 'JetBrains Mono', monospace; }
 
-  /* HISTORIAL */
-  .historial-lista { display: flex; flex-direction: column; gap: 8px; }
-  .hist-item {
-    background: var(--bg2); border: 1px solid var(--border);
-    border-radius: 8px; padding: 12px 14px;
-    display: flex; align-items: center; justify-content: space-between;
-    font-size: 13px;
-  }
-  .hist-left { display: flex; flex-direction: column; gap: 3px; }
-  .hist-simbolo {
-    font-family: 'JetBrains Mono', monospace;
-    font-weight: 600; font-size: 14px;
-  }
-  .hist-detalle { font-size: 11px; color: var(--muted); }
-  .hist-pl {
-    font-family: 'JetBrains Mono', monospace;
-    font-weight: 700; font-size: 16px;
-  }
-  .hist-pl.positive { color: var(--green); }
-  .hist-pl.negative { color: var(--red); }
-
-  /* MODAL PANIC */
-  .modal-overlay {
-    display: none; position: fixed; inset: 0;
-    background: rgba(0,0,0,0.85); z-index: 100;
-    align-items: center; justify-content: center;
-  }
-  .modal-overlay.show { display: flex; }
-  .modal {
-    background: var(--bg2); border: 1px solid var(--red);
-    border-radius: 16px; padding: 28px; max-width: 340px; width: 90%;
-    text-align: center;
-  }
-  .modal h3 { color: var(--red); font-size: 20px; margin-bottom: 8px; }
-  .modal p { color: var(--muted); font-size: 14px; margin-bottom: 20px; }
-  .modal-precio {
-    background: var(--bg3); border: 1px solid var(--border);
-    border-radius: 8px; padding: 10px; margin-bottom: 16px;
-  }
-  .modal-precio label { font-size: 11px; color: var(--muted); display: block; margin-bottom: 4px; }
-  .modal-precio input {
-    background: transparent; border: none; color: var(--text);
-    font-family: 'JetBrains Mono', monospace; font-size: 18px;
-    width: 100%; text-align: center; outline: none;
-  }
-  .modal-btns { display: flex; gap: 10px; }
-  .modal-btns button {
-    flex: 1; padding: 12px; border-radius: 8px;
-    font-weight: 700; cursor: pointer; border: none; font-size: 14px;
-  }
-  .btn-confirmar { background: var(--red); color: white; }
-  .btn-cancelar  { background: var(--bg3); color: var(--muted); border: 1px solid var(--border); }
+  /* HISTORIAL LISTA */
+  .historial-lista { display: flex; flex-direction: column; gap: 7px; margin-bottom: 24px; }
+  .hist-item { background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; display: flex; align-items: center; justify-content: space-between; }
+  .hist-left { display: flex; flex-direction: column; gap: 2px; }
+  .hist-simbolo { font-family: 'JetBrains Mono', monospace; font-weight: 700; font-size: 13px; }
+  .hist-detalle { font-size: 10px; color: var(--muted); }
+  .hist-pl-val { font-family: 'JetBrains Mono', monospace; font-weight: 700; font-size: 15px; }
 
   /* TOAST */
-  .toast {
-    position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
-    background: var(--bg3); border: 1px solid var(--border);
-    padding: 10px 20px; border-radius: 8px; font-size: 13px;
-    opacity: 0; transition: opacity 0.3s; z-index: 200;
-    pointer-events: none;
-  }
+  .toast { position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%); background: var(--bg3); border: 1px solid var(--border); padding: 9px 18px; border-radius: 8px; font-size: 12px; opacity: 0; transition: opacity 0.3s; z-index: 200; pointer-events: none; white-space: nowrap; }
   .toast.show { opacity: 1; }
 </style>
 </head>
@@ -309,143 +153,132 @@
 <div class="header">
   <div class="logo">AXIS<span>PORTFOLIO</span></div>
   <div class="clock" id="clock">--:--:-- EST</div>
-  <div style="display:flex;gap:8px;align-items:center;">
-    <a href="/" style="background:var(--bg3);border:1px solid var(--border);color:var(--muted);padding:5px 12px;border-radius:6px;font-size:11px;text-decoration:none;letter-spacing:1px;">⌂ HOME</a>
-    <a href="/charts" style="background:var(--bg3);border:1px solid var(--border);color:var(--muted);padding:5px 12px;border-radius:6px;font-size:11px;text-decoration:none;letter-spacing:1px;">📊 CHARTS</a>
-    <a href="/analisis" style="background:var(--bg3);border:1px solid var(--border);color:var(--muted);padding:5px 12px;border-radius:6px;font-size:11px;text-decoration:none;letter-spacing:1px;">📈 ANÁLISIS</a>
-    <button class="refresh-btn" onclick="cargarDatos()">↻ Refresh</button>
+  <div class="nav">
+    <a href="/">⌂ HOME</a>
+    <a href="/charts">CHARTS</a>
+    <a href="/analisis">ANÁLISIS</a>
+    <button class="refresh-btn" onclick="cargarDatos()">↻</button>
   </div>
 </div>
 
-<!-- PANEL ANTHROPIC -->
+<!-- CLAUDE -->
 <div class="claude-panel">
   <div class="claude-header">
     <div class="claude-dot"></div>
-    Claude — Análisis de Mercado
-    <button onclick="cargarClaude()" style="margin-left:auto;background:none;border:1px solid #3d3561;color:#b39ddb;padding:3px 10px;border-radius:12px;font-size:11px;cursor:pointer;">↻ Actualizar</button>
+    Claude — Análisis
+    <button class="claude-update-btn" onclick="cargarClaude()">↻ Actualizar</button>
   </div>
   <div class="claude-text" id="claude-msg">
-    <span class="claude-empty">Análisis disponible próximamente — integración API Anthropic en desarrollo.</span>
+    <span class="claude-empty">Presiona Actualizar para obtener análisis de Claude.</span>
   </div>
 </div>
 
-<!-- POSICIONES ABIERTAS -->
-<div class="section-title">
-  Posiciones Abiertas <span class="badge" id="badge-pos">0</span>
-</div>
+<!-- POSICIONES -->
+<div class="section-title">Posiciones Abiertas <span class="badge" id="badge-pos">0</span></div>
 <div class="posiciones-grid" id="posiciones-grid">
   <div class="empty-state">Sin posiciones abiertas — esperando señales de AXIS</div>
 </div>
 
-<!-- RETO MILLONARIO -->
+<!-- RETO -->
 <div class="section-title">Reto Millonario</div>
 <div class="reto-panel">
   <div class="reto-header">
     <div class="reto-title">🏆 Reto al Millón</div>
     <button class="reto-toggle off" id="reto-toggle" onclick="toggleReto()">ACTIVAR</button>
   </div>
-  <div class="reto-progress">
-    <div class="reto-meta">
-      <span id="reto-capital">$2,000.00</span>
-      <span id="reto-pct">0.0% del millón</span>
-    </div>
-    <div class="progress-bar">
-      <div class="progress-fill" id="reto-progress" style="width:0.2%"></div>
-    </div>
+  <div class="reto-meta">
+    <span id="reto-capital">$0.00</span>
+    <span id="reto-pct">0.00% del millón</span>
   </div>
+  <div class="progress-bar"><div class="progress-fill" id="reto-progress" style="width:0%"></div></div>
   <div class="carriles-grid" id="carriles-grid"></div>
 </div>
 
 <!-- HISTORIAL -->
-<div class="section-title">
-  Historial <span class="badge" id="badge-hist">0</span>
-</div>
+<div class="section-title">Historial <span class="badge" id="badge-hist">0</span></div>
 <div class="historial-lista" id="historial-lista">
   <div class="empty-state">Sin posiciones cerradas aún</div>
 </div>
-
 
 <div class="toast" id="toast"></div>
 
 <script>
 const RAILWAY = 'https://web-production-bf9d0.up.railway.app';
-let _posId = null;
 let _datos = null;
 
-// Reloj
 function actualizarReloj() {
-  const now = new Date();
-  const est = new Date(now.toLocaleString('en-US', {timeZone: 'America/New_York'}));
+  const est = new Date(new Date().toLocaleString('en-US',{timeZone:'America/New_York'}));
   const h = String(est.getHours()).padStart(2,'0');
   const m = String(est.getMinutes()).padStart(2,'0');
   const s = String(est.getSeconds()).padStart(2,'0');
   document.getElementById('clock').textContent = `${h}:${m}:${s} EST`;
 }
 setInterval(actualizarReloj, 1000);
-actualizarReloj();
 
-function toast(msg, dur=2500) {
+function toast(msg, dur=2800) {
   const t = document.getElementById('toast');
   t.textContent = msg; t.classList.add('show');
   setTimeout(() => t.classList.remove('show'), dur);
 }
 
-function tiempoAbierto(tsEntrada) {
-  const d = new Date(tsEntrada);
-  const diff = Math.floor((Date.now() - d.getTime()) / 60000);
-  if (diff < 60) return `${diff}m abierta`;
-  return `${Math.floor(diff/60)}h ${diff%60}m abierta`;
+function tiempoAbierto(ts) {
+  if (!ts) return '—';
+  const diff = Math.floor((Date.now() - new Date(ts)) / 60000);
+  if (diff < 60) return `${diff}m`;
+  const h = Math.floor(diff / 60), m = diff % 60;
+  if (h < 24) return `${h}h ${m}m`;
+  return `${Math.floor(h/24)}d ${h%24}h`;
 }
 
-function plColor(pct) {
-  if (pct === null || pct === undefined) return 'var(--muted)';
-  return pct >= 0 ? '#00e676' : '#f85149';
+function diasRestantes(expiration) {
+  if (!expiration) return null;
+  const hoy  = new Date(); hoy.setHours(0,0,0,0);
+  const exp  = new Date(expiration + 'T00:00:00');
+  return Math.ceil((exp - hoy) / 86400000);
 }
 
-function plBadge(pos) {
-  const pct = pos.pl_pct_actual;
-  const max = pos.pl_pct_maximo;
-  const fechaMax = pos.fecha_maximo || '';
-  if (pct === null || pct === undefined) return '';
-  const pctStr = `${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%`;
-  const maxStr = max !== null && max !== undefined ? `${max >= 0 ? '+' : ''}${max.toFixed(1)}%` : '—';
-  return `
-    <div style="display:flex;gap:12px;align-items:center;margin:10px 0 4px;flex-wrap:wrap;">
-      <div style="font-size:13px;font-weight:700;color:${plColor(pct)};">
-        Cierre ayer: ${pctStr}
-      </div>
-      <div style="font-size:11px;color:var(--muted);">
-        Máx: <span style="color:${plColor(max)};font-weight:600;">${maxStr}</span>
-        ${fechaMax ? `<span style="color:var(--muted);font-size:10px;"> (${fechaMax})</span>` : ''}
-      </div>
+function diasBadge(dias) {
+  if (dias === null) return '';
+  const cls = dias <= 2 ? 'days-crit' : dias <= 6 ? 'days-warn' : 'days-ok';
+  return `<span class="days-val ${cls}">${dias}d</span>`;
+}
+
+function plClass(pct) {
+  if (!pct && pct !== 0) return 'pl-zero';
+  return pct > 0 ? 'pl-pos' : pct < 0 ? 'pl-neg' : 'pl-zero';
+}
+
+function fmtPct(pct) {
+  if (pct === null || pct === undefined) return '—';
+  return `${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%`;
+}
+
+function historialTable(hist, posId) {
+  if (!hist || !hist.length) {
+    return `<div class="hist-expand" id="hist-${posId}" style="display:none;">
+      <span style="font-size:11px;color:var(--muted);">Sin datos aún — primer snapshot a las 4:15 PM</span>
     </div>`;
+  }
+  const rows = hist.map(h => {
+    const cls = !h.pl_pct ? '' : h.pl_pct > 0 ? 'pl-pos' : 'pl-neg';
+    return `<tr>
+      <td>${h.fecha}</td>
+      <td>$${(h.bid||0).toFixed(2)}</td>
+      <td class="${cls}">${fmtPct(h.pl_pct)}</td>
+      <td style="color:var(--muted)">${h.nota||''}</td>
+    </tr>`;
+  }).join('');
+  return `<div class="hist-expand" id="hist-${posId}" style="display:none;">
+    <table class="hist-table">
+      <thead><tr><th>Fecha</th><th>Bid</th><th>P&L%</th><th>Nota</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+  </div>`;
 }
 
-function historialTable(pos) {
-  const hist = pos.historial_precios || [];
-  if (!hist.length) return '<div style="color:var(--muted);font-size:11px;padding:8px 0;">Sin datos aún — primer snapshot a las 4:15 PM</div>';
-  return `
-    <table style="width:100%;border-collapse:collapse;font-size:11px;margin-top:8px;">
-      <thead>
-        <tr style="color:var(--muted);text-transform:uppercase;letter-spacing:1px;">
-          <th style="text-align:left;padding:4px 0;">Fecha</th>
-          <th style="text-align:right;padding:4px 0;">Bid</th>
-          <th style="text-align:right;padding:4px 0;">P&L%</th>
-          <th style="text-align:right;padding:4px 0;">Nota</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${hist.map(h => `
-          <tr style="border-top:1px solid #1a1a24;">
-            <td style="padding:4px 0;color:var(--text);">${h.fecha}</td>
-            <td style="text-align:right;padding:4px 0;color:var(--text);">$${(h.bid||0).toFixed(2)}</td>
-            <td style="text-align:right;padding:4px 0;font-weight:600;color:${plColor(h.pl_pct)};">
-              ${h.pl_pct !== undefined ? (h.pl_pct >= 0 ? '+' : '') + h.pl_pct.toFixed(1) + '%' : '—'}
-            </td>
-            <td style="text-align:right;padding:4px 0;color:var(--muted);font-size:10px;">${h.nota||''}</td>
-          </tr>`).join('')}
-      </tbody>
-    </table>`;
+function toggleHistorial(posId) {
+  const el = document.getElementById('hist-' + posId);
+  if (el) el.style.display = el.style.display === 'none' ? 'block' : 'none';
 }
 
 function renderPosiciones(posiciones) {
@@ -456,115 +289,118 @@ function renderPosiciones(posiciones) {
     return;
   }
   grid.innerHTML = posiciones.map(pos => {
-    const tagClass  = pos.tipo === 'PUT' ? 'tag-put' : 'tag-call';
-    const costoTotal = pos.costo_total ? `$${pos.costo_total.toFixed(2)}` : `$${(pos.precio_entrada * 100 * pos.contratos).toFixed(2)}`;
-    const posId     = pos.id;
+    const tipoCls  = pos.tipo === 'PUT' ? 'tipo-put' : 'tipo-call';
+    const stripeCls = pos.tipo === 'PUT' ? 'stripe-put' : 'stripe-call';
+    const pct      = pos.pl_pct_actual;
+    const maxPct   = pos.pl_pct_maximo;
+    const dias     = diasRestantes(pos.expiration);
+    const costo    = pos.costo_total ? `$${pos.costo_total.toFixed(0)}` : '—';
+    const retoTag  = pos.es_reto ? `<div class="reto-tag">RETO C${pos.carril_id}</div>` : '';
     return `
       <div class="pos-card ${pos.es_reto ? 'reto' : ''}">
-        <div class="pos-header">
-          <span class="pos-simbolo">${pos.simbolo}</span>
-          <span class="pos-estrategia ${tagClass}">${pos.tipo}</span>
-          <span style="font-size:11px;color:var(--muted)">${pos.estrategia}</span>
-        </div>
-        <div class="pos-opcion" style="font-size:11px;color:var(--muted);margin-bottom:8px;">
-          ${pos.option_symbol || ''}
-        </div>
-        <div class="pos-prices">
-          <span><label>Strike</label><value>$${pos.strike}</value></span>
-          <span><label>Exp</label><value>${pos.expiration}</value></span>
-          <span><label>Contratos</label><value>${pos.contratos}</value></span>
-        </div>
-        <div class="pos-prices" style="margin-top:8px;">
-          <span><label>Entrada</label><value>$${pos.precio_entrada.toFixed(2)}</value></span>
-          <span><label>Costo Total</label><value>${costoTotal}</value></span>
-          <span><label>GTC Limit</label><value style="color:var(--gold)">$${pos.precio_gtc.toFixed(2)}</value></span>
-        </div>
-        ${plBadge(pos)}
-        <div style="margin-top:6px;">
-          <button onclick="toggleHistorial('${posId}')"
-            style="background:none;border:1px solid #2a2a3a;color:var(--muted);font-size:10px;
-                   padding:3px 10px;border-radius:6px;cursor:pointer;letter-spacing:1px;">
-            📋 VER HISTORIAL ▼
-          </button>
-          <div id="hist-${posId}" style="display:none;margin-top:8px;">
-            ${historialTable(pos)}
+        <div class="card-stripe ${stripeCls}"></div>
+        ${retoTag}
+        <div class="card-body">
+          <div class="card-header">
+            <span class="simbolo">${pos.simbolo}</span>
+            <span class="tipo-badge ${tipoCls}">${pos.tipo}</span>
+            <span class="estrategia-txt">${(pos.estrategia||'').split('—')[0].trim()}</span>
+          </div>
+          <div class="option-sym">${pos.option_symbol||''}</div>
+          <div class="pl-row">
+            <div class="pl-main ${plClass(pct)}">${fmtPct(pct)}</div>
+            <div class="pl-side">
+              <div class="pl-max-label">Cierre ayer</div>
+              <div class="pl-max-val" style="color:var(--muted);font-size:10px;">
+                Máx <span style="color:${maxPct > 0 ? 'var(--green)' : maxPct < 0 ? 'var(--red)' : 'var(--muted)'}">${fmtPct(maxPct)}</span>
+                ${pos.fecha_maximo ? `· ${pos.fecha_maximo}` : ''}
+              </div>
+            </div>
+          </div>
+          <div class="metrics">
+            <div>
+              <div class="metric-lbl">Strike</div>
+              <div class="metric-val">$${pos.strike}</div>
+            </div>
+            <div>
+              <div class="metric-lbl">Entrada</div>
+              <div class="metric-val">$${(pos.precio_entrada||0).toFixed(2)}</div>
+            </div>
+            <div>
+              <div class="metric-lbl">GTC</div>
+              <div class="metric-val gold">$${(pos.precio_gtc||0).toFixed(2)}</div>
+            </div>
+            <div>
+              <div class="metric-lbl">Vence en</div>
+              ${diasBadge(dias)}
+            </div>
           </div>
         </div>
-        <div class="pos-footer" style="margin-top:14px;">
-          <span class="pos-tiempo">${tiempoAbierto(pos.ts_entrada)}</span>
-          <button class="panic-btn" onclick="confirmarPanic('${pos.id}')">PANIC</button>
+        <div class="card-footer">
+          <div class="footer-left">
+            <div class="tiempo-txt">${tiempoAbierto(pos.ts_entrada)} abierta</div>
+            <div class="costo-txt">${pos.contratos} contrato · ${costo}</div>
+          </div>
+          <div class="footer-right">
+            <button class="hist-btn" onclick="toggleHistorial('${pos.id}')">historial ▾</button>
+            <button class="panic-btn" onclick="confirmarPanic('${pos.id}')">PANIC</button>
+          </div>
         </div>
-      </div>
-    `;
-  }).join('');
-}
-
-function toggleHistorial(posId) {
-  const el = document.getElementById('hist-' + posId);
-  if (!el) return;
-  el.style.display = el.style.display === 'none' ? 'block' : 'none';
-}
-
-function renderHistorial(historial) {
-  const lista = document.getElementById('historial-lista');
-  document.getElementById('badge-hist').textContent = historial.length;
-  if (!historial.length) {
-    lista.innerHTML = '<div class="empty-state">Sin posiciones cerradas aún</div>';
-    return;
-  }
-  lista.innerHTML = [...historial].reverse().map(pos => {
-    const plClass = pos.pl_pct > 0 ? 'positive' : 'negative';
-    const plStr = `${pos.pl_pct > 0 ? '+' : ''}${pos.pl_pct}%`;
-    return `
-      <div class="hist-item">
-        <div class="hist-left">
-          <span class="hist-simbolo">${pos.simbolo} ${pos.tipo} $${pos.strike}</span>
-          <span class="hist-detalle">exp ${pos.expiration} • ${pos.estrategia} • ${pos.motivo_cierre}</span>
-        </div>
-        <span class="hist-pl ${plClass}">${plStr}</span>
-      </div>
-    `;
+        ${historialTable(pos.historial_precios, pos.id)}
+      </div>`;
   }).join('');
 }
 
 function renderReto(reto) {
   const toggle = document.getElementById('reto-toggle');
   toggle.textContent = reto.activo ? 'PAUSAR' : 'ACTIVAR';
-  toggle.className = `reto-toggle ${reto.activo ? 'on' : 'off'}`;
-
-  const capitalTotal = reto.carriles.reduce((s, c) => s + c.capital, 0);
-  const pct = (capitalTotal / 1000000 * 100).toFixed(3);
-  document.getElementById('reto-capital').textContent = `$${capitalTotal.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2})}`;
+  toggle.className   = `reto-toggle ${reto.activo ? 'on' : 'off'}`;
+  const capTotal = reto.carriles.reduce((s,c) => s + (c.capital||0), 0);
+  document.getElementById('reto-capital').textContent = `$${capTotal.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}`;
+  const pct = (capTotal / 1000000 * 100).toFixed(4);
   document.getElementById('reto-pct').textContent = `${pct}% del millón`;
-  document.getElementById('reto-progress').style.width = `${Math.max(0.2, pct)}%`;
-
+  document.getElementById('reto-progress').style.width = Math.min(parseFloat(pct), 100) + '%';
   const grid = document.getElementById('carriles-grid');
   grid.innerHTML = reto.carriles.map(c => {
-    if (c.eliminado) {
-      return `
-        <div class="carril" style="opacity:0.4;border-color:#333;">
-          <div class="carril-num">C${c.id}</div>
-          <div style="font-size:10px;color:var(--red);">ELIMINADO</div>
-          <div class="carril-capital" style="color:var(--red)">$${c.capital.toFixed(0)}</div>
-        </div>`;
-    }
-    // Buscar posición activa del carril
+    if (c.eliminado) return `
+      <div class="carril eliminado">
+        <div class="carril-num">C${c.id}</div>
+        <div class="carril-capital" style="color:var(--red);font-size:10px;">ELIM</div>
+        <div class="carril-capital" style="color:var(--muted);">$${(c.capital||0).toFixed(0)}</div>
+      </div>`;
     let posInfo = '';
     if (c.posicion && _datos && _datos.posiciones) {
       const pos = _datos.posiciones.find(p => p.id === c.posicion);
-      if (pos) {
-        posInfo = `
-          <div class="carril-pos">${pos.simbolo} ${pos.tipo}</div>
-          <div style="font-size:9px;color:var(--muted);">$${pos.strike} exp ${pos.expiration}</div>
-          <div style="font-size:9px;color:var(--muted);">${pos.contratos}ct × $${pos.precio_entrada.toFixed(2)}</div>`;
-      }
+      if (pos) posInfo = `<div class="carril-pos">${pos.simbolo} ${pos.tipo}</div>`;
     }
     return `
       <div class="carril ${c.posicion ? 'activo' : ''}">
         <div class="carril-num">C${c.id}</div>
-        <div class="carril-capital">$${c.capital.toFixed(0)}</div>
-        <div class="carril-ronda">Ronda ${c.ronda}</div>
-        ${posInfo || (c.posicion ? '<div class="carril-pos">● EN POSICIÓN</div>' : '')}
+        <div class="carril-capital">$${(c.capital||0).toFixed(0)}</div>
+        <div class="carril-ronda">R${c.ronda}</div>
+        ${posInfo || (c.posicion ? '<div class="carril-pos">● activo</div>' : '')}
+      </div>`;
+  }).join('');
+}
+
+function renderHistorial(historial) {
+  const lista = document.getElementById('historial-lista');
+  document.getElementById('badge-hist').textContent = historial.length;
+  if (!historial.length) { lista.innerHTML = '<div class="empty-state">Sin posiciones cerradas aún</div>'; return; }
+  lista.innerHTML = [...historial].reverse().slice(0,20).map(pos => {
+    const pl  = pos.pl_pct || 0;
+    const cls = pl > 0 ? 'pl-pos' : pl < 0 ? 'pl-neg' : 'pl-zero';
+    const mot = pos.motivo_cierre || '—';
+    return `
+      <div class="hist-item">
+        <div class="hist-left">
+          <div class="hist-simbolo">${pos.simbolo} <span style="font-size:11px;color:var(--muted);font-weight:400">${pos.tipo} $${pos.strike}</span></div>
+          <div class="hist-detalle">${(pos.estrategia||'').split('—')[0].trim()} · ${mot} · exp ${pos.expiration||'—'}</div>
+        </div>
+        <div>
+          <div class="hist-pl-val ${cls}">${fmtPct(pl)}</div>
+          <div style="font-size:10px;color:var(--muted);text-align:right;font-family:'JetBrains Mono',monospace;">${pos.pl_usd >= 0 ? '+' : ''}$${(pos.pl_usd||0).toFixed(2)}</div>
+        </div>
       </div>`;
   }).join('');
 }
@@ -572,63 +408,41 @@ function renderReto(reto) {
 async function cargarDatos() {
   try {
     const r = await fetch(`${RAILWAY}/portfolio/data`);
-    _datos = await r.json();
-    renderPosiciones(_datos.posiciones);
-    renderHistorial(_datos.historial);
-    renderReto(_datos.reto);
-  } catch(e) {
-    toast('Error cargando datos');
-  }
+    const d = await r.json();
+    _datos = d;
+    renderPosiciones(d.posiciones || []);
+    renderReto(d.reto || {activo:false, carriles:[]});
+    renderHistorial(d.historial || []);
+  } catch(e) { toast('Error cargando datos'); }
 }
 
 async function confirmarPanic(posId) {
   try {
     const r = await fetch(`${RAILWAY}/portfolio/cerrar?id=${posId}&motivo=panic`);
     const d = await r.json();
-    if (d.ok) {
-      const bid = d.bid_usado ? ` — Bid: $${d.bid_usado.toFixed(2)}` : '';
-      toast(`✅ Posición cerrada${bid}`);
-      cargarDatos();
-    } else {
-      toast('Error cerrando posición');
-    }
-  } catch(e) {
-    toast('Error de conexión');
-  }
+    if (d.ok) { toast(`Posición cerrada · bid $${(d.bid_usado||0).toFixed(2)}`); cargarDatos(); }
+    else toast('Error cerrando posición');
+  } catch(e) { toast('Error de conexión'); }
 }
 
 async function toggleReto() {
   const activo = _datos?.reto?.activo;
   const url = activo ? `${RAILWAY}/portfolio/reto/desactivar` : `${RAILWAY}/portfolio/reto/activar`;
-  try {
-    await fetch(url);
-    toast(activo ? 'Reto pausado' : '🏆 Reto activado');
-    cargarDatos();
-  } catch(e) {
-    toast('Error');
-  }
+  try { await fetch(url); cargarDatos(); } catch(e) { toast('Error'); }
 }
 
-// Cargar análisis Claude
-let claudeTimer = null;
 async function cargarClaude() {
   const el = document.getElementById('claude-msg');
-  el.innerHTML = '<span class="claude-empty">Analizando portfolio...</span>';
+  el.innerHTML = '<span class="claude-empty">Analizando...</span>';
   try {
     const r = await fetch(`${RAILWAY}/portfolio/claude`);
     const d = await r.json();
-    if (d.analisis) {
-      el.innerHTML = d.analisis.replace(/\n/g, '<br>');
-    }
-  } catch(e) {
-    el.innerHTML = '<span class="claude-empty">Error conectando con Claude.</span>';
-  }
+    el.innerHTML = `<span class="claude-text">${d.analisis || 'Sin análisis disponible.'}</span>`;
+  } catch(e) { el.innerHTML = '<span class="claude-empty">Error obteniendo análisis.</span>'; }
 }
 
-// Cargar al inicio y cada 60 minutos
 cargarDatos();
 setInterval(cargarDatos, 60 * 60 * 1000);
-// Claude solo manual — no auto
 </script>
 </body>
 </html>
