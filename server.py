@@ -36,7 +36,7 @@ v8.27: Ruta /canal_lineas — Railway calcula techo/mitad/piso por cada vela. Da
 import requests
 import threading
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 import pytz
 from flask import Flask, jsonify, request
 
@@ -887,36 +887,23 @@ def ts_a_datetime(fecha_str, hora_est):
     dt = datetime.strptime(f"{fecha_str} {hora_est:02d}:00:00", "%Y-%m-%d %H:%M:%S")
     return EST.localize(dt)
 
-# Días festivos NYSE 2026 — mercado cerrado
-_FESTIVOS_2026 = {
-    date(2026, 1, 1), date(2026, 1, 19), date(2026, 2, 16),
-    date(2026, 4, 3), date(2026, 5, 25), date(2026, 7, 3),
-    date(2026, 9, 7), date(2026, 11, 26), date(2026, 12, 25),
-}
-
 def velas_mercado_entre(dt_inicio, dt_fin):
     """
     Cuenta velas AXIS (horas de mercado) entre dos datetimes.
-    Mercado: L-V 9:30-16:00 EST (4:15 SPY pero usamos 16 como límite genérico).
-    Velas AXIS: V1=hora 9 (9:30-10:00), V2=hora 10, ..., V7=hora 15.
-    Horas válidas: 9, 10, 11, 12, 13, 14, 15 = 7 velas/día.
-    Excluye noches, fines de semana y festivos NYSE.
-    Aplica a todos los activos genéricamente.
+    Mercado: L-V 9:30-16:00 EST, excluyendo festivos NYSE.
+    Velas: V1=hora 9, V2=10, ..., V7=15 (7 velas/día).
+    Usa es_dia_mercado() existente — soporta cualquier año.
     """
     if dt_fin <= dt_inicio:
         return 0
     count = 0
-    from datetime import timedelta as td
+    from datetime import timedelta
     cur = dt_inicio.replace(minute=0, second=0, microsecond=0)
-    if hasattr(cur, 'tzinfo') and cur.tzinfo is None:
-        cur = EST.localize(cur)
     while cur < dt_fin:
-        d = cur.date()
         h = cur.hour
-        # L-V, no festivo, hora de mercado (9=V1 a 15=V7)
-        if d.weekday() < 5 and d not in _FESTIVOS_2026 and 9 <= h <= 15:
+        if es_dia_mercado(cur) and 9 <= h <= 15:
             count += 1
-        cur += td(hours=1)
+        cur += timedelta(hours=1)
     return count
 
 def calcular_techo_canal(simbolo, ahora_dt):
