@@ -154,14 +154,14 @@
 <header>
   <div class="logo">AXIS<small>CHARTS v1.3.0 — SEÑALES</small></div>
   <div class="tabs">
-    <button class="tab on"  onclick="cambiar('SPY')">SPY</button>
-    <button class="tab"     onclick="cambiar('AAPL')">AAPL</button>
-    <button class="tab"     onclick="cambiar('BA')">BA</button>
-    <button class="tab"     onclick="cambiar('GLD')">GLD</button>
-    <button class="tab"     onclick="cambiar('NVDA')">NVDA</button>
-    <button class="tab"     onclick="cambiar('AMZN')">AMZN</button>
-    <button class="tab"     onclick="cambiar('GOOG')">GOOG</button>
-    <button class="tab"     onclick="cambiar('META')">META</button>
+    <button class="tab on"  data-activo="SPY"  onclick="cambiar('SPY')">SPY</button>
+    <button class="tab"     data-activo="AAPL" onclick="cambiar('AAPL')">AAPL</button>
+    <button class="tab"     data-activo="BA"   onclick="cambiar('BA')">BA</button>
+    <button class="tab"     data-activo="GLD"  onclick="cambiar('GLD')">GLD</button>
+    <button class="tab"     data-activo="NVDA" onclick="cambiar('NVDA')">NVDA</button>
+    <button class="tab"     data-activo="AMZN" onclick="cambiar('AMZN')">AMZN</button>
+    <button class="tab"     data-activo="GOOG" onclick="cambiar('GOOG')">GOOG</button>
+    <button class="tab"     data-activo="META" onclick="cambiar('META')">META</button>
   </div>
   <div class="price-box">
     <span id="reloj" style="font-size:11px;font-weight:600;color:var(--dim);letter-spacing:1px;margin-right:12px;font-family:'JetBrains Mono',monospace;"></span>
@@ -244,8 +244,9 @@
       <span style="margin-left:8px">Mitad:</span><span id="ps-mitad">—</span>
       <span style="margin-left:8px">Piso:</span><span id="ps-piso">—</span>
     </div>
-    <button class="btn-ps-act" onclick="activarCanal()">⬆ ACTIVAR / ACTUALIZAR</button>
-    <button class="btn-ps-clear" onclick="desactivarCanal()">✕ DESACTIVAR CANAL</button>
+    <button class="btn-ps-act" onclick="activarCanal()">⬆ ACTIVAR CANAL</button>
+    <button class="btn-ps-act" style="background:#1a3a2a;border-color:#1D9E75;color:#5ecba8;" onclick="actualizarP2()">↻ ACTUALIZAR P2</button>
+    <button class="btn-ps-clear" onclick="desactivarCanal()">✕ DESACTIVAR</button>
   </div>
 
   <div id="tooltip">
@@ -397,8 +398,11 @@ async function cargarDatos(sym, silencioso=false) {
 let globalRefreshTimer = null;
 function iniciarRefreshGlobal() {
   if (globalRefreshTimer) clearInterval(globalRefreshTimer);
+  // Actualizar luces de canal en tabs al arrancar
+  actualizarLucesCanal();
   globalRefreshTimer = setInterval(async () => {
     if (!esMercadoAbierto()) return;
+    actualizarLucesCanal();
     for (const sym of ACTIVOS) {
       try {
         const url = `${RAILWAY}/velas?simbolo=${sym}&dias=60&t=${Date.now()}`;
@@ -411,17 +415,39 @@ function iniciarRefreshGlobal() {
           l: parseFloat(v.low),  c: parseFloat(v.close),
           vela: v.vela||'', datetime: v.datetime,
         }));
-        // Si es el activo actual, actualizar y redibujar
-        if (sym === activo) {
-          allVelas = velas;
-          zoomEnd = velas.length - 1;
-          render();
-        }
-        // Actualizar precio en header si es el activo actual
+        if (sym === activo) { allVelas = velas; zoomEnd = velas.length - 1; render(); }
         if (sym === activo) updatePrecio(velas);
       } catch(e) { /* silencioso */ }
     }
-  }, 2 * 60 * 1000); // cada 2 minutos
+  }, 2 * 60 * 1000);
+}
+
+async function actualizarLucesCanal() {
+  try {
+    const r = await fetch(`${RAILWAY}/canal_estado`);
+    const d = await r.json();
+    document.querySelectorAll('.tab[data-activo]').forEach(btn => {
+      const sym = btn.getAttribute('data-activo');
+      if (!d[sym]) return;
+      const c = d[sym];
+      // Remover luz previa si existe
+      const prev = btn.querySelector('.canal-luz');
+      if (prev) prev.remove();
+      // Agregar luz según estado
+      if (c.on && !c.apagado) {
+        const luz = document.createElement('span');
+        luz.className = 'canal-luz';
+        luz.style.cssText = 'display:inline-block;width:6px;height:6px;border-radius:50%;background:#1D9E75;margin-left:5px;vertical-align:middle;flex-shrink:0;';
+        btn.appendChild(luz);
+      } else if (c.apagado) {
+        const luz = document.createElement('span');
+        luz.className = 'canal-luz';
+        luz.style.cssText = 'display:inline-block;width:6px;height:6px;border-radius:50%;background:#E24B4A;margin-left:5px;vertical-align:middle;flex-shrink:0;';
+        btn.appendChild(luz);
+      }
+    });
+  } catch(e) { /* silencioso */ }
+}
 }
 
 // ═══════════════════════════════════════
@@ -947,6 +973,27 @@ async function activarCanal() {
     showToast('❌ Error conectando Railway');
     document.getElementById('ps-status').textContent = '❌ Error de conexión';
   }
+}
+
+async function actualizarP2() {
+  const p2h = document.getElementById('ps-p2-high').value;
+  const p2f = document.getElementById('ps-p2-fecha').value;
+  const p2v = document.getElementById('ps-p2-vela').value;
+  if (!p2h || !p2f) { showToast('❌ Introduce P2 high y fecha'); return; }
+  const p2hora = VELA_HORA[p2v] ?? 10;
+  try {
+    document.getElementById('ps-status').textContent = '⏳ Actualizando P2...';
+    const url = `${RAILWAY}/actualizar_p2?activo=${activo}&p2_high=${p2h}&p2_fecha=${p2f}&p2_hora=${p2hora}`;
+    const r   = await fetch(url);
+    const d   = await r.json();
+    if (r.ok) {
+      showToast(`✅ P2 actualizado — techo $${d.techo ?? '—'}`);
+      await cargarEstadoCanal(activo);
+      cargarDatos(activo);
+    } else {
+      showToast(`❌ ${d.error || 'Error'}`);
+    }
+  } catch(e) { showToast('❌ Error conectando Railway'); }
 }
 
 async function desactivarCanal() {
@@ -1507,7 +1554,9 @@ async function cambiar(sym) {
   clearTimeout(refreshTimer);
   allVelas=[]; zoomStart=0; zoomEnd=0;
   window.senalesHoy = [];
-  document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('on',b.textContent===sym));
+  document.querySelectorAll('.tab').forEach(b => {
+    b.classList.toggle('on', b.getAttribute('data-activo') === sym);
+  });
   document.getElementById('activo-label').textContent = sym;
   await cargarEstadoCanal(sym);
   cargarDatos(sym);
