@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v8.57
+AXIS Breakout Sentinel v8.58
 Estrategias: 1VR | 1VR+ | RPG | GNA | GBA | RCB/CNF
 Multi-activo: SPY, AAPL, BA, GLD
 v8.43: Portfolio fix — ejecutar_orden_tradier en webhook exec/reto | Panic Button al bid |
@@ -887,25 +887,59 @@ def ts_a_datetime(fecha_str, hora_est):
     dt = datetime.strptime(f"{fecha_str} {hora_est:02d}:00:00", "%Y-%m-%d %H:%M:%S")
     return EST.localize(dt)
 
+# Días festivos NYSE 2026 — mercado cerrado
+_FESTIVOS_2026 = {
+    date(2026, 1, 1), date(2026, 1, 19), date(2026, 2, 16),
+    date(2026, 4, 3), date(2026, 5, 25), date(2026, 7, 3),
+    date(2026, 9, 7), date(2026, 11, 26), date(2026, 12, 25),
+}
+
+def velas_mercado_entre(dt_inicio, dt_fin):
+    """
+    Cuenta velas AXIS (horas de mercado) entre dos datetimes.
+    Mercado: L-V 9:30-16:00 EST (4:15 SPY pero usamos 16 como límite genérico).
+    Velas AXIS: V1=hora 9 (9:30-10:00), V2=hora 10, ..., V7=hora 15.
+    Horas válidas: 9, 10, 11, 12, 13, 14, 15 = 7 velas/día.
+    Excluye noches, fines de semana y festivos NYSE.
+    Aplica a todos los activos genéricamente.
+    """
+    if dt_fin <= dt_inicio:
+        return 0
+    count = 0
+    from datetime import timedelta as td
+    cur = dt_inicio.replace(minute=0, second=0, microsecond=0)
+    if hasattr(cur, 'tzinfo') and cur.tzinfo is None:
+        cur = EST.localize(cur)
+    while cur < dt_fin:
+        d = cur.date()
+        h = cur.hour
+        # L-V, no festivo, hora de mercado (9=V1 a 15=V7)
+        if d.weekday() < 5 and d not in _FESTIVOS_2026 and 9 <= h <= 15:
+            count += 1
+        cur += td(hours=1)
+    return count
+
 def calcular_techo_canal(simbolo, ahora_dt):
+    """
+    Calcula el techo proyectado del canal en ahora_dt.
+    Usa velas AXIS de mercado abierto — excluye noches, fines de semana
+    y festivos. Aplica a CNF, RCB y PM40 de todos los activos.
+    """
     c = canal[simbolo]
     if not c["on"] or c["apagado"] or not c["p1"] or not c["p2"]:
         return None
     try:
-        # Usar p2_actual si está disponible, sino usar p2 base
         p2_high = c["p2_actual_high"] if c["p2_actual_high"] else c["p2"]["high"]
-        if c["p2_actual_ts"]:
-            dt_p2 = c["p2_actual_ts"]
-        else:
-            dt_p2 = ts_a_datetime(c["p2"]["fecha"], c["p2"]["hora_est"])
+        dt_p2   = c["p2_actual_ts"] if c["p2_actual_ts"] else ts_a_datetime(c["p2"]["fecha"], c["p2"]["hora_est"])
+        dt_p1   = ts_a_datetime(c["p1"]["fecha"], c["p1"]["hora_est"])
 
-        dt_p1 = ts_a_datetime(c["p1"]["fecha"], c["p1"]["hora_est"])
-        horas_p1_p2 = (dt_p2 - dt_p1).total_seconds() / 3600
-        if horas_p1_p2 <= 0:
+        velas_p1_p2    = velas_mercado_entre(dt_p1, dt_p2)
+        velas_p1_ahora = velas_mercado_entre(dt_p1, ahora_dt)
+
+        if velas_p1_p2 <= 0:
             return None
-        slope = (p2_high - c["p1"]["high"]) / horas_p1_p2
-        horas_desde_p1 = (ahora_dt - dt_p1).total_seconds() / 3600
-        return c["p1"]["high"] + slope * horas_desde_p1
+        slope = (p2_high - c["p1"]["high"]) / velas_p1_p2
+        return c["p1"]["high"] + slope * velas_p1_ahora
     except Exception as e:
         print(f"Error calcular techo {simbolo}: {e}")
         return None
@@ -1792,7 +1826,7 @@ def reporte_horario():
 # LOOP PRINCIPAL
 # ═══════════════════════════════════════════════════════════
 def monitor_loop():
-    print("AXIS Breakout Sentinel v8.57 iniciado...")
+    print("AXIS Breakout Sentinel v8.58 iniciado...")
     while True:
         ahora = datetime.now(EST)
         mins  = ahora.hour * 60 + ahora.minute
@@ -1905,7 +1939,7 @@ def home(path=""):
   <div class="canales-grid">
     {canales_html}
   </div>
-  <div class="footer">AXIS Breakout Sentinel v8.57 · {activos_str}</div>
+  <div class="footer">AXIS Breakout Sentinel v8.58 · {activos_str}</div>
 </body>
 </html>"""
     from flask import Response
@@ -1925,7 +1959,7 @@ def test():
         else:
             lineas_canal.append(f"  {a}: OFF")
     enviar_telegram(
-        f"✅ <b>AXIS Breakout Sentinel v8.57</b>\n"
+        f"✅ <b>AXIS Breakout Sentinel v8.58</b>\n"
         f"<b>Hora:</b> {ahora.strftime('%A %d/%m/%Y %H:%M EST')}\n"
         f"<b>Mercado:</b> {'Abierto' if es_dia_mercado(ahora) else 'Cerrado'}\n"
         f"<b>1VR:</b> {'ON' if VR1_ON else 'OFF'} | "
@@ -3669,7 +3703,7 @@ def system_status():
             archivos_data[fname] = "NO ENCONTRADO ❌"
 
     return jsonify({
-        "sistema":          "AXIS Breakout Sentinel v8.57",
+        "sistema":          "AXIS Breakout Sentinel v8.58",
         "hora_est":         ahora.strftime("%Y-%m-%d %H:%M:%S EST"),
         "mercado":          "ABIERTO ✅" if mercado_abierto else "CERRADO ⏸",
         "threads":          threads_vivos,
