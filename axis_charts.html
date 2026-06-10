@@ -306,7 +306,7 @@ function esMercadoAbierto() {
   const est  = new Date(new Date().toLocaleString('en-US',{timeZone:'America/New_York'}));
   const d = est.getDay(), h = est.getHours(), m = est.getMinutes();
   const mins = h*60+m;
-  return d>=1 && d<=5 && mins>=570 && mins<961; // 9:30-16:01 EST
+  return d>=1 && d<=5 && mins>=570 && mins<960; // 9:30-16:00 EST
 }
 
 function velaLabel(tsMs) {
@@ -447,7 +447,6 @@ async function actualizarLucesCanal() {
       }
     });
   } catch(e) { /* silencioso */ }
-}
 }
 
 // ═══════════════════════════════════════
