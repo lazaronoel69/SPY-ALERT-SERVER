@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v8.56
+AXIS Breakout Sentinel v8.57
 Estrategias: 1VR | 1VR+ | RPG | GNA | GBA | RCB/CNF
 Multi-activo: SPY, AAPL, BA, GLD
 v8.43: Portfolio fix — ejecutar_orden_tradier en webhook exec/reto | Panic Button al bid |
@@ -1792,7 +1792,7 @@ def reporte_horario():
 # LOOP PRINCIPAL
 # ═══════════════════════════════════════════════════════════
 def monitor_loop():
-    print("AXIS Breakout Sentinel v8.56 iniciado...")
+    print("AXIS Breakout Sentinel v8.57 iniciado...")
     while True:
         ahora = datetime.now(EST)
         mins  = ahora.hour * 60 + ahora.minute
@@ -1905,7 +1905,7 @@ def home(path=""):
   <div class="canales-grid">
     {canales_html}
   </div>
-  <div class="footer">AXIS Breakout Sentinel v8.56 · {activos_str}</div>
+  <div class="footer">AXIS Breakout Sentinel v8.57 · {activos_str}</div>
 </body>
 </html>"""
     from flask import Response
@@ -1925,7 +1925,7 @@ def test():
         else:
             lineas_canal.append(f"  {a}: OFF")
     enviar_telegram(
-        f"✅ <b>AXIS Breakout Sentinel v8.56</b>\n"
+        f"✅ <b>AXIS Breakout Sentinel v8.57</b>\n"
         f"<b>Hora:</b> {ahora.strftime('%A %d/%m/%Y %H:%M EST')}\n"
         f"<b>Mercado:</b> {'Abierto' if es_dia_mercado(ahora) else 'Cerrado'}\n"
         f"<b>1VR:</b> {'ON' if VR1_ON else 'OFF'} | "
@@ -1988,6 +1988,59 @@ def activar():
             (f"<b>Mitad:</b> ${mitad:.2f} | <b>Piso:</b> ${piso:.2f}" if piso else "")
         )
         return jsonify({"status": f"canal {tipo_canal} activado", "activo": simbolo}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+# ═══════════════════════════════════════════════════════════
+# ACTUALIZAR P2 — actualiza solo P2, P1 queda intacto
+# GET /actualizar_p2?activo=X&p2_high=Y&p2_fecha=YYYY-MM-DD&p2_hora=H
+# ═══════════════════════════════════════════════════════════
+@app.route("/actualizar_p2", methods=["GET"])
+def actualizar_p2():
+    simbolo = request.args.get("activo", "SPY").upper()
+    if simbolo not in ACTIVOS:
+        return jsonify({"error": f"Activo {simbolo} no reconocido"}), 400
+    c = canal[simbolo]
+    if not c.get("p1"):
+        return jsonify({"error": f"{simbolo} no tiene P1 definido — usa /activar primero"}), 400
+    try:
+        p2_high = float(request.args["p2_high"])
+        p2_fecha = request.args["p2_fecha"]
+        p2_hora  = int(request.args["p2_hora"])
+
+        # Validar P2 < P1 (canal bajista)
+        if p2_high >= c["p1"]["high"]:
+            return jsonify({"error": f"P2 ${p2_high} debe ser menor que P1 ${c['p1']['high']:.2f}"}), 400
+
+        # Actualizar P2 — P1 intacto
+        c["p2"] = {
+            "fecha":    p2_fecha,
+            "hora_est": p2_hora,
+            "high":     p2_high,
+        }
+        c["p2_actual_high"] = p2_high
+        c["p2_actual_ts"]   = ts_a_datetime(p2_fecha, p2_hora)
+        c["on"]             = True
+        c["apagado"]        = False
+        guardar_canales()
+
+        ahora_dt   = datetime.now(EST)
+        techo      = calcular_techo_canal(simbolo, ahora_dt)
+        tipo_canal = "RCB" if c["p3"] else "CNF"
+
+        enviar_telegram(
+            f"🔄 <b>P2 Actualizado — {simbolo} {tipo_canal}</b>\n"
+            f"<b>P1:</b> ${c['p1']['high']:.2f} — {c['p1']['fecha']} (intacto)\n"
+            f"<b>P2 nuevo:</b> ${p2_high:.2f} — {p2_fecha} V{p2_hora}\n" +
+            (f"<b>Techo ahora:</b> ${techo:.2f}" if techo else "")
+        )
+        return jsonify({
+            "status":  "P2 actualizado",
+            "activo":  simbolo,
+            "p1":      c["p1"],
+            "p2_nuevo": c["p2"],
+            "techo":   round(techo, 2) if techo else None,
+        }), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 400
 
@@ -3616,7 +3669,7 @@ def system_status():
             archivos_data[fname] = "NO ENCONTRADO ❌"
 
     return jsonify({
-        "sistema":          "AXIS Breakout Sentinel v8.56",
+        "sistema":          "AXIS Breakout Sentinel v8.57",
         "hora_est":         ahora.strftime("%Y-%m-%d %H:%M:%S EST"),
         "mercado":          "ABIERTO ✅" if mercado_abierto else "CERRADO ⏸",
         "threads":          threads_vivos,
