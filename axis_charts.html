@@ -152,7 +152,7 @@
 <body>
 
 <header>
-  <div class="logo">AXIS<small>CHARTS v1.3.0 — SEÑALES</small></div>
+  <div class="logo">AXIS<small>CHARTS v1.3.1 — SEÑALES</small></div>
   <div class="tabs">
     <button class="tab on"  data-activo="SPY"  onclick="cambiar('SPY')">SPY</button>
     <button class="tab"     data-activo="AAPL" onclick="cambiar('AAPL')">AAPL</button>
@@ -368,7 +368,7 @@ async function cargarDatos(sym, silencioso=false) {
         c:        parseFloat(v.close),
         vela:     v.vela || '',
         datetime: v.datetime,
-        completa: v.completa !== false,  // true si completa, false si en formación
+        completa: v.completa === true,  // explícito: solo true si el servidor dice true
       };
     });
 
@@ -415,7 +415,7 @@ function iniciarRefreshGlobal() {
           o: parseFloat(v.open), h: parseFloat(v.high),
           l: parseFloat(v.low),  c: parseFloat(v.close),
           vela: v.vela||'', datetime: v.datetime,
-          completa: v.completa !== false,
+          completa: v.completa === true,
         }));
         if (sym === activo) { allVelas = velas; zoomEnd = velas.length - 1; render(); }
         if (sym === activo) updatePrecio(velas);
@@ -1402,6 +1402,8 @@ function render() {
 
   // ── Vela en formación — usa campo 'completa' del servidor ──
   if (esMercadoAbierto() && visible.length > 0) {
+    // Debug: verificar último elemento
+    const lastV = visible[visible.length - 1];
     // Buscar la primera vela incompleta (completa===false)
     let idxFormacion = -1;
     for (let i = visible.length - 1; i >= 0; i--) {
