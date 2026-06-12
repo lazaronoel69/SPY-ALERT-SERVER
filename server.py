@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v8.60
+AXIS Breakout Sentinel v8.61
 Estrategias: 1VR | 1VR+ | RPG | GNA | GBA | RCB/CNF
 Multi-activo: SPY, AAPL, BA, GLD
 v8.43: Portfolio fix — ejecutar_orden_tradier en webhook exec/reto | Panic Button al bid |
@@ -781,53 +781,246 @@ def restar_dias_habiles(fecha, dias):
 # GET_VELAS — Tradier produccion 15min → velas AXIS
 # V1 = 9:30+9:45 | V2-V7 = 4 barras de 15min cada una
 # ═══════════════════════════════════════════════════════════
-def get_velas(simbolo, outputsize=50):
+# ═══════════════════════════════════════════════════════════
+# BASE DE DATOS LOCAL DE VELAS
+# Almacena barras 15min permanentemente en /data/axis_velas_X.json
+# Solo pide a Tradier las barras nuevas desde la última guardada
+# ═══════════════════════════════════════════════════════════
+
+def ruta_velas_local(simbolo):
+    return f"{DATA_DIR}/axis_velas_{simbolo}.json"
+
+def cargar_velas_local(simbolo):
+    ruta = ruta_velas_local(simbolo)
+    if not os.path.exists(ruta):
+        return {"simbolo": simbolo, "ultima_barra": None, "barras": []}
     try:
-        from datetime import date, datetime as dt2
-        from collections import defaultdict
+        with open(ruta) as f:
+            return json.load(f)
+    except Exception as e:
+        print(f"Error cargando velas locales {simbolo}: {e}")
+        return {"simbolo": simbolo, "ultima_barra": None, "barras": []}
 
-        # 20 días hábiles (~520 barras) — bajo el límite de Tradier (~1,000)
-        fecha_fin = date.today()
-        fecha_ini = restar_dias_habiles(fecha_fin, 20)
+def guardar_velas_local(simbolo, data):
+    try:
+        with open(ruta_velas_local(simbolo), "w") as f:
+            json.dump(data, f)
+    except Exception as e:
+        print(f"Error guardando velas locales {simbolo}: {e}")
 
-        todas_barras = []
+def construir_base_datos_activo(simbolo):
+    """
+    Construye la base de datos local para un activo la primera vez.
+    1. Llama /markets/history diario → años de OHLC
+    2. Llama /markets/timesales 15min → últimas semanas
+    Guarda todo en /data/axis_velas_X.json
+    """
+    from datetime import date as _date, timedelta as _td
+    local = cargar_velas_local(simbolo)
+    if local["barras"]:
+        print(f"{simbolo}: base de datos ya existe ({len(local['barras'])} registros)")
+        return True
 
+    print(f"{simbolo}: construyendo base de datos por primera vez...")
+    hoy       = _date.today()
+    hace_2_anos = hoy.replace(year=hoy.year - 2)
+    todas_barras = []
+
+    # Llamada 1: history diario — años de OHLC
+    try:
         r = requests.get(
+            f"{TRADIER_BASE_REAL}/markets/history",
+            headers=TRADIER_HEADERS_REAL,
+            params={
+                "symbol":   simbolo,
+                "interval": "daily",
+                "start":    hace_2_anos.strftime("%Y-%m-%d"),
+                "end":      hoy.strftime("%Y-%m-%d"),
+            },
+            timeout=30
+        )
+        if r.status_code == 200:
+            hist = r.json().get("history") or {}
+            dias = hist.get("day", [])
+            if isinstance(dias, dict): dias = [dias]
+            for d in dias:
+                todas_barras.append({
+                    "time":     d["date"] + "T16:00:00",
+                    "open":     float(d["open"]),
+                    "high":     float(d["high"]),
+                    "low":      float(d["low"]),
+                    "close":    float(d["close"]),
+                    "volume":   int(d.get("volume", 0)),
+                    "interval": "daily"
+                })
+            print(f"  {simbolo} history diario: {len(dias)} días")
+    except Exception as e:
+        print(f"  {simbolo} error history diario: {e}")
+
+    # Llamada 2: timesales 15min — últimas semanas (solo hoy para no truncar)
+    try:
+        fecha_ini = restar_dias_habiles(hoy, 38)
+        r2 = requests.get(
             f"{TRADIER_BASE_REAL}/markets/timesales",
             headers=TRADIER_HEADERS_REAL,
             params={
                 "symbol":         simbolo,
                 "interval":       "15min",
                 "start":          f"{fecha_ini.strftime('%Y-%m-%d')} 09:00",
-                "end":            f"{fecha_fin.strftime('%Y-%m-%d')} 16:30",
+                "end":            f"{(hoy - _td(days=1)).strftime('%Y-%m-%d')} 16:30",
                 "session_filter": "open",
             },
             timeout=30
         )
-        if r.status_code != 200:
-            print(f"Tradier error {simbolo}: HTTP {r.status_code}")
-            return None
-        data   = r.json()
-        series = data.get("series")
-        if not series or series == "null":
-            print(f"Tradier sin datos {simbolo}")
-            return None
-        barras = series.get("data", [])
-        if isinstance(barras, dict):
-            barras = [barras]
-        todas_barras = barras
+        if r2.status_code == 200:
+            s = r2.json().get("series")
+            if s and s != "null":
+                b = s.get("data", [])
+                if isinstance(b, dict): b = [b]
+                for barra in b:
+                    barra["interval"] = "15min"
+                todas_barras.extend(b)
+                print(f"  {simbolo} timesales 15min historial: {len(b)} barras")
+        # Llamada separada para hoy
+        r3 = requests.get(
+            f"{TRADIER_BASE_REAL}/markets/timesales",
+            headers=TRADIER_HEADERS_REAL,
+            params={
+                "symbol":         simbolo,
+                "interval":       "15min",
+                "start":          f"{hoy.strftime('%Y-%m-%d')} 09:00",
+                "end":            f"{hoy.strftime('%Y-%m-%d')} 16:30",
+                "session_filter": "open",
+            },
+            timeout=30
+        )
+        if r3.status_code == 200:
+            s3 = r3.json().get("series")
+            if s3 and s3 != "null":
+                b3 = s3.get("data", [])
+                if isinstance(b3, dict): b3 = [b3]
+                for barra in b3:
+                    barra["interval"] = "15min"
+                todas_barras.extend(b3)
+                print(f"  {simbolo} timesales 15min hoy: {len(b3)} barras")
+    except Exception as e:
+        print(f"  {simbolo} error timesales: {e}")
 
-        # Agrupar barras por fecha y vela AXIS
-        # Estructura: { "2026-05-12": { "V1": [barras], ... }, ... }
+    if not todas_barras:
+        print(f"  {simbolo}: sin datos — base no construida")
+        return False
+
+    # Ordenar por tiempo
+    todas_barras.sort(key=lambda x: x["time"])
+    ultima = todas_barras[-1]["time"]
+
+    local["barras"]       = todas_barras
+    local["ultima_barra"] = ultima
+    guardar_velas_local(simbolo, local)
+    print(f"  {simbolo}: base construida — {len(todas_barras)} registros | última: {ultima}")
+    return True
+
+def actualizar_velas_local(simbolo):
+    """
+    Actualización incremental — solo pide a Tradier las barras nuevas
+    desde la última barra guardada hasta ahora.
+    """
+    from datetime import date as _date, timedelta as _td, datetime as _dt
+    local = cargar_velas_local(simbolo)
+
+    if not local["barras"] or not local["ultima_barra"]:
+        return construir_base_datos_activo(simbolo)
+
+    # Parsear última barra
+    ultima_str = local["ultima_barra"]
+    try:
+        if "T" in ultima_str:
+            ultima_dt = _dt.strptime(ultima_str[:19], "%Y-%m-%dT%H:%M:%S")
+        else:
+            ultima_dt = _dt.strptime(ultima_str, "%Y-%m-%d")
+    except:
+        ultima_dt = _dt.now() - _td(days=1)
+
+    desde = ultima_dt + _td(minutes=15)
+    hoy   = _date.today()
+
+    # Solo pedir si hay algo nuevo
+    if desde.date() > hoy:
+        return True
+
+    nuevas = []
+    # Si el desde es de hoy o ayer, solo pedir intradiario
+    try:
+        r = requests.get(
+            f"{TRADIER_BASE_REAL}/markets/timesales",
+            headers=TRADIER_HEADERS_REAL,
+            params={
+                "symbol":         simbolo,
+                "interval":       "15min",
+                "start":          desde.strftime("%Y-%m-%d %H:%M"),
+                "end":            f"{hoy.strftime('%Y-%m-%d')} 16:30",
+                "session_filter": "open",
+            },
+            timeout=30
+        )
+        if r.status_code == 200:
+            s = r.json().get("series")
+            if s and s != "null":
+                b = s.get("data", [])
+                if isinstance(b, dict): b = [b]
+                for barra in b:
+                    barra["interval"] = "15min"
+                nuevas.extend(b)
+    except Exception as e:
+        print(f"Error actualizando velas {simbolo}: {e}")
+
+    if nuevas:
+        local["barras"].extend(nuevas)
+        local["ultima_barra"] = nuevas[-1]["time"]
+        guardar_velas_local(simbolo, local)
+        print(f"{simbolo}: +{len(nuevas)} barras nuevas guardadas")
+
+    return True
+
+def construir_base_datos():
+    """Construye la base de datos para TODOS los activos al arrancar."""
+    print("Verificando base de datos de velas...")
+    for simbolo in ACTIVOS:
+        construir_base_datos_activo(simbolo)
+    print("Base de datos de velas lista.")
+
+def get_velas(simbolo, outputsize=280):
+    """
+    Lee velas del archivo local /data/axis_velas_X.json.
+    Solo pide a Tradier las barras nuevas desde la última guardada.
+    Retorna lista de velas AXIS agrupadas (V1-V7) en orden desc.
+    """
+    try:
+        from collections import defaultdict
+        from datetime import datetime as dt2
+
+        # Actualizar con las barras nuevas
+        actualizar_velas_local(simbolo)
+
+        # Leer del archivo local
+        local = cargar_velas_local(simbolo)
+        if not local["barras"]:
+            print(f"get_velas {simbolo}: sin datos locales")
+            return None
+
+        # Solo barras de 15min para velas AXIS
+        barras_15min = [b for b in local["barras"] if b.get("interval") == "15min"]
+        if not barras_15min:
+            print(f"get_velas {simbolo}: sin barras 15min")
+            return None
+
+        # Agrupar por fecha y vela AXIS
         dias_dict = defaultdict(lambda: defaultdict(list))
-
-        for b in todas_barras:
+        for b in barras_15min:
             ts_str = b["time"].replace("T", " ")
-            bdt    = dt2.strptime(ts_str, "%Y-%m-%d %H:%M:%S")
+            bdt    = dt2.strptime(ts_str[:19], "%Y-%m-%d %H:%M:%S")
             fecha  = bdt.strftime("%Y-%m-%d")
             h, m   = bdt.hour, bdt.minute
-
-            # V1 = barras 9:30 y 9:45
             if h == 9 and m in (30, 45):
                 dias_dict[fecha]["V1"].append(b)
             elif h == 10: dias_dict[fecha]["V2"].append(b)
@@ -837,23 +1030,20 @@ def get_velas(simbolo, outputsize=50):
             elif h == 14: dias_dict[fecha]["V6"].append(b)
             elif h == 15: dias_dict[fecha]["V7"].append(b)
 
-        # Construir lista de velas en formato compatible con el resto del codigo
-        # Ordenadas de mas reciente a mas antigua (igual que TwelveData)
-        vela_hora  = {"V1":"09:30:00","V2":"10:00:00","V3":"11:00:00",
+        vela_hora = {"V1":"09:30:00","V2":"10:00:00","V3":"11:00:00",
                      "V4":"12:00:00","V5":"13:00:00","V6":"14:00:00","V7":"15:00:00"}
-        vela_bars  = {"V1":2,"V2":4,"V3":4,"V4":4,"V5":4,"V6":4,"V7":4}  # barras esperadas
-        resultado_velas = []
+        vela_bars = {"V1":2,"V2":4,"V3":4,"V4":4,"V5":4,"V6":4,"V7":4}
+        resultado = []
 
         for fecha in sorted(dias_dict.keys(), reverse=True):
             for vela in ["V7","V6","V5","V4","V3","V2","V1"]:
                 bs = dias_dict[fecha].get(vela, [])
-                if not bs:
-                    continue
+                if not bs: continue
                 o = float(bs[0]["open"])
                 h = max(float(b["high"]) for b in bs)
                 l = min(float(b["low"])  for b in bs)
                 c = float(bs[-1]["close"])
-                resultado_velas.append({
+                resultado.append({
                     "datetime":      f"{fecha} {vela_hora[vela]}",
                     "open":          str(round(o, 4)),
                     "high":          str(round(h, 4)),
@@ -864,16 +1054,17 @@ def get_velas(simbolo, outputsize=50):
                     "bars_expected": vela_bars[vela],
                     "completa":      len(bs) >= vela_bars[vela],
                 })
+            if len(resultado) >= outputsize:
+                break
 
-        if not resultado_velas:
+        if not resultado:
             print(f"get_velas {simbolo}: sin velas construidas")
             return None
 
-        # Limitar a outputsize
-        return resultado_velas[:outputsize]
+        return resultado[:outputsize]
 
     except Exception as e:
-        print(f"Error get_velas Tradier {simbolo}: {e}")
+        print(f"Error get_velas {simbolo}: {e}")
         return None
 
 # ═══════════════════════════════════════════════════════════
@@ -1848,7 +2039,7 @@ def reporte_horario():
 # LOOP PRINCIPAL
 # ═══════════════════════════════════════════════════════════
 def monitor_loop():
-    print("AXIS Breakout Sentinel v8.60 iniciado...")
+    print("AXIS Breakout Sentinel v8.61 iniciado...")
     while True:
         ahora = datetime.now(EST)
         mins  = ahora.hour * 60 + ahora.minute
@@ -1961,7 +2152,7 @@ def home(path=""):
   <div class="canales-grid">
     {canales_html}
   </div>
-  <div class="footer">AXIS Breakout Sentinel v8.60 · {activos_str}</div>
+  <div class="footer">AXIS Breakout Sentinel v8.61 · {activos_str}</div>
 </body>
 </html>"""
     from flask import Response
@@ -1981,7 +2172,7 @@ def test():
         else:
             lineas_canal.append(f"  {a}: OFF")
     enviar_telegram(
-        f"✅ <b>AXIS Breakout Sentinel v8.60</b>\n"
+        f"✅ <b>AXIS Breakout Sentinel v8.61</b>\n"
         f"<b>Hora:</b> {ahora.strftime('%A %d/%m/%Y %H:%M EST')}\n"
         f"<b>Mercado:</b> {'Abierto' if es_dia_mercado(ahora) else 'Cerrado'}\n"
         f"<b>1VR:</b> {'ON' if VR1_ON else 'OFF'} | "
@@ -3594,6 +3785,34 @@ def comparar_fuentes():
 # ═══════════════════════════════════════════════════════════
 # RUTA /velas — Dashboard consume datos Tradier via Railway
 # ═══════════════════════════════════════════════════════════
+@app.route("/velas_status", methods=["GET"])
+def velas_status():
+    """Verifica estado de la base de datos local de velas para todos los activos."""
+    from datetime import datetime as _dt
+    resultado = {}
+    for simbolo in ACTIVOS:
+        local = cargar_velas_local(simbolo)
+        barras_15min = [b for b in local["barras"] if b.get("interval") == "15min"]
+        barras_daily = [b for b in local["barras"] if b.get("interval") == "daily"]
+        ultima = local.get("ultima_barra")
+        # Verificar si tiene data de hoy
+        hoy = _dt.now().strftime("%Y-%m-%d")
+        tiene_hoy = any(b["time"].startswith(hoy) for b in barras_15min) if barras_15min else False
+        resultado[simbolo] = {
+            "total_registros":  len(local["barras"]),
+            "barras_15min":     len(barras_15min),
+            "barras_daily":     len(barras_daily),
+            "ultima_barra":     ultima,
+            "tiene_data_hoy":   tiene_hoy,
+            "status": "✅ OK" if (len(barras_15min) > 100 and tiene_hoy) else
+                      "⚠️ SIN DATA HOY" if (len(barras_15min) > 100 and not tiene_hoy) else
+                      "❌ BASE VACÍA"
+        }
+    return jsonify({
+        "fecha":   _dt.now().strftime("%Y-%m-%d %H:%M EST"),
+        "activos": resultado
+    }), 200
+
 @app.route("/tradier_hoy", methods=["GET"])
 def tradier_hoy():
     """Diagnóstico: verifica barras de hoy para TODOS los activos en un solo call"""
@@ -3774,8 +3993,30 @@ def system_status():
         except:
             archivos_data[fname] = "NO ENCONTRADO ❌"
 
+    # ── Base de datos local de velas
+    velas_db = {}
+    for a in ACTIVOS:
+        try:
+            local        = cargar_velas_local(a)
+            b15          = [b for b in local["barras"] if b.get("interval") == "15min"]
+            b_daily      = [b for b in local["barras"] if b.get("interval") == "daily"]
+            tiene_hoy    = any(b["time"].startswith(hoy.strftime("%Y-%m-%d")) for b in b15) if b15 else False
+            ultima       = local.get("ultima_barra", "—")
+            archivo_kb   = round(os.path.getsize(ruta_velas_local(a)) / 1024, 1) if os.path.exists(ruta_velas_local(a)) else 0
+            velas_db[a]  = {
+                "barras_15min":   len(b15),
+                "barras_diarias": len(b_daily),
+                "ultima_barra":   ultima,
+                "tiene_hoy":      tiene_hoy,
+                "archivo_kb":     archivo_kb,
+                "status":         "✅ OK" if (len(b15) > 100 and tiene_hoy) else
+                                  "⚠️ SIN HOY" if (len(b15) > 100) else "❌ VACÍO",
+            }
+        except Exception as e:
+            velas_db[a] = {"status": f"❌ ERROR: {e}"}
+
     return jsonify({
-        "sistema":          "AXIS Breakout Sentinel v8.60",
+        "sistema":          "AXIS Breakout Sentinel v8.61",
         "hora_est":         ahora.strftime("%Y-%m-%d %H:%M:%S EST"),
         "mercado":          "ABIERTO ✅" if mercado_abierto else "CERRADO ⏸",
         "threads":          threads_vivos,
@@ -3790,6 +4031,7 @@ def system_status():
         "reto":             reto_resumen,
         "ordenes_pendientes": ordenes_vivas,
         "archivos_data":    archivos_data,
+        "velas_db":         velas_db,
     }), 200
 # GET /cotizar_opciones
 # ═══════════════════════════════════════════════════════════
@@ -4534,7 +4776,8 @@ def arrancar_monitor():
     cargar_portfolio()
     cargar_ordenes()
     cargar_estado_dia()
-    recalibrar_p2_canales()  # recalibra P2 una vez al arrancar
+    construir_base_datos()       # build inicial si no existe — una sola vez
+    recalibrar_p2_canales()      # recalibra P2 una vez al arrancar
     threading.Thread(target=monitor_loop,              daemon=True).start()
     threading.Thread(target=loop_v7_anticipada,        daemon=True).start()
     threading.Thread(target=loop_limpiar_ordenes,      daemon=True).start()
