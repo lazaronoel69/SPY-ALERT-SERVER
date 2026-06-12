@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v8.59
+AXIS Breakout Sentinel v8.60
 Estrategias: 1VR | 1VR+ | RPG | GNA | GBA | RCB/CNF
 Multi-activo: SPY, AAPL, BA, GLD
 v8.43: Portfolio fix — ejecutar_orden_tradier en webhook exec/reto | Panic Button al bid |
@@ -840,8 +840,9 @@ def get_velas(simbolo, outputsize=50):
 
         # Construir lista de velas en formato compatible con el resto del codigo
         # Ordenadas de mas reciente a mas antigua (igual que TwelveData)
-        vela_hora = {"V1":"09:30:00","V2":"10:00:00","V3":"11:00:00",
+        vela_hora  = {"V1":"09:30:00","V2":"10:00:00","V3":"11:00:00",
                      "V4":"12:00:00","V5":"13:00:00","V6":"14:00:00","V7":"15:00:00"}
+        vela_bars  = {"V1":2,"V2":4,"V3":4,"V4":4,"V5":4,"V6":4,"V7":4}  # barras esperadas
         resultado_velas = []
 
         for fecha in sorted(dias_dict.keys(), reverse=True):
@@ -854,12 +855,15 @@ def get_velas(simbolo, outputsize=50):
                 l = min(float(b["low"])  for b in bs)
                 c = float(bs[-1]["close"])
                 resultado_velas.append({
-                    "datetime": f"{fecha} {vela_hora[vela]}",
-                    "open":     str(round(o, 4)),
-                    "high":     str(round(h, 4)),
-                    "low":      str(round(l, 4)),
-                    "close":    str(round(c, 4)),
-                    "vela":     vela,
+                    "datetime":      f"{fecha} {vela_hora[vela]}",
+                    "open":          str(round(o, 4)),
+                    "high":          str(round(h, 4)),
+                    "low":           str(round(l, 4)),
+                    "close":         str(round(c, 4)),
+                    "vela":          vela,
+                    "bars":          len(bs),
+                    "bars_expected": vela_bars[vela],
+                    "completa":      len(bs) >= vela_bars[vela],
                 })
 
         if not resultado_velas:
@@ -1300,12 +1304,16 @@ def evaluar_activo(simbolo, velas, ahora):
         p2_act = c["p2_actual_high"]
         p1_h   = c["p1"]["high"]
         if v_high > p2_act and v_high < p1_h:
+            ahora_dt_p2 = EST.localize(datetime.strptime(vela_actual["datetime"], "%Y-%m-%d %H:%M:%S"))
+            fecha_p2    = ahora_dt_p2.strftime("%Y-%m-%d")
+            hora_p2     = ahora_dt_p2.hour
             c["p2_actual_high"] = v_high
             c["p2"]["high"]     = v_high
-            ahora_dt_p2 = EST.localize(datetime.strptime(vela_actual["datetime"], "%Y-%m-%d %H:%M:%S"))
+            c["p2"]["fecha"]    = fecha_p2
+            c["p2"]["hora_est"] = hora_p2
             c["p2_actual_ts"]   = ahora_dt_p2
             guardar_canales()
-            print(f"{simbolo} P2 dinámico: ${p2_act:.2f} → ${v_high:.2f} (silencioso)")
+            print(f"{simbolo} P2 dinámico: ${p2_act:.2f} → ${v_high:.2f} ({fecha_p2} hora {hora_p2}) silencioso")
         elif v_high >= p1_h and c["on"]:
             # High >= P1 → canal apagado
             c["apagado"] = True
@@ -1841,7 +1849,7 @@ def reporte_horario():
 # LOOP PRINCIPAL
 # ═══════════════════════════════════════════════════════════
 def monitor_loop():
-    print("AXIS Breakout Sentinel v8.59 iniciado...")
+    print("AXIS Breakout Sentinel v8.60 iniciado...")
     while True:
         ahora = datetime.now(EST)
         mins  = ahora.hour * 60 + ahora.minute
@@ -1954,7 +1962,7 @@ def home(path=""):
   <div class="canales-grid">
     {canales_html}
   </div>
-  <div class="footer">AXIS Breakout Sentinel v8.59 · {activos_str}</div>
+  <div class="footer">AXIS Breakout Sentinel v8.60 · {activos_str}</div>
 </body>
 </html>"""
     from flask import Response
@@ -1974,7 +1982,7 @@ def test():
         else:
             lineas_canal.append(f"  {a}: OFF")
     enviar_telegram(
-        f"✅ <b>AXIS Breakout Sentinel v8.59</b>\n"
+        f"✅ <b>AXIS Breakout Sentinel v8.60</b>\n"
         f"<b>Hora:</b> {ahora.strftime('%A %d/%m/%Y %H:%M EST')}\n"
         f"<b>Mercado:</b> {'Abierto' if es_dia_mercado(ahora) else 'Cerrado'}\n"
         f"<b>1VR:</b> {'ON' if VR1_ON else 'OFF'} | "
@@ -3727,7 +3735,7 @@ def system_status():
             archivos_data[fname] = "NO ENCONTRADO ❌"
 
     return jsonify({
-        "sistema":          "AXIS Breakout Sentinel v8.59",
+        "sistema":          "AXIS Breakout Sentinel v8.60",
         "hora_est":         ahora.strftime("%Y-%m-%d %H:%M:%S EST"),
         "mercado":          "ABIERTO ✅" if mercado_abierto else "CERRADO ⏸",
         "threads":          threads_vivos,
@@ -4431,7 +4439,7 @@ def recalibrar_p2_canales():
     """
     Al arrancar, recalibra P2 para todos los canales CNF/RCB activos.
     Busca en las velas históricas el high más alto posterior a P1
-    que sea > p2_actual AND < p1 — lo aplica como nuevo P2.
+    que sea > p2_actual AND < p1 — actualiza P2 con valor, fecha y hora.
     Se ejecuta una sola vez al iniciar Railway.
     """
     print("Recalibrando P2 de canales activos...")
@@ -4448,19 +4456,28 @@ def recalibrar_p2_canales():
             p1_high   = c["p1"]["high"]
             p2_actual = c["p2_actual_high"]
             nuevo_p2  = p2_actual
+            nuevo_p2_fecha = c["p2"]["fecha"]
+            nuevo_p2_hora  = c["p2"]["hora_est"]
 
             for v in velas:
-                fecha_v = datetime.strptime(v["datetime"], "%Y-%m-%d %H:%M:%S").strftime("%Y-%m-%d")
+                dt_v    = datetime.strptime(v["datetime"], "%Y-%m-%d %H:%M:%S")
+                fecha_v = dt_v.strftime("%Y-%m-%d")
+                hora_v  = dt_v.hour
                 if fecha_v <= p1_fecha:
                     continue
                 v_high = float(v["high"])
                 if v_high > nuevo_p2 and v_high < p1_high:
-                    nuevo_p2 = v_high
+                    nuevo_p2       = v_high
+                    nuevo_p2_fecha = fecha_v
+                    nuevo_p2_hora  = hora_v
 
             if nuevo_p2 != p2_actual:
-                print(f"  Recalibración {simbolo}: P2 ${p2_actual:.2f} → ${nuevo_p2:.2f}")
-                c["p2_actual_high"] = nuevo_p2
-                c["p2"]["high"]     = nuevo_p2
+                print(f"  Recalibración {simbolo}: P2 ${p2_actual:.2f} → ${nuevo_p2:.2f} ({nuevo_p2_fecha} V{nuevo_p2_hora})")
+                c["p2_actual_high"]  = nuevo_p2
+                c["p2"]["high"]      = nuevo_p2
+                c["p2"]["fecha"]     = nuevo_p2_fecha
+                c["p2"]["hora_est"]  = nuevo_p2_hora
+                c["p2_actual_ts"]    = ts_a_datetime(nuevo_p2_fecha, nuevo_p2_hora)
                 cambios += 1
         except Exception as e:
             print(f"  Error recalibración {simbolo}: {e}")

@@ -367,7 +367,8 @@ async function cargarDatos(sym, silencioso=false) {
         l:        parseFloat(v.low),
         c:        parseFloat(v.close),
         vela:     v.vela || '',
-        datetime: v.datetime,  // conservar para mapa canal
+        datetime: v.datetime,
+        completa: v.completa !== false,  // true si completa, false si en formación
       };
     });
 
@@ -414,6 +415,7 @@ function iniciarRefreshGlobal() {
           o: parseFloat(v.open), h: parseFloat(v.high),
           l: parseFloat(v.low),  c: parseFloat(v.close),
           vela: v.vela||'', datetime: v.datetime,
+          completa: v.completa !== false,
         }));
         if (sym === activo) { allVelas = velas; zoomEnd = velas.length - 1; render(); }
         if (sym === activo) updatePrecio(velas);
@@ -1398,9 +1400,17 @@ function render() {
     }
   }
 
-  // ── Vela en formación ──
+  // ── Vela en formación — usa campo 'completa' del servidor ──
   if (esMercadoAbierto() && visible.length > 0) {
-    const x = xOf(visible.length-1);
+    // Buscar la primera vela incompleta (completa===false)
+    let idxFormacion = -1;
+    for (let i = visible.length - 1; i >= 0; i--) {
+      if (visible[i].completa === false) { idxFormacion = i; break; }
+    }
+    // Si todas completas pero mercado abierto, marcar la última
+    if (idxFormacion < 0) idxFormacion = visible.length - 1;
+
+    const x = xOf(idxFormacion);
     ctx.beginPath();
     ctx.moveTo(x, M.top); ctx.lineTo(x, H-M.bottom);
     ctx.strokeStyle = C.forming;
