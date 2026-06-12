@@ -48,6 +48,15 @@
   .tf-btn:hover { border-color:var(--accent); color:var(--text); }
   .tf-btn.on { background:rgba(79,195,247,0.15); border-color:var(--accent); color:var(--accent); }
 
+  .strat-selector { display:flex; gap:3px; align-items:center; margin-left:12px; }
+  .strat-btn {
+    padding:3px 7px; border:1px solid var(--border); background:transparent;
+    color:var(--dim); font-family:var(--mono); font-size:10px; font-weight:600;
+    cursor:pointer; border-radius:4px; transition:all 0.15s; letter-spacing:0.5px;
+  }
+  .strat-btn:hover { border-color:#ffd700; color:var(--text); }
+  .strat-btn.on { background:rgba(255,215,0,0.12); border-color:#ffd700; color:#ffd700; }
+
   .price-box { margin-left:auto; display:flex; align-items:baseline; gap:8px; }
   .pval { font-size:22px; font-weight:700; }
   .pchg { font-size:12px; font-weight:600; }
@@ -161,7 +170,7 @@
 <body>
 
 <header>
-  <div class="logo">AXIS<small>CHARTS v1.3.2 — SEÑALES</small></div>
+  <div class="logo">AXIS<small>CHARTS v1.3.3 — SEÑALES</small></div>
   <div class="tabs">
     <button class="tab on"  data-activo="SPY"  onclick="cambiar('SPY')">SPY</button>
     <button class="tab"     data-activo="AAPL" onclick="cambiar('AAPL')">AAPL</button>
@@ -178,6 +187,17 @@
     <button class="tf-btn" data-tf="daily"   onclick="cambiarTF('daily')">D</button>
     <button class="tf-btn" data-tf="weekly"  onclick="cambiarTF('weekly')">W</button>
     <button class="tf-btn" data-tf="monthly" onclick="cambiarTF('monthly')">M</button>
+  </div>
+  <div class="strat-selector">
+    <button class="strat-btn on" data-strat="1VR"  onclick="toggleStrat('1VR')">1VR</button>
+    <button class="strat-btn on" data-strat="RPG"  onclick="toggleStrat('RPG')">RPG</button>
+    <button class="strat-btn on" data-strat="GNA"  onclick="toggleStrat('GNA')">GNA</button>
+    <button class="strat-btn on" data-strat="GBA"  onclick="toggleStrat('GBA')">GBA</button>
+    <button class="strat-btn on" data-strat="HED"  onclick="toggleStrat('HED')">HED</button>
+    <button class="strat-btn on" data-strat="PM40" onclick="toggleStrat('PM40')">PM40</button>
+    <button class="strat-btn on" data-strat="CNF"  onclick="toggleStrat('CNF')">CNF</button>
+    <button class="strat-btn on" data-strat="RCB"  onclick="toggleStrat('RCB')">RCB</button>
+    <button class="strat-btn on" data-strat="4PS"  onclick="toggleStrat('4PS')">4PS</button>
   </div>
   <div class="price-box">
     <span id="reloj" style="font-size:11px;font-weight:600;color:var(--dim);letter-spacing:1px;margin-right:12px;font-family:'JetBrains Mono',monospace;"></span>
@@ -295,6 +315,8 @@ const C = {
 let activo    = 'SPY';
 let timeframe = '1H';  // 15min | 1H | daily | weekly | monthly
 let allVelas  = [];
+let stratState = { '1VR':true, 'RPG':true, 'GNA':true, 'GBA':true, 'HED':true, 'PM40':true, 'CNF':true, 'RCB':true, '4PS':true };
+let señalesHistoricas = {};  // { "2026-06-12": ["CNF","1VR"], ... }
 window.canalRailway = { on: false };
 window.canalLineas  = null;
 window.senalesHoy   = [];
@@ -371,6 +393,25 @@ function cambiarTF(tf) {
   );
   allVelas = []; zoomStart = 0; zoomEnd = 0;
   cargarDatos(activo);
+}
+
+function toggleStrat(strat) {
+  stratState[strat] = !stratState[strat];
+  document.querySelectorAll('.strat-btn').forEach(b => {
+    if (b.getAttribute('data-strat') === strat)
+      b.classList.toggle('on', stratState[strat]);
+  });
+  render();
+}
+
+async function cargarSenalesHistoricas(sym) {
+  try {
+    const res  = await fetch(`${RAILWAY}/señales_historicas?simbolo=${sym}&t=${Date.now()}`);
+    const data = await res.json();
+    señalesHistoricas = data.señales || {};
+  } catch(e) {
+    señalesHistoricas = {};
+  }
 }
 
 async function cargarDatos(sym, silencioso=false) {
@@ -1351,6 +1392,37 @@ function render() {
     }
   });
 
+  // ── Overlay de señales históricas desde /data/axis_señales_historicas.json ──
+  const STRAT_COLORS = {
+    '1VR': ['#f85149','#fff'], 'RPG': ['#9c27b0','#fff'],
+    'GNA': ['#00bcd4','#000'], 'GBA': ['#f0b429','#000'],
+    'HED': ['#ff6b6b','#fff'], 'PM40':['#3fb950','#000'],
+    'CNF': ['#58a6ff','#fff'], 'RCB': ['#f0b429','#000'],
+    '4PS': ['#e74c3c','#fff'],
+  };
+  Object.entries(señalesHistoricas).forEach(([fecha, estrategias]) => {
+    // Filtrar estrategias visibles según toggles
+    const visibles = estrategias.filter(e => stratState[e] !== false);
+    if (!visibles.length) return;
+    // Buscar V1 de esa fecha en visible
+    for (let i = zoomStart; i <= zoomEnd; i++) {
+      const v  = allVelas[i];
+      const fv = (v.datetime||'').slice(0,10);
+      if (fv === fecha && v.vela === 'V1') {
+        const visIdx = i - zoomStart;
+        const x = xOf(visIdx);
+        let yOffset = 0;
+        visibles.forEach(strat => {
+          const [color, textColor] = STRAT_COLORS[strat] || ['#fff','#000'];
+          const y = yOf(v.h) - yOffset;
+          dibujarSeñal(ctx, x, y, strat, color, textColor, true);
+          yOffset += 18;
+        });
+        break;
+      }
+    }
+  });
+
   // ── Canales RCB/CNF — misma lógica que PM40 ──
   if (window.canalRailway && window.canalRailway.on) {
     const c     = window.canalRailway;
@@ -1621,11 +1693,13 @@ async function cambiar(sym) {
   clearTimeout(refreshTimer);
   allVelas=[]; zoomStart=0; zoomEnd=0;
   window.senalesHoy = [];
+  señalesHistoricas = {};
   document.querySelectorAll('.tab').forEach(b => {
     b.classList.toggle('on', b.getAttribute('data-activo') === sym);
   });
   document.getElementById('activo-label').textContent = sym;
   await cargarEstadoCanal(sym);
+  cargarSenalesHistoricas(sym);
   cargarDatos(sym);
   actualizarPrecioRT();
 }
@@ -1729,6 +1803,7 @@ function toast(msg) {
 window.addEventListener('load', async () => { 
   resize(); 
   await cargarEstadoCanal('SPY');
+  cargarSenalesHistoricas('SPY');
   cargarDatos('SPY');
   actualizarPrecioRT();
   iniciarRefreshGlobal();

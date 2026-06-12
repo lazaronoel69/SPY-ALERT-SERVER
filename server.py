@@ -266,7 +266,57 @@ CANALES_FILE    = "/data/axis_canales.json"
 PORTFOLIO_FILE  = "/data/axis_portfolio.json"
 ORDENES_FILE    = "/data/axis_ordenes.json"
 ESTADO_FILE     = "/data/axis_estado_dia.json"
+SEÑALES_FILE    = "/data/axis_señales_historicas.json"
 DATA_DIR        = "/data"
+
+def cargar_señales_historicas():
+    """Carga el historial permanente de señales desde /data."""
+    if not os.path.exists(SEÑALES_FILE):
+        return {}
+    try:
+        with open(SEÑALES_FILE, "r") as f:
+            return json.load(f)
+    except Exception as e:
+        print(f"Error cargando señales históricas: {e}")
+        return {}
+
+def guardar_señales_historicas(data):
+    """Guarda el historial permanente de señales."""
+    try:
+        with open(SEÑALES_FILE, "w") as f:
+            json.dump(data, f, indent=2)
+    except Exception as e:
+        print(f"Error guardando señales históricas: {e}")
+
+def archivar_señales_dia(fecha):
+    """
+    Al cierre del día, guarda las señales de hoy en el historial permanente.
+    Estructura: { "2026-06-12": { "SPY": ["CNF", "1VR"], "AAPL": [] ... } }
+    Se llama desde loop_v7_anticipada a las 4:16 PM.
+    """
+    historial = cargar_señales_historicas()
+    historial[fecha] = {}
+    for simbolo in ACTIVOS:
+        ed = estado_dia.get(simbolo, {})
+        if ed.get("fecha") == fecha:
+            disparadas = ed.get("señales_disparadas", [])
+            # Normalizar a nombres cortos para el overlay del chart
+            cortos = []
+            for s in disparadas:
+                if "1VR"    in s: cortos.append("1VR")
+                elif "RPG"  in s: cortos.append("RPG")
+                elif "GNA"  in s: cortos.append("GNA")
+                elif "GBA"  in s: cortos.append("GBA")
+                elif "HED"  in s: cortos.append("HED")
+                elif "PM40" in s: cortos.append("PM40")
+                elif "CNF"  in s: cortos.append("CNF")
+                elif "RCB"  in s: cortos.append("RCB")
+                elif "4PS"  in s or "4PASOS" in s: cortos.append("4PS")
+            historial[fecha][simbolo] = cortos
+        else:
+            historial[fecha][simbolo] = []
+    guardar_señales_historicas(historial)
+    print(f"Señales archivadas para {fecha}: {historial[fecha]}")
 
 def guardar_estado_dia():
     """Persiste estado_dia en /data para sobrevivir reinicios."""
@@ -3316,6 +3366,7 @@ def loop_v7_anticipada():
                     if "resumen" not in ejecutado_416:
                         ejecutado_416.add("resumen")
                         guardar_snapshot_precios(ahora)   # snapshot precios primero
+                        archivar_señales_dia(ahora.strftime("%Y-%m-%d"))  # archivar señales
                         enviar_resumen_diario(ahora)
 
             time.sleep(30)
@@ -3854,6 +3905,24 @@ def tradier_hoy():
             resultado[simbolo] = {"total_barras": 0, "ultima_barra": None, "status": f"❌ ERROR: {e}"}
 
     return jsonify({"fecha": hoy, "activos": resultado}), 200
+
+@app.route("/señales_historicas", methods=["GET"])
+def ruta_señales_historicas():
+    """Devuelve historial de señales por activo para overlay en el chart."""
+    simbolo = request.args.get("simbolo", "").upper()
+    historial = cargar_señales_historicas()
+
+    if simbolo:
+        # Filtrar por activo — devuelve {fecha: [estrategias]}
+        resultado = {}
+        for fecha, activos in historial.items():
+            señales = activos.get(simbolo, [])
+            if señales:
+                resultado[fecha] = señales
+        return jsonify({"simbolo": simbolo, "señales": resultado}), 200
+    else:
+        # Devuelve todo
+        return jsonify({"historial": historial}), 200
 
 @app.route("/velas_daily", methods=["GET"])
 def ruta_velas_daily():
