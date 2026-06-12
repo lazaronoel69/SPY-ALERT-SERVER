@@ -3597,38 +3597,44 @@ def comparar_fuentes():
 # ═══════════════════════════════════════════════════════════
 @app.route("/tradier_hoy", methods=["GET"])
 def tradier_hoy():
-    """Diagnóstico: llama Tradier con rango solo de hoy y muestra barras crudas"""
-    simbolo = request.args.get("simbolo", "NVDA").upper()
+    """Diagnóstico: verifica barras de hoy para TODOS los activos en un solo call"""
     from datetime import date
     hoy = date.today().strftime("%Y-%m-%d")
-    try:
-        r = requests.get(
-            f"{TRADIER_BASE_REAL}/markets/timesales",
-            headers=TRADIER_HEADERS_REAL,
-            params={
-                "symbol":         simbolo,
-                "interval":       "15min",
-                "start":          f"{hoy} 09:00",
-                "end":            f"{hoy} 16:30",
-                "session_filter": "open",
-            },
-            timeout=30
-        )
-        data = r.json()
-        series = data.get("series")
-        if not series or series == "null":
-            return jsonify({"error": "Sin datos", "raw": data}), 200
-        barras = series.get("data", [])
-        if isinstance(barras, dict):
-            barras = [barras]
-        return jsonify({
-            "simbolo":      simbolo,
-            "fecha":        hoy,
-            "total_barras": len(barras),
-            "barras":       barras,
-        }), 200
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    resultado = {}
+
+    for simbolo in ACTIVOS:
+        try:
+            r = requests.get(
+                f"{TRADIER_BASE_REAL}/markets/timesales",
+                headers=TRADIER_HEADERS_REAL,
+                params={
+                    "symbol":         simbolo,
+                    "interval":       "15min",
+                    "start":          f"{hoy} 09:00",
+                    "end":            f"{hoy} 16:30",
+                    "session_filter": "open",
+                },
+                timeout=30
+            )
+            data   = r.json()
+            series = data.get("series")
+            if not series or series == "null":
+                resultado[simbolo] = {"total_barras": 0, "ultima_barra": None, "status": "⚠️ SIN DATOS"}
+                continue
+            barras = series.get("data", [])
+            if isinstance(barras, dict):
+                barras = [barras]
+            ultima = barras[-1]["time"] if barras else None
+            resultado[simbolo] = {
+                "total_barras": len(barras),
+                "primera_barra": barras[0]["time"] if barras else None,
+                "ultima_barra":  ultima,
+                "status": "✅ OK" if len(barras) >= 4 else f"⚠️ INCOMPLETO ({len(barras)} barras)",
+            }
+        except Exception as e:
+            resultado[simbolo] = {"total_barras": 0, "ultima_barra": None, "status": f"❌ ERROR: {e}"}
+
+    return jsonify({"fecha": hoy, "activos": resultado}), 200
 
 @app.route("/velas", methods=["GET"])
 def ruta_velas():
