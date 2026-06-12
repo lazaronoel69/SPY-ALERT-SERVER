@@ -360,6 +360,12 @@ async function cargarDatos(sym, silencioso=false) {
     // datetime: "2026-05-12 09:30:00" → timestamp EST
     const velas = data.velas.reverse().map(v => {
       const dt = new Date(v.datetime.replace(' ','T') + '-04:00');
+      const estNow = new Date(new Date().toLocaleString('en-US',{timeZone:'America/New_York'}));
+      // Hora de cierre de cada vela: V1 cierra a las 10:00, V2 a las 11:00, etc.
+      const velaCierreHora = {'V1':10,'V2':11,'V3':12,'V4':13,'V5':14,'V6':15,'V7':16};
+      const cierreHora = velaCierreHora[v.vela] || 16;
+      const yaTermino = estNow.getHours() > cierreHora ||
+                        (estNow.getHours() === cierreHora && estNow.getMinutes() >= 0);
       return {
         x:        dt.getTime(),
         o:        parseFloat(v.open),
@@ -368,7 +374,7 @@ async function cargarDatos(sym, silencioso=false) {
         c:        parseFloat(v.close),
         vela:     v.vela || '',
         datetime: v.datetime,
-        completa: v.completa === true,  // explícito: solo true si el servidor dice true
+        completa: v.completa === true || yaTermino,
       };
     });
 
@@ -415,7 +421,11 @@ function iniciarRefreshGlobal() {
           o: parseFloat(v.open), h: parseFloat(v.high),
           l: parseFloat(v.low),  c: parseFloat(v.close),
           vela: v.vela||'', datetime: v.datetime,
-          completa: v.completa === true,
+          const velaCierreH = {'V1':10,'V2':11,'V3':12,'V4':13,'V5':14,'V6':15,'V7':16};
+          const estN = new Date(new Date().toLocaleString('en-US',{timeZone:'America/New_York'}));
+          const cH = velaCierreH[v.vela] || 16;
+          const yaT = estN.getHours() > cH || (estN.getHours() === cH && estN.getMinutes() >= 0);
+          completa: v.completa === true || yaT,
         }));
         if (sym === activo) { allVelas = velas; zoomEnd = velas.length - 1; render(); }
         if (sym === activo) updatePrecio(velas);
