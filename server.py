@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v8.58
+AXIS Breakout Sentinel v8.59
 Estrategias: 1VR | 1VR+ | RPG | GNA | GBA | RCB/CNF
 Multi-activo: SPY, AAPL, BA, GLD
 v8.43: Portfolio fix — ejecutar_orden_tradier en webhook exec/reto | Panic Button al bid |
@@ -204,6 +204,8 @@ def estado_diario_vacio():
         # Se actualiza automáticamente desde enviar_senal_con_botones()
         # y evaluar_hed(). Cubre TODAS las estrategias presentes y futuras.
         "señales_disparadas": [],
+        # P2 al inicio del día — para reporte en resumen diario
+        "p2_inicio_dia":      {},   # {simbolo: p2_high_al_inicio}
         # ── Flags de estado interno ───────────────────────────────
         "rpg_piso":           None,
         "rpg_activo":         False,
@@ -998,6 +1000,11 @@ def evaluar_activo(simbolo, velas, ahora):
         reset_diario_activo(simbolo, fecha_hoy, v7_ayer)
         ed = estado_dia[simbolo]
 
+        # Guardar P2 al inicio del día para reporte diario
+        c = canal[simbolo]
+        if c["on"] and not c["apagado"] and c.get("p2_actual_high") is not None:
+            ed["p2_inicio_dia"][simbolo] = c["p2_actual_high"]
+
         # Reconstruir estado desde historico
         for v in velas:
             dt_v = datetime.strptime(v["datetime"], "%Y-%m-%d %H:%M:%S")
@@ -1285,6 +1292,27 @@ def evaluar_activo(simbolo, velas, ahora):
                 simbolo, f"{tipo} — GAP BAJISTA ALZA",
                 f"{hora_vela+1}:00 EST", v_close, "CALL",
                 f"<b>Techo V1:</b> ${v1_close:.2f} | <b>Cierre:</b> ${v_close:.2f}\n"
+            )
+
+    # RCB/CNF — P2 dinámico silencioso en TODAS las velas (V1-V7)
+    # Si v_high supera P2 actual sin llegar a P1 → nuevo P2, sin alerta
+    if c["on"] and not c["apagado"] and c.get("p1") and c.get("p2_actual_high") is not None:
+        p2_act = c["p2_actual_high"]
+        p1_h   = c["p1"]["high"]
+        if v_high > p2_act and v_high < p1_h:
+            c["p2_actual_high"] = v_high
+            c["p2"]["high"]     = v_high
+            ahora_dt_p2 = EST.localize(datetime.strptime(vela_actual["datetime"], "%Y-%m-%d %H:%M:%S"))
+            c["p2_actual_ts"]   = ahora_dt_p2
+            guardar_canales()
+            print(f"{simbolo} P2 dinámico: ${p2_act:.2f} → ${v_high:.2f} (silencioso)")
+        elif v_high >= p1_h and c["on"]:
+            # High >= P1 → canal apagado
+            c["apagado"] = True
+            guardar_canales()
+            enviar_telegram(
+                f"🔕 <b>Canal APAGADO — {simbolo}</b>\n"
+                f"High ${v_high:.2f} >= P1 ${p1_h:.2f}"
             )
 
     # RCB/CNF — ruptura con botones — una sola vez por día por tipo de canal
@@ -1813,7 +1841,7 @@ def reporte_horario():
 # LOOP PRINCIPAL
 # ═══════════════════════════════════════════════════════════
 def monitor_loop():
-    print("AXIS Breakout Sentinel v8.58 iniciado...")
+    print("AXIS Breakout Sentinel v8.59 iniciado...")
     while True:
         ahora = datetime.now(EST)
         mins  = ahora.hour * 60 + ahora.minute
@@ -1926,7 +1954,7 @@ def home(path=""):
   <div class="canales-grid">
     {canales_html}
   </div>
-  <div class="footer">AXIS Breakout Sentinel v8.58 · {activos_str}</div>
+  <div class="footer">AXIS Breakout Sentinel v8.59 · {activos_str}</div>
 </body>
 </html>"""
     from flask import Response
@@ -1946,7 +1974,7 @@ def test():
         else:
             lineas_canal.append(f"  {a}: OFF")
     enviar_telegram(
-        f"✅ <b>AXIS Breakout Sentinel v8.58</b>\n"
+        f"✅ <b>AXIS Breakout Sentinel v8.59</b>\n"
         f"<b>Hora:</b> {ahora.strftime('%A %d/%m/%Y %H:%M EST')}\n"
         f"<b>Mercado:</b> {'Abierto' if es_dia_mercado(ahora) else 'Cerrado'}\n"
         f"<b>1VR:</b> {'ON' if VR1_ON else 'OFF'} | "
@@ -2976,7 +3004,15 @@ def enviar_resumen_diario(ahora):
             if disparadas:
                 señales_lineas.append(f"  • {activo}: {', '.join(disparadas)}")
 
-        # Posiciones cerradas hoy
+        # Cambios de P2 del día — solo inicio vs final
+        p2_lineas = []
+        for activo in ACTIVOS:
+            ed_a = estado_dia.get(activo, {})
+            p2_ini = ed_a.get("p2_inicio_dia", {}).get(activo)
+            c_a    = canal[activo]
+            p2_fin = c_a.get("p2_actual_high") if c_a["on"] and not c_a["apagado"] else None
+            if p2_ini and p2_fin and round(p2_fin, 2) != round(p2_ini, 2):
+                p2_lineas.append(f"  • {activo}: ${p2_ini:.2f} → ${p2_fin:.2f}")
         cerradas_hoy = [
             p for p in _portfolio["historial"]
             if str(p.get("ts_cierre", "")).startswith(fecha_hoy)
@@ -3010,10 +3046,11 @@ def enviar_resumen_diario(ahora):
             + f"\n{emoji_pl} <b>P&L del día:</b> ${pl_dia:+.2f}\n"
             f"📈 <b>Posiciones abiertas:</b> {pos_abiertas}\n\n"
             f"<b>Win Rate global:</b> {wr} ({hist_wins}/{hist_total})\n\n"
-            f"🏆 <b>Reto Millonario:</b> {'Activo' if reto['activo'] else 'Inactivo'}\n"
+            + (f"🔄 <b>P2 actualizado hoy:</b>\n" + "\n".join(p2_lineas) + "\n\n" if p2_lineas else "")
+            + f"🏆 <b>Reto Millonario:</b> {'Activo' if reto['activo'] else 'Inactivo'}\n"
             f"  Carriles vivos: {vivos}/10 | Eliminados: {elim}\n"
             f"  Capital total: ${cap_reto:,.2f}\n\n"
-            f"<i>AXIS v8.50 | {ahora.strftime('%H:%M EST')}</i>"
+            f"<i>AXIS v8.59 | {ahora.strftime('%H:%M EST')}</i>"
         )
         enviar_telegram(msg)
         print(f"Resumen diario enviado — {fecha_hoy}")
@@ -3690,7 +3727,7 @@ def system_status():
             archivos_data[fname] = "NO ENCONTRADO ❌"
 
     return jsonify({
-        "sistema":          "AXIS Breakout Sentinel v8.58",
+        "sistema":          "AXIS Breakout Sentinel v8.59",
         "hora_est":         ahora.strftime("%Y-%m-%d %H:%M:%S EST"),
         "mercado":          "ABIERTO ✅" if mercado_abierto else "CERRADO ⏸",
         "threads":          threads_vivos,
@@ -4390,12 +4427,57 @@ def loop_polling_posiciones():
             print(f"Error loop_polling_posiciones: {e}")
 
 
+def recalibrar_p2_canales():
+    """
+    Al arrancar, recalibra P2 para todos los canales CNF/RCB activos.
+    Busca en las velas históricas el high más alto posterior a P1
+    que sea > p2_actual AND < p1 — lo aplica como nuevo P2.
+    Se ejecuta una sola vez al iniciar Railway.
+    """
+    print("Recalibrando P2 de canales activos...")
+    cambios = 0
+    for simbolo in ACTIVOS:
+        c = canal[simbolo]
+        if not c["on"] or c["apagado"] or not c["p1"] or c.get("p2_actual_high") is None:
+            continue
+        try:
+            velas = get_velas(simbolo, outputsize=50)
+            if not velas:
+                continue
+            p1_fecha  = c["p1"]["fecha"]
+            p1_high   = c["p1"]["high"]
+            p2_actual = c["p2_actual_high"]
+            nuevo_p2  = p2_actual
+
+            for v in velas:
+                fecha_v = datetime.strptime(v["datetime"], "%Y-%m-%d %H:%M:%S").strftime("%Y-%m-%d")
+                if fecha_v <= p1_fecha:
+                    continue
+                v_high = float(v["high"])
+                if v_high > nuevo_p2 and v_high < p1_high:
+                    nuevo_p2 = v_high
+
+            if nuevo_p2 != p2_actual:
+                print(f"  Recalibración {simbolo}: P2 ${p2_actual:.2f} → ${nuevo_p2:.2f}")
+                c["p2_actual_high"] = nuevo_p2
+                c["p2"]["high"]     = nuevo_p2
+                cambios += 1
+        except Exception as e:
+            print(f"  Error recalibración {simbolo}: {e}")
+
+    if cambios:
+        guardar_canales()
+        print(f"Recalibración completada — {cambios} canales actualizados")
+    else:
+        print("Recalibración completada — sin cambios")
+
 def arrancar_monitor():
     time.sleep(5)
     cargar_canales()
     cargar_portfolio()
     cargar_ordenes()
     cargar_estado_dia()
+    recalibrar_p2_canales()  # recalibra P2 una vez al arrancar
     threading.Thread(target=monitor_loop,              daemon=True).start()
     threading.Thread(target=loop_v7_anticipada,        daemon=True).start()
     threading.Thread(target=loop_limpiar_ordenes,      daemon=True).start()
