@@ -3595,6 +3595,41 @@ def comparar_fuentes():
 # ═══════════════════════════════════════════════════════════
 # RUTA /velas — Dashboard consume datos Tradier via Railway
 # ═══════════════════════════════════════════════════════════
+@app.route("/tradier_hoy", methods=["GET"])
+def tradier_hoy():
+    """Diagnóstico: llama Tradier con rango solo de hoy y muestra barras crudas"""
+    simbolo = request.args.get("simbolo", "NVDA").upper()
+    from datetime import date
+    hoy = date.today().strftime("%Y-%m-%d")
+    try:
+        r = requests.get(
+            f"{TRADIER_BASE_REAL}/markets/timesales",
+            headers=TRADIER_HEADERS_REAL,
+            params={
+                "symbol":         simbolo,
+                "interval":       "15min",
+                "start":          f"{hoy} 09:00",
+                "end":            f"{hoy} 16:30",
+                "session_filter": "open",
+            },
+            timeout=30
+        )
+        data = r.json()
+        series = data.get("series")
+        if not series or series == "null":
+            return jsonify({"error": "Sin datos", "raw": data}), 200
+        barras = series.get("data", [])
+        if isinstance(barras, dict):
+            barras = [barras]
+        return jsonify({
+            "simbolo":      simbolo,
+            "fecha":        hoy,
+            "total_barras": len(barras),
+            "barras":       barras,
+        }), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 @app.route("/velas", methods=["GET"])
 def ruta_velas():
     simbolo = request.args.get("simbolo", "SPY").upper()
