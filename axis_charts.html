@@ -416,17 +416,19 @@ function iniciarRefreshGlobal() {
         const res  = await fetch(url);
         const data = await res.json();
         if (!data.velas || !data.velas.length) continue;
-        const velas = data.velas.reverse().map(v => ({
-          x: new Date(v.datetime.replace(' ','T')+'-04:00').getTime(),
-          o: parseFloat(v.open), h: parseFloat(v.high),
-          l: parseFloat(v.low),  c: parseFloat(v.close),
-          vela: v.vela||'', datetime: v.datetime,
-          const velaCierreH = {'V1':10,'V2':11,'V3':12,'V4':13,'V5':14,'V6':15,'V7':16};
-          const estN = new Date(new Date().toLocaleString('en-US',{timeZone:'America/New_York'}));
-          const cH = velaCierreH[v.vela] || 16;
+        const estN = new Date(new Date().toLocaleString('en-US',{timeZone:'America/New_York'}));
+        const velaCierreH = {'V1':10,'V2':11,'V3':12,'V4':13,'V5':14,'V6':15,'V7':16};
+        const velas = data.velas.reverse().map(v => {
+          const cH  = velaCierreH[v.vela] || 16;
           const yaT = estN.getHours() > cH || (estN.getHours() === cH && estN.getMinutes() >= 0);
-          completa: v.completa === true || yaT,
-        }));
+          return {
+            x: new Date(v.datetime.replace(' ','T')+'-04:00').getTime(),
+            o: parseFloat(v.open), h: parseFloat(v.high),
+            l: parseFloat(v.low),  c: parseFloat(v.close),
+            vela: v.vela||'', datetime: v.datetime,
+            completa: v.completa === true || yaT,
+          };
+        });
         if (sym === activo) { allVelas = velas; zoomEnd = velas.length - 1; render(); }
         if (sym === activo) updatePrecio(velas);
       } catch(e) { /* silencioso */ }
