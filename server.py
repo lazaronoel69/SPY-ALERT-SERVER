@@ -266,6 +266,7 @@ CANALES_FILE    = "/data/axis_canales.json"
 PORTFOLIO_FILE  = "/data/axis_portfolio.json"
 ORDENES_FILE    = "/data/axis_ordenes.json"
 ESTADO_FILE     = "/data/axis_estado_dia.json"
+DATA_DIR        = "/data"
 
 def guardar_estado_dia():
     """Persiste estado_dia en /data para sobrevivir reinicios."""
