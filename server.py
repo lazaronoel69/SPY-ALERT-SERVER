@@ -3906,6 +3906,14 @@ def tradier_hoy():
 
     return jsonify({"fecha": hoy, "activos": resultado}), 200
 
+@app.route("/archivar_hoy", methods=["GET"])
+def archivar_hoy():
+    """Archiva manualmente las señales del día actual. Llamar una vez al cierre."""
+    fecha = datetime.now(EST).strftime("%Y-%m-%d")
+    archivar_señales_dia(fecha)
+    historial = cargar_señales_historicas()
+    return jsonify({"ok": True, "fecha": fecha, "señales": historial.get(fecha, {})}), 200
+
 @app.route("/señales_historicas", methods=["GET"])
 def ruta_señales_historicas():
     """Devuelve historial de señales por activo para overlay en el chart."""
@@ -4051,7 +4059,7 @@ def system_status():
     threads_vivos = [t.name for t in threading.enumerate()]
 
     # ── Estado de mercado
-    mercado_abierto = es_dia_mercado(ahora)
+    mercado_abierto = es_dia_mercado(ahora) and (570 <= ahora.hour * 60 + ahora.minute < 960)
 
     # ── Canales
     canales_resumen = {}
