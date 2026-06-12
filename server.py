@@ -3855,6 +3855,84 @@ def tradier_hoy():
 
     return jsonify({"fecha": hoy, "activos": resultado}), 200
 
+@app.route("/velas_daily", methods=["GET"])
+def ruta_velas_daily():
+    """Devuelve datos OHLC diarios/semanales/mensuales desde la base local."""
+    simbolo   = request.args.get("simbolo", "SPY").upper()
+    timeframe = request.args.get("tf", "daily")  # daily, weekly, monthly
+
+    local = cargar_velas_local(simbolo)
+    barras_daily = [b for b in local["barras"] if b.get("interval") == "daily"]
+
+    if not barras_daily:
+        return jsonify({"error": f"Sin datos diarios para {simbolo}"}), 500
+
+    # Ordenar por fecha asc para agrupar
+    barras_daily.sort(key=lambda x: x["time"])
+
+    if timeframe == "daily":
+        resultado = [{
+            "datetime": b["time"][:10],
+            "open":  str(round(b["open"],  4)),
+            "high":  str(round(b["high"],  4)),
+            "low":   str(round(b["low"],   4)),
+            "close": str(round(b["close"], 4)),
+            "tf":    "daily"
+        } for b in barras_daily]
+
+    elif timeframe == "weekly":
+        # Agrupar por semana (lunes)
+        from datetime import datetime as _dt, timedelta as _td
+        grupos = {}
+        for b in barras_daily:
+            d   = _dt.strptime(b["time"][:10], "%Y-%m-%d")
+            lun = (d - _td(days=d.weekday())).strftime("%Y-%m-%d")
+            if lun not in grupos:
+                grupos[lun] = []
+            grupos[lun].append(b)
+        resultado = []
+        for lun in sorted(grupos.keys()):
+            bs = grupos[lun]
+            resultado.append({
+                "datetime": lun,
+                "open":  str(round(bs[0]["open"],  4)),
+                "high":  str(round(max(b["high"] for b in bs), 4)),
+                "low":   str(round(min(b["low"]  for b in bs), 4)),
+                "close": str(round(bs[-1]["close"], 4)),
+                "tf":    "weekly"
+            })
+
+    elif timeframe == "monthly":
+        grupos = {}
+        for b in barras_daily:
+            mes = b["time"][:7]  # YYYY-MM
+            if mes not in grupos:
+                grupos[mes] = []
+            grupos[mes].append(b)
+        resultado = []
+        for mes in sorted(grupos.keys()):
+            bs = grupos[mes]
+            resultado.append({
+                "datetime": mes + "-01",
+                "open":  str(round(bs[0]["open"],  4)),
+                "high":  str(round(max(b["high"] for b in bs), 4)),
+                "low":   str(round(min(b["low"]  for b in bs), 4)),
+                "close": str(round(bs[-1]["close"], 4)),
+                "tf":    "monthly"
+            })
+    else:
+        return jsonify({"error": f"Timeframe desconocido: {timeframe}"}), 400
+
+    # Devolver más reciente primero
+    resultado.reverse()
+
+    return jsonify({
+        "simbolo":   simbolo,
+        "timeframe": timeframe,
+        "total":     len(resultado),
+        "velas":     resultado,
+    }), 200
+
 @app.route("/velas", methods=["GET"])
 def ruta_velas():
     simbolo = request.args.get("simbolo", "SPY").upper()

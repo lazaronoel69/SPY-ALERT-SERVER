@@ -39,6 +39,15 @@
   .tab:hover { border-color:var(--accent); color:var(--text); }
   .tab.on { background:var(--accent); border-color:var(--accent); color:#000; }
 
+  .tf-selector { display:flex; gap:4px; align-items:center; margin-left:12px; }
+  .tf-btn {
+    padding:4px 9px; border:1px solid var(--border); background:transparent;
+    color:var(--dim); font-family:var(--mono); font-size:11px; font-weight:600;
+    cursor:pointer; border-radius:4px; transition:all 0.15s; letter-spacing:0.5px;
+  }
+  .tf-btn:hover { border-color:var(--accent); color:var(--text); }
+  .tf-btn.on { background:rgba(79,195,247,0.15); border-color:var(--accent); color:var(--accent); }
+
   .price-box { margin-left:auto; display:flex; align-items:baseline; gap:8px; }
   .pval { font-size:22px; font-weight:700; }
   .pchg { font-size:12px; font-weight:600; }
@@ -152,7 +161,7 @@
 <body>
 
 <header>
-  <div class="logo">AXIS<small>CHARTS v1.3.1 — SEÑALES</small></div>
+  <div class="logo">AXIS<small>CHARTS v1.3.2 — SEÑALES</small></div>
   <div class="tabs">
     <button class="tab on"  data-activo="SPY"  onclick="cambiar('SPY')">SPY</button>
     <button class="tab"     data-activo="AAPL" onclick="cambiar('AAPL')">AAPL</button>
@@ -162,6 +171,13 @@
     <button class="tab"     data-activo="AMZN" onclick="cambiar('AMZN')">AMZN</button>
     <button class="tab"     data-activo="GOOG" onclick="cambiar('GOOG')">GOOG</button>
     <button class="tab"     data-activo="META" onclick="cambiar('META')">META</button>
+  </div>
+  <div class="tf-selector">
+    <button class="tf-btn" data-tf="15min"   onclick="cambiarTF('15min')">15m</button>
+    <button class="tf-btn on" data-tf="1H"   onclick="cambiarTF('1H')">1H</button>
+    <button class="tf-btn" data-tf="daily"   onclick="cambiarTF('daily')">D</button>
+    <button class="tf-btn" data-tf="weekly"  onclick="cambiarTF('weekly')">W</button>
+    <button class="tf-btn" data-tf="monthly" onclick="cambiarTF('monthly')">M</button>
   </div>
   <div class="price-box">
     <span id="reloj" style="font-size:11px;font-weight:600;color:var(--dim);letter-spacing:1px;margin-right:12px;font-family:'JetBrains Mono',monospace;"></span>
@@ -277,6 +293,7 @@ const C = {
 
 // Estado
 let activo    = 'SPY';
+let timeframe = '1H';  // 15min | 1H | daily | weekly | monthly
 let allVelas  = [];
 window.canalRailway = { on: false };
 window.canalLineas  = null;
@@ -347,40 +364,64 @@ function resize() {
 // ═══════════════════════════════════════
 // CARGAR DATOS — Tradier 15min via Railway
 // ═══════════════════════════════════════
-async function cargarDatos(sym, silencioso=false) {
-  if (!silencioso) document.getElementById('info').textContent = `Cargando ${sym}...`;
-  try {
-    // Llamamos a Railway que ya tiene get_velas() con Tradier 15min
-    const url = `${RAILWAY}/velas?simbolo=${sym}&dias=60&t=${Date.now()}`;
-    const res  = await fetch(url);
-    const data = await res.json();
-    if (!data.velas || !data.velas.length) throw new Error(data.error||'Sin datos');
+function cambiarTF(tf) {
+  timeframe = tf;
+  document.querySelectorAll('.tf-btn').forEach(b =>
+    b.classList.toggle('on', b.getAttribute('data-tf') === tf)
+  );
+  allVelas = []; zoomStart = 0; zoomEnd = 0;
+  cargarDatos(activo);
+}
 
-    // Convertir formato Railway → formato canvas
-    // datetime: "2026-05-12 09:30:00" → timestamp EST
-    const velas = data.velas.reverse().map(v => {
-      const dt = new Date(v.datetime.replace(' ','T') + '-04:00');
-      const estNow = new Date(new Date().toLocaleString('en-US',{timeZone:'America/New_York'}));
-      // Hora de cierre de cada vela: V1 cierra a las 10:00, V2 a las 11:00, etc.
-      const velaCierreHora = {'V1':10,'V2':11,'V3':12,'V4':13,'V5':14,'V6':15,'V7':16};
-      const cierreHora = velaCierreHora[v.vela] || 16;
-      const yaTermino = estNow.getHours() > cierreHora ||
-                        (estNow.getHours() === cierreHora && estNow.getMinutes() >= 0);
-      return {
-        x:        dt.getTime(),
-        o:        parseFloat(v.open),
-        h:        parseFloat(v.high),
-        l:        parseFloat(v.low),
-        c:        parseFloat(v.close),
-        vela:     v.vela || '',
-        datetime: v.datetime,
-        completa: v.completa === true || yaTermino,
-      };
-    });
+async function cargarDatos(sym, silencioso=false) {
+  if (!silencioso) document.getElementById('info').textContent = `Cargando ${sym} ${timeframe}...`;
+  try {
+    let velas = [];
+
+    if (timeframe === '1H' || timeframe === '15min') {
+      // Velas AXIS horarias desde base local del servidor
+      const url  = `${RAILWAY}/velas?simbolo=${sym}&t=${Date.now()}`;
+      const res  = await fetch(url);
+      const data = await res.json();
+      if (!data.velas || !data.velas.length) throw new Error(data.error || 'Sin datos');
+
+      const estNow     = new Date(new Date().toLocaleString('en-US',{timeZone:'America/New_York'}));
+      const vCierre    = {'V1':10,'V2':11,'V3':12,'V4':13,'V5':14,'V6':15,'V7':16};
+      const fechaHoyEST = `${estNow.getFullYear()}-${String(estNow.getMonth()+1).padStart(2,'0')}-${String(estNow.getDate()).padStart(2,'0')}`;
+
+      velas = data.velas.reverse().map(v => {
+        const dt     = new Date(v.datetime.replace(' ','T') + '-04:00');
+        const esHoy  = v.datetime.slice(0,10) === fechaHoyEST;
+        const cH     = vCierre[v.vela] || 16;
+        const yaT    = esHoy && !v.completa && estNow.getHours() >= cH;
+        return {
+          x: dt.getTime(), o: parseFloat(v.open), h: parseFloat(v.high),
+          l: parseFloat(v.low), c: parseFloat(v.close),
+          vela: v.vela || '', datetime: v.datetime,
+          completa: v.completa === true || yaT,
+        };
+      });
+      window.senalesHoy = data.senales_hoy || [];
+
+    } else {
+      // Diario / semanal / mensual
+      const url  = `${RAILWAY}/velas_daily?simbolo=${sym}&tf=${timeframe}&t=${Date.now()}`;
+      const res  = await fetch(url);
+      const data = await res.json();
+      if (!data.velas || !data.velas.length) throw new Error(data.error || 'Sin datos diarios');
+
+      velas = data.velas.reverse().map(v => {
+        const dt = new Date(v.datetime + 'T16:00:00-04:00');
+        return {
+          x: dt.getTime(), o: parseFloat(v.open), h: parseFloat(v.high),
+          l: parseFloat(v.low), c: parseFloat(v.close),
+          vela: timeframe, datetime: v.datetime, completa: true,
+        };
+      });
+      window.senalesHoy = [];
+    }
 
     allVelas = velas;
-    // Guardar señales que Railway ya disparó hoy — se usan en render()
-    window.senalesHoy = data.senales_hoy || [];
     if (!silencioso) { zoomStart=0; zoomEnd=velas.length-1; }
     else { zoomEnd=velas.length-1; zoomStart=Math.max(0,zoomEnd-(panZ0?.rango||zoomEnd)); }
 
@@ -388,16 +429,16 @@ async function cargarDatos(sym, silencioso=false) {
     render();
 
     const desde = fmtFecha(velas[0].x);
-    const auto  = esMercadoAbierto() ? ' · 🟢 auto 5min' : '';
-    document.getElementById('info').textContent = `${velas.length} velas · desde ${desde}${auto} · Tradier`;
+    const auto  = (esMercadoAbierto() && (timeframe==='1H'||timeframe==='15min')) ? ' · 🟢 auto 60s' : '';
+    document.getElementById('info').textContent = `${velas.length} velas · desde ${desde} · ${timeframe}${auto}`;
 
     clearTimeout(refreshTimer);
-    if (esMercadoAbierto())
-      refreshTimer = setTimeout(()=>cargarDatos(activo,true), 60*1000);
+    if (esMercadoAbierto() && (timeframe === '1H' || timeframe === '15min'))
+      refreshTimer = setTimeout(() => cargarDatos(activo, true), 60 * 1000);
 
   } catch(e) {
-    document.getElementById('info').textContent = 'Error: '+e.message;
-    toast('Error: '+e.message);
+    document.getElementById('info').textContent = 'Error: ' + e.message;
+    toast('Error: ' + e.message);
   }
 }
 
@@ -405,22 +446,25 @@ async function cargarDatos(sym, silencioso=false) {
 let globalRefreshTimer = null;
 function iniciarRefreshGlobal() {
   if (globalRefreshTimer) clearInterval(globalRefreshTimer);
-  // Actualizar luces de canal en tabs al arrancar
   actualizarLucesCanal();
   globalRefreshTimer = setInterval(async () => {
     if (!esMercadoAbierto()) return;
     actualizarLucesCanal();
+    // Solo refrescar en timeframes intradiarios
+    if (timeframe !== '1H' && timeframe !== '15min') return;
     for (const sym of ACTIVOS) {
       try {
-        const url = `${RAILWAY}/velas?simbolo=${sym}&dias=60&t=${Date.now()}`;
+        const url  = `${RAILWAY}/velas?simbolo=${sym}&t=${Date.now()}`;
         const res  = await fetch(url);
         const data = await res.json();
         if (!data.velas || !data.velas.length) continue;
-        const estN = new Date(new Date().toLocaleString('en-US',{timeZone:'America/New_York'}));
-        const velaCierreH = {'V1':10,'V2':11,'V3':12,'V4':13,'V5':14,'V6':15,'V7':16};
+        const estN      = new Date(new Date().toLocaleString('en-US',{timeZone:'America/New_York'}));
+        const vCierre   = {'V1':10,'V2':11,'V3':12,'V4':13,'V5':14,'V6':15,'V7':16};
+        const fechaHoyN = `${estN.getFullYear()}-${String(estN.getMonth()+1).padStart(2,'0')}-${String(estN.getDate()).padStart(2,'0')}`;
         const velas = data.velas.reverse().map(v => {
-          const cH  = velaCierreH[v.vela] || 16;
-          const yaT = estN.getHours() > cH || (estN.getHours() === cH && estN.getMinutes() >= 0);
+          const esHoy = v.datetime.slice(0,10) === fechaHoyN;
+          const cH    = vCierre[v.vela] || 16;
+          const yaT   = esHoy && !v.completa && estN.getHours() >= cH;
           return {
             x: new Date(v.datetime.replace(' ','T')+'-04:00').getTime(),
             o: parseFloat(v.open), h: parseFloat(v.high),
