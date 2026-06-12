@@ -786,10 +786,9 @@ def get_velas(simbolo, outputsize=50):
         from datetime import date, datetime as dt2
         from collections import defaultdict
 
-        # Tradier soporta ~40 dias habiles de timesales 15min
-        # Un solo rango elimina los HTTP 400 de rangos viejos
+        # 20 días hábiles (~520 barras) — bajo el límite de Tradier (~1,000)
         fecha_fin = date.today()
-        fecha_ini = restar_dias_habiles(fecha_fin, 40)
+        fecha_ini = restar_dias_habiles(fecha_fin, 20)
 
         todas_barras = []
 
