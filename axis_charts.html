@@ -212,7 +212,7 @@
 </div>
 
 <header>
-  <div class="logo">AXIS<small>CHARTS v1.3.6 — SEÑALES</small></div>
+  <div class="logo">AXIS<small>CHARTS v1.3.7 — SEÑALES</small></div>
   <div class="tabs">
     <button class="tab on"  data-activo="SPY"  onclick="cambiar('SPY')">SPY</button>
     <button class="tab"     data-activo="AAPL" onclick="cambiar('AAPL')">AAPL</button>
@@ -532,66 +532,41 @@ function mostrarMenuVela(e, v) {
   return true;
 }
 
-async function establecerP(punto) {
+function establecerP(punto) {
   cerrarMenuVela();
   if (!_velaSeleccionada) return;
   const v = _velaSeleccionada;
 
+  // Encontrar nombre de vela para el select
+  const velaName = v.vela || 'V1';
+
   if (punto === 'P1') {
-    // P1 → endpoint dedicado que acepta solo P1
-    const url = `${RAILWAY}/establecer_p1?activo=${activo}`
-      + `&p1_high=${v.h}&p1_fecha=${v.fecha}&p1_hora=${v.hora}`;
-    try {
-      const r = await fetch(url);
-      const d = await r.json();
-      if (r.ok) {
-        _p1Local = { high: v.h, fecha: v.fecha, hora_est: v.hora };  // guardar P1 localmente
-        invalidarCanal(activo);
-        await cargarEstadoCanal(activo);
-        render();
-        toast(`✅ P1 establecido — $${v.h.toFixed(2)} · ${v.fecha} ${v.vela}`);
-      } else { toast(`❌ ${d.error || 'Error'}`); }
-    } catch(e) { toast('❌ Error conectando Railway'); }
+    document.getElementById('ps-p1-high').value  = v.h.toFixed(2);
+    document.getElementById('ps-p1-fecha').value = v.fecha;
+    const sel = document.getElementById('ps-p1-vela');
+    if (sel) sel.value = velaName;
+    toast(`P1 cargado — $${v.h.toFixed(2)} · ${v.fecha} ${velaName} · Presiona ACTIVAR`);
 
   } else if (punto === 'P2') {
-    // P2 → usar P1 guardado localmente o del canalRailway
-    const p1 = _p1Local || (window.canalRailway && window.canalRailway.p1);
-    if (!p1) { toast('⚠️ Establece P1 primero'); return; }
-    const url = `${RAILWAY}/activar?activo=${activo}`
-      + `&p1_high=${p1.high}&p1_fecha=${p1.fecha}&p1_hora=${p1.hora_est}`
-      + `&p2_high=${v.h}&p2_fecha=${v.fecha}&p2_hora=${v.hora}`;
-    try {
-      const r = await fetch(url);
-      const d = await r.json();
-      if (r.ok) {
-        invalidarCanal(activo);
-        await new Promise(res => setTimeout(res, 300));
-        await cargarEstadoCanal(activo);
-        render();
-        toast(`✅ Canal activado — P2 $${v.h.toFixed(2)} · ${v.fecha} ${v.vela}`);
-      } else { toast(`❌ ${d.error || 'Error'}`); }
-    } catch(e) { toast('❌ Error conectando Railway'); }
+    document.getElementById('ps-p2-high').value  = v.h.toFixed(2);
+    document.getElementById('ps-p2-fecha').value = v.fecha;
+    const sel = document.getElementById('ps-p2-vela');
+    if (sel) sel.value = velaName;
+    toast(`P2 cargado — $${v.h.toFixed(2)} · ${v.fecha} ${velaName} · Presiona ACTIVAR`);
 
   } else if (punto === 'P3') {
-    // P3 → necesita P1 y P2 ya establecidos
-    const p1 = _p1Local || (window.canalRailway && window.canalRailway.p1);
-    const p2 = window.canalRailway && window.canalRailway.p2;
-    if (!p1 || !p2) { toast('⚠️ Establece P1 y P2 primero'); return; }
-    const url = `${RAILWAY}/activar?activo=${activo}`
-      + `&p1_high=${p1.high}&p1_fecha=${p1.fecha}&p1_hora=${p1.hora_est}`
-      + `&p2_high=${p2.high}&p2_fecha=${p2.fecha}&p2_hora=${p2.hora_est}`
-      + `&piso_low=${v.l}&piso_fecha=${v.fecha}&piso_hora=${v.hora}`;
-    try {
-      const r = await fetch(url);
-      const d = await r.json();
-      if (r.ok) {
-        invalidarCanal(activo);
-        await new Promise(res => setTimeout(res, 300));
-        await cargarEstadoCanal(activo);
-        render();
-        toast(`✅ P3/Piso establecido — $${v.l.toFixed(2)} · ${v.fecha} ${v.vela}`);
-      } else { toast(`❌ ${d.error || 'Error'}`); }
-    } catch(e) { toast('❌ Error conectando Railway'); }
+    document.getElementById('ps-p3-low').value   = v.l.toFixed(2);
+    document.getElementById('ps-p3-fecha').value = v.fecha;
+    const sel = document.getElementById('ps-p3-vela');
+    if (sel) sel.value = velaName;
+    toast(`P3 cargado — $${v.l.toFixed(2)} · ${v.fecha} ${velaName} · Presiona ACTIVAR`);
+  }
+
+  // Abrir panel de P's si está cerrado
+  const panel = document.getElementById('panel-ps');
+  if (panel && panel.style.display !== 'block') {
+    panel.style.display = 'block';
+    document.getElementById('btn-panel-ps').classList.add('on');
   }
 }
 
