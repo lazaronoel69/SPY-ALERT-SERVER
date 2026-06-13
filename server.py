@@ -3973,6 +3973,30 @@ def rellenar_velas():
 
     return jsonify({"fecha": str(hoy), "resultado": resultado}), 200
 
+@app.route("/establecer_p1", methods=["GET"])
+def establecer_p1():
+    """Establece solo P1 del canal. P2 se establece después."""
+    simbolo = request.args.get("activo", "SPY").upper()
+    if simbolo not in ACTIVOS:
+        return jsonify({"error": f"Activo {simbolo} no reconocido"}), 400
+    try:
+        p1_high = float(request.args["p1_high"])
+        p1_fecha = request.args["p1_fecha"]
+        p1_hora  = int(request.args["p1_hora"])
+        canal[simbolo]["p1"] = {"fecha": p1_fecha, "hora_est": p1_hora, "high": p1_high}
+        canal[simbolo]["p2"] = None
+        canal[simbolo]["p3"] = None
+        canal[simbolo]["p2_actual_high"] = None
+        canal[simbolo]["p2_actual_ts"]   = None
+        canal[simbolo]["on"]      = False  # no activo hasta tener P2
+        canal[simbolo]["apagado"] = False
+        canal[simbolo]["roto"]    = False
+        canal[simbolo]["fecha_ruptura"] = None
+        guardar_canales()
+        return jsonify({"ok": True, "simbolo": simbolo, "p1": canal[simbolo]["p1"]}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
 @app.route("/reset_canales", methods=["GET"])
 def reset_canales():
     """Resetea todos los canales a cero. Usar cuando se quiere empezar desde cero."""

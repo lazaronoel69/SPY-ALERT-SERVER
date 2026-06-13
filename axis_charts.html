@@ -537,8 +537,8 @@ async function establecerP(punto) {
   const v = _velaSeleccionada;
 
   if (punto === 'P1') {
-    // P1 → guarda en campos del panel y activa directamente
-    const url = `${RAILWAY}/activar?activo=${activo}`
+    // P1 → endpoint dedicado que acepta solo P1
+    const url = `${RAILWAY}/establecer_p1?activo=${activo}`
       + `&p1_high=${v.h}&p1_fecha=${v.fecha}&p1_hora=${v.hora}`;
     try {
       const r = await fetch(url);
