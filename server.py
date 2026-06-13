@@ -3850,14 +3850,15 @@ def velas_status():
         # Verificar si tiene data de hoy
         hoy = _dt.now().strftime("%Y-%m-%d")
         tiene_hoy = any(b["time"].startswith(hoy) for b in barras_15min) if barras_15min else False
+        es_hoy_mercado = es_dia_mercado(datetime.now(EST))
         resultado[simbolo] = {
             "total_registros":  len(local["barras"]),
             "barras_15min":     len(barras_15min),
             "barras_daily":     len(barras_daily),
             "ultima_barra":     ultima,
             "tiene_data_hoy":   tiene_hoy,
-            "status": "✅ OK" if (len(barras_15min) > 100 and tiene_hoy) else
-                      "⚠️ SIN DATA HOY" if (len(barras_15min) > 100 and not tiene_hoy) else
+            "status": "✅ OK" if (len(barras_15min) > 100 and (tiene_hoy or not es_hoy_mercado)) else
+                      "⚠️ SIN DATA HOY" if (len(barras_15min) > 100 and es_hoy_mercado) else
                       "❌ BASE VACÍA"
         }
     return jsonify({
@@ -3905,6 +3906,70 @@ def tradier_hoy():
             resultado[simbolo] = {"total_barras": 0, "ultima_barra": None, "status": f"❌ ERROR: {e}"}
 
     return jsonify({"fecha": hoy, "activos": resultado}), 200
+
+@app.route("/rellenar_velas", methods=["GET"])
+def rellenar_velas():
+    """
+    Rellena barras 15min faltantes para activos con historial incompleto.
+    Detecta activos con menos barras que el promedio y hace llamada adicional.
+    """
+    from datetime import date as _date, timedelta as _td
+    resultado = {}
+    hoy = _date.today()
+    fecha_ini = restar_dias_habiles(hoy, 38)
+
+    for simbolo in ACTIVOS:
+        local = cargar_velas_local(simbolo)
+        b15   = [b for b in local["barras"] if b.get("interval") == "15min"]
+        antes = len(b15)
+
+        try:
+            r = requests.get(
+                f"{TRADIER_BASE_REAL}/markets/timesales",
+                headers=TRADIER_HEADERS_REAL,
+                params={
+                    "symbol":         simbolo,
+                    "interval":       "15min",
+                    "start":          f"{fecha_ini.strftime('%Y-%m-%d')} 09:00",
+                    "end":            f"{(hoy - _td(days=1)).strftime('%Y-%m-%d')} 16:30",
+                    "session_filter": "open",
+                },
+                timeout=30
+            )
+            if r.status_code != 200:
+                resultado[simbolo] = f"❌ HTTP {r.status_code}"
+                continue
+
+            s = r.json().get("series")
+            if not s or s == "null":
+                resultado[simbolo] = "⚠️ Sin datos Tradier"
+                continue
+
+            barras_tradier = s.get("data", [])
+            if isinstance(barras_tradier, dict): barras_tradier = [barras_tradier]
+
+            # Agregar solo las barras que no existen aún
+            tiempos_existentes = {b["time"] for b in b15}
+            nuevas = []
+            for b in barras_tradier:
+                t = b["time"]
+                if t not in tiempos_existentes:
+                    b["interval"] = "15min"
+                    nuevas.append(b)
+
+            if nuevas:
+                local["barras"].extend(nuevas)
+                local["barras"].sort(key=lambda x: x["time"])
+                local["ultima_barra"] = local["barras"][-1]["time"]
+                guardar_velas_local(simbolo, local)
+                resultado[simbolo] = f"✅ +{len(nuevas)} barras nuevas ({antes} → {antes+len(nuevas)})"
+            else:
+                resultado[simbolo] = f"✅ Sin faltantes ({antes} barras)"
+
+        except Exception as e:
+            resultado[simbolo] = f"❌ Error: {e}"
+
+    return jsonify({"fecha": str(hoy), "resultado": resultado}), 200
 
 @app.route("/archivar_hoy", methods=["GET"])
 def archivar_hoy():
@@ -4159,14 +4224,15 @@ def system_status():
             tiene_hoy    = any(b["time"].startswith(hoy.strftime("%Y-%m-%d")) for b in b15) if b15 else False
             ultima       = local.get("ultima_barra", "—")
             archivo_kb   = round(os.path.getsize(ruta_velas_local(a)) / 1024, 1) if os.path.exists(ruta_velas_local(a)) else 0
+            es_hoy_mkt   = es_dia_mercado(ahora)
             velas_db[a]  = {
                 "barras_15min":   len(b15),
                 "barras_diarias": len(b_daily),
                 "ultima_barra":   ultima,
                 "tiene_hoy":      tiene_hoy,
                 "archivo_kb":     archivo_kb,
-                "status":         "✅ OK" if (len(b15) > 100 and tiene_hoy) else
-                                  "⚠️ SIN HOY" if (len(b15) > 100) else "❌ VACÍO",
+                "status":         "✅ OK" if (len(b15) > 100 and (tiene_hoy or not es_hoy_mkt)) else
+                                  "⚠️ SIN HOY" if (len(b15) > 100 and es_hoy_mkt) else "❌ VACÍO",
             }
         except Exception as e:
             velas_db[a] = {"status": f"❌ ERROR: {e}"}
