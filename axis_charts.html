@@ -57,6 +57,33 @@
   .strat-btn:hover { border-color:#ffd700; color:var(--text); }
   .strat-btn.on { background:rgba(255,215,0,0.12); border-color:#ffd700; color:#ffd700; }
 
+  #vela-menu {
+    position:fixed; display:none; z-index:1000;
+    background:#0d1117; border:1px solid var(--border);
+    border-radius:8px; padding:10px 12px;
+    box-shadow:0 8px 24px rgba(0,0,0,0.6);
+    font-family:var(--mono);
+  }
+  #vela-menu .vm-title {
+    color:var(--accent); font-size:11px; font-weight:700;
+    letter-spacing:1px; margin-bottom:8px;
+  }
+  #vela-menu .vm-info {
+    color:var(--dim); font-size:10px; margin-bottom:8px;
+  }
+  #vela-menu .vm-btns { display:flex; gap:6px; }
+  #vela-menu .vm-btn {
+    padding:5px 12px; border-radius:5px; font-family:var(--mono);
+    font-size:11px; font-weight:700; cursor:pointer; border:1px solid;
+    transition:all 0.15s;
+  }
+  #vela-menu .vm-btn-p1 { background:rgba(248,81,73,0.15); border-color:#f85149; color:#f85149; }
+  #vela-menu .vm-btn-p2 { background:rgba(88,166,255,0.15); border-color:#58a6ff; color:#58a6ff; }
+  #vela-menu .vm-btn-p3 { background:rgba(63,185,80,0.15); border-color:#3fb950; color:#3fb950; }
+  #vela-menu .vm-btn:hover { opacity:0.8; transform:scale(1.05); }
+  #vela-menu .vm-cancel { color:var(--dim); font-size:10px; cursor:pointer; text-align:center; margin-top:6px; }
+  #vela-menu .vm-cancel:hover { color:var(--text); }
+
   .price-box { margin-left:auto; display:flex; align-items:baseline; gap:8px; }
   .pval { font-size:22px; font-weight:700; }
   .pchg { font-size:12px; font-weight:600; }
@@ -169,12 +196,23 @@
 </head>
 <body>
 
+<div id="vela-menu">
+  <div class="vm-title">ESTABLECER PUNTO</div>
+  <div class="vm-info" id="vm-info">—</div>
+  <div class="vm-btns">
+    <button class="vm-btn vm-btn-p1" onclick="establecerP('P1')">P1</button>
+    <button class="vm-btn vm-btn-p2" onclick="establecerP('P2')">P2</button>
+    <button class="vm-btn vm-btn-p3" onclick="establecerP('P3')">P3</button>
+  </div>
+  <div class="vm-cancel" onclick="cerrarMenuVela()">✕ cancelar</div>
+</div>
+
 <div id="canal-delete-btn" style="display:none;position:fixed;background:#1a1a2e;border:1px solid #f85149;border-radius:6px;padding:8px 14px;color:#f85149;font-family:var(--mono);font-size:12px;font-weight:600;cursor:pointer;z-index:999;box-shadow:0 4px 12px rgba(0,0,0,0.5);" onclick="borrarCanalClick()">
   🗑 Borrar canal
 </div>
 
 <header>
-  <div class="logo">AXIS<small>CHARTS v1.3.4 — SEÑALES</small></div>
+  <div class="logo">AXIS<small>CHARTS v1.3.5 — SEÑALES</small></div>
   <div class="tabs">
     <button class="tab on"  data-activo="SPY"  onclick="cambiar('SPY')">SPY</button>
     <button class="tab"     data-activo="AAPL" onclick="cambiar('AAPL')">AAPL</button>
@@ -456,6 +494,100 @@ function detectarClickCanal(e) {
     }
   }
   return false;
+}
+
+// ── Click en vela para establecer P1/P2/P3 ──
+let _velaSeleccionada = null;  // { h, l, fecha, hora, vela }
+
+function cerrarMenuVela() {
+  document.getElementById('vela-menu').style.display = 'none';
+  _velaSeleccionada = null;
+}
+
+function mostrarMenuVela(e, v) {
+  // Solo en 1H
+  if (timeframe !== '1H') return false;
+  const dt     = (v.datetime||'').trim();
+  const fecha  = dt.substring(0, 10);
+  const hora   = parseInt(dt.substring(11, 13));
+  const velaLbl = v.vela || '—';
+
+  _velaSeleccionada = { h: v.h, l: v.l, fecha, hora, vela: velaLbl };
+
+  document.getElementById('vm-info').innerHTML =
+    `<b>${fecha}</b> ${velaLbl} &nbsp;|&nbsp; H: <b>$${v.h.toFixed(2)}</b> &nbsp;L: <b>$${v.l.toFixed(2)}</b>`;
+
+  const menu = document.getElementById('vela-menu');
+  menu.style.display = 'block';
+  menu.style.left    = `${e.clientX + 12}px`;
+  menu.style.top     = `${e.clientY - 20}px`;
+
+  // Ajustar si sale de la pantalla
+  const mw = menu.offsetWidth || 200;
+  const mh = menu.offsetHeight || 120;
+  if (e.clientX + 12 + mw > window.innerWidth)  menu.style.left = `${e.clientX - mw - 12}px`;
+  if (e.clientY - 20 + mh > window.innerHeight) menu.style.top  = `${e.clientY - mh}px`;
+
+  return true;
+}
+
+async function establecerP(punto) {
+  cerrarMenuVela();
+  if (!_velaSeleccionada) return;
+  const v = _velaSeleccionada;
+
+  if (punto === 'P1') {
+    // P1 → guarda en campos del panel y activa directamente
+    const url = `${RAILWAY}/activar?activo=${activo}`
+      + `&p1_high=${v.h}&p1_fecha=${v.fecha}&p1_hora=${v.hora}`;
+    try {
+      const r = await fetch(url);
+      const d = await r.json();
+      if (r.ok) {
+        invalidarCanal(activo);
+        await cargarEstadoCanal(activo);
+        render();
+        toast(`✅ P1 establecido — $${v.h.toFixed(2)} · ${v.fecha} ${v.vela}`);
+      } else { toast(`❌ ${d.error || 'Error'}`); }
+    } catch(e) { toast('❌ Error conectando Railway'); }
+
+  } else if (punto === 'P2') {
+    // P2 → necesita P1 ya establecido
+    const c = window.canalRailway;
+    if (!c || !c.p1) { toast('⚠️ Establece P1 primero'); return; }
+    const url = `${RAILWAY}/activar?activo=${activo}`
+      + `&p1_high=${c.p1.high}&p1_fecha=${c.p1.fecha}&p1_hora=${c.p1.hora_est}`
+      + `&p2_high=${v.h}&p2_fecha=${v.fecha}&p2_hora=${v.hora}`;
+    try {
+      const r = await fetch(url);
+      const d = await r.json();
+      if (r.ok) {
+        invalidarCanal(activo);
+        await cargarEstadoCanal(activo);
+        render();
+        toast(`✅ Canal activado — P2 $${v.h.toFixed(2)} · ${v.fecha} ${v.vela}`);
+      } else { toast(`❌ ${d.error || 'Error'}`); }
+    } catch(e) { toast('❌ Error conectando Railway'); }
+
+  } else if (punto === 'P3') {
+    // P3 → necesita P1 y P2 ya establecidos
+    const c = window.canalRailway;
+    if (!c || !c.p1 || !c.p2) { toast('⚠️ Establece P1 y P2 primero'); return; }
+    const url = `${RAILWAY}/activar?activo=${activo}`
+      + `&p1_high=${c.p1.high}&p1_fecha=${c.p1.fecha}&p1_hora=${c.p1.hora_est}`
+      + `&p2_high=${c.p2.high}&p2_fecha=${c.p2.fecha}&p2_hora=${c.p2.hora_est}`
+      + `&piso_low=${v.l}&piso_fecha=${v.fecha}&piso_hora=${v.hora}`;
+    try {
+      const r = await fetch(url);
+      const d = await r.json();
+      if (r.ok) {
+        invalidarCanal(activo);
+        await cargarEstadoCanal(activo);
+        render();
+        toast(`✅ P3/Piso establecido — $${v.l.toFixed(2)} · ${v.fecha} ${v.vela}`);
+      } else { toast(`❌ ${d.error || 'Error'}`); }
+    } catch(e) { toast('❌ Error conectando Railway'); }
+  }
 }
 
 function cambiarTF(tf) {
@@ -1733,16 +1865,40 @@ cc.addEventListener('wheel', e => {
 // ═══════════════════════════════════════
 // PAN
 // ═══════════════════════════════════════
+let _clickTimer = null;
+let _clickPos   = null;
+
 cc.addEventListener('mousedown', e => {
   if (drawMode) return;
   // Verificar si click sobre línea del canal
   if (detectarClickCanal(e)) return;
-  // Ocultar botón de borrar si está visible
+  // Ocultar menús previos
   document.getElementById('canal-delete-btn').style.display = 'none';
+  cerrarMenuVela();
+
+  _clickPos = { x: e.clientX, y: e.clientY };
   panActive = true;
   panX0     = e.clientX;
   panZ0     = { start:zoomStart, end:zoomEnd, rango:zoomEnd-zoomStart };
   cc.style.cursor = 'grabbing';
+});
+
+cc.addEventListener('click', e => {
+  if (drawMode) return;
+  if (timeframe !== '1H') return;
+  // Solo si no hubo pan (click en lugar, no arrastre)
+  if (_clickPos && Math.abs(e.clientX - _clickPos.x) < 5 && Math.abs(e.clientY - _clickPos.y) < 5) {
+    const rect  = cc.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left;
+    const W = cc.width;
+    const gW = W - M.left - M.right;
+    const visible = allVelas.slice(zoomStart, zoomEnd + 1);
+    const i = Math.round((mouseX - M.left) / gW * (visible.length - 1));
+    if (i >= 0 && i < visible.length) {
+      mostrarMenuVela(e, visible[i]);
+    }
+  }
+  _clickPos = null;
 });
 
 cc.addEventListener('mousemove', e => {
