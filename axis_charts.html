@@ -200,11 +200,11 @@
   <div class="vm-title">ESTABLECER PUNTO</div>
   <div class="vm-info" id="vm-info">—</div>
   <div class="vm-btns">
-    <button class="vm-btn vm-btn-p1" onclick="establecerP('P1')">P1</button>
-    <button class="vm-btn vm-btn-p2" onclick="establecerP('P2')">P2</button>
-    <button class="vm-btn vm-btn-p3" onclick="establecerP('P3')">P3</button>
+    <button class="vm-btn vm-btn-p1" onmousedown="event.stopPropagation();establecerP('P1')">P1</button>
+    <button class="vm-btn vm-btn-p2" onmousedown="event.stopPropagation();establecerP('P2')">P2</button>
+    <button class="vm-btn vm-btn-p3" onmousedown="event.stopPropagation();establecerP('P3')">P3</button>
   </div>
-  <div class="vm-cancel" onclick="cerrarMenuVela()">✕ cancelar</div>
+  <div class="vm-cancel" style="display:none"></div>
 </div>
 
 <div id="canal-delete-btn" style="display:none;position:fixed;background:#1a1a2e;border:1px solid #f85149;border-radius:6px;padding:8px 14px;color:#f85149;font-family:var(--mono);font-size:12px;font-weight:600;cursor:pointer;z-index:999;box-shadow:0 4px 12px rgba(0,0,0,0.5);" onclick="borrarCanalClick()">
@@ -212,7 +212,7 @@
 </div>
 
 <header>
-  <div class="logo">AXIS<small>CHARTS v1.3.7 — SEÑALES</small></div>
+  <div class="logo">AXIS<small>CHARTS v1.3.8 — SEÑALES</small></div>
   <div class="tabs">
     <button class="tab on"  data-activo="SPY"  onclick="cambiar('SPY')">SPY</button>
     <button class="tab"     data-activo="AAPL" onclick="cambiar('AAPL')">AAPL</button>
@@ -502,7 +502,7 @@ let _p1Local = null;  // P1 guardado localmente para usar en P2
 
 function cerrarMenuVela() {
   document.getElementById('vela-menu').style.display = 'none';
-  _velaSeleccionada = null;
+  // NO limpiar _velaSeleccionada aquí — establecerP la necesita
 }
 
 function mostrarMenuVela(e, v) {
@@ -532,41 +532,59 @@ function mostrarMenuVela(e, v) {
   return true;
 }
 
-function establecerP(punto) {
-  cerrarMenuVela();
-  if (!_velaSeleccionada) return;
+async function establecerP(punto) {
   const v = _velaSeleccionada;
-
-  // Encontrar nombre de vela para el select
-  const velaName = v.vela || 'V1';
+  cerrarMenuVela();
+  if (!v) return;
 
   if (punto === 'P1') {
-    document.getElementById('ps-p1-high').value  = v.h.toFixed(2);
-    document.getElementById('ps-p1-fecha').value = v.fecha;
-    const sel = document.getElementById('ps-p1-vela');
-    if (sel) sel.value = velaName;
-    toast(`P1 cargado — $${v.h.toFixed(2)} · ${v.fecha} ${velaName} · Presiona ACTIVAR`);
+    // Guardar P1 localmente y en servidor
+    _p1Local = { high: v.h, fecha: v.fecha, hora_est: v.hora };
+    try {
+      const r = await fetch(`${RAILWAY}/establecer_p1?activo=${activo}&p1_high=${v.h}&p1_fecha=${v.fecha}&p1_hora=${v.hora}`);
+      if (r.ok) {
+        invalidarCanal(activo);
+        await cargarEstadoCanal(activo);
+        toast(`✅ P1 — $${v.h.toFixed(2)} · ${v.fecha} ${v.vela}`);
+      } else { toast('❌ Error estableciendo P1'); }
+    } catch(e) { toast('❌ Error conectando servidor'); }
 
   } else if (punto === 'P2') {
-    document.getElementById('ps-p2-high').value  = v.h.toFixed(2);
-    document.getElementById('ps-p2-fecha').value = v.fecha;
-    const sel = document.getElementById('ps-p2-vela');
-    if (sel) sel.value = velaName;
-    toast(`P2 cargado — $${v.h.toFixed(2)} · ${v.fecha} ${velaName} · Presiona ACTIVAR`);
+    // Necesita P1 — activa canal automáticamente
+    const p1 = _p1Local || (window.canalRailway && window.canalRailway.p1);
+    if (!p1) { toast('⚠️ Selecciona P1 primero'); return; }
+    try {
+      const url = `${RAILWAY}/activar?activo=${activo}`
+        + `&p1_high=${p1.high}&p1_fecha=${p1.fecha}&p1_hora=${p1.hora_est}`
+        + `&p2_high=${v.h}&p2_fecha=${v.fecha}&p2_hora=${v.hora}`;
+      const r = await fetch(url);
+      if (r.ok) {
+        _p1Local = null;
+        invalidarCanal(activo);
+        await cargarEstadoCanal(activo);
+        render();
+        toast(`✅ Canal activo — P2 $${v.h.toFixed(2)} · ${v.fecha} ${v.vela}`);
+      } else { const d = await r.json(); toast(`❌ ${d.error || 'Error'}`); }
+    } catch(e) { toast('❌ Error conectando servidor'); }
 
   } else if (punto === 'P3') {
-    document.getElementById('ps-p3-low').value   = v.l.toFixed(2);
-    document.getElementById('ps-p3-fecha').value = v.fecha;
-    const sel = document.getElementById('ps-p3-vela');
-    if (sel) sel.value = velaName;
-    toast(`P3 cargado — $${v.l.toFixed(2)} · ${v.fecha} ${velaName} · Presiona ACTIVAR`);
-  }
-
-  // Abrir panel de P's si está cerrado
-  const panel = document.getElementById('panel-ps');
-  if (panel && panel.style.display !== 'block') {
-    panel.style.display = 'block';
-    document.getElementById('btn-panel-ps').classList.add('on');
+    // Necesita P1+P2 — convierte a RCB automáticamente
+    const p1 = _p1Local || (window.canalRailway && window.canalRailway.p1);
+    const p2 = window.canalRailway && window.canalRailway.p2;
+    if (!p1 || !p2) { toast('⚠️ Selecciona P1 y P2 primero'); return; }
+    try {
+      const url = `${RAILWAY}/activar?activo=${activo}`
+        + `&p1_high=${p1.high}&p1_fecha=${p1.fecha}&p1_hora=${p1.hora_est}`
+        + `&p2_high=${p2.high}&p2_fecha=${p2.fecha}&p2_hora=${p2.hora_est}`
+        + `&piso_low=${v.l}&piso_fecha=${v.fecha}&piso_hora=${v.hora}`;
+      const r = await fetch(url);
+      if (r.ok) {
+        invalidarCanal(activo);
+        await cargarEstadoCanal(activo);
+        render();
+        toast(`✅ Canal RCB — P3 $${v.l.toFixed(2)} · ${v.fecha} ${v.vela}`);
+      } else { const d = await r.json(); toast(`❌ ${d.error || 'Error'}`); }
+    } catch(e) { toast('❌ Error conectando servidor'); }
   }
 }
 
@@ -1845,17 +1863,15 @@ cc.addEventListener('wheel', e => {
 // ═══════════════════════════════════════
 // PAN
 // ═══════════════════════════════════════
-let _clickTimer = null;
-let _clickPos   = null;
-
 cc.addEventListener('mousedown', e => {
   if (drawMode) return;
+  // No cerrar menú si el click fue en el menú de vela
+  if (e.target.closest('#vela-menu')) return;
   // Verificar si click sobre línea del canal
   if (detectarClickCanal(e)) return;
   // Ocultar menús previos
   document.getElementById('canal-delete-btn').style.display = 'none';
   cerrarMenuVela();
-
   _clickPos = { x: e.clientX, y: e.clientY };
   panActive = true;
   panX0     = e.clientX;
