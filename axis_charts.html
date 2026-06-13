@@ -169,8 +169,12 @@
 </head>
 <body>
 
+<div id="canal-delete-btn" style="display:none;position:fixed;background:#1a1a2e;border:1px solid #f85149;border-radius:6px;padding:8px 14px;color:#f85149;font-family:var(--mono);font-size:12px;font-weight:600;cursor:pointer;z-index:999;box-shadow:0 4px 12px rgba(0,0,0,0.5);" onclick="borrarCanalClick()">
+  🗑 Borrar canal
+</div>
+
 <header>
-  <div class="logo">AXIS<small>CHARTS v1.3.3 — SEÑALES</small></div>
+  <div class="logo">AXIS<small>CHARTS v1.3.4 — SEÑALES</small></div>
   <div class="tabs">
     <button class="tab on"  data-activo="SPY"  onclick="cambiar('SPY')">SPY</button>
     <button class="tab"     data-activo="AAPL" onclick="cambiar('AAPL')">AAPL</button>
@@ -394,6 +398,66 @@ function resize() {
 // ═══════════════════════════════════════
 // CARGAR DATOS — Tradier 15min via Railway
 // ═══════════════════════════════════════
+async function borrarCanalClick() {
+  document.getElementById('canal-delete-btn').style.display = 'none';
+  try {
+    await fetch(`${RAILWAY}/desactivar?activo=${activo}`);
+    invalidarCanal(activo);
+    window.canalRailway = { on: false };
+    window.canalLineas  = null;
+    render();
+    toast('✅ Canal borrado');
+  } catch(e) { toast('❌ Error borrando canal'); }
+}
+
+// Detectar click sobre línea del canal en canvas
+function detectarClickCanal(e) {
+  if (!window.canalRailway || !window.canalRailway.on) return false;
+  const c = window.canalRailway;
+  if (!c.p1 || !c.p2 || !allVelas.length) return false;
+
+  const rect = cc.getBoundingClientRect();
+  const mx   = e.clientX - rect.left;
+  const my   = e.clientY - rect.top;
+
+  // Buscar p1Idx en allVelas
+  const esDiario = (timeframe === 'daily' || timeframe === 'weekly' || timeframe === 'monthly');
+  let p1Idx = -1, p2Idx = -1;
+  allVelas.forEach((v, i) => {
+    const f = (v.datetime||'').substring(0,10);
+    const h = parseInt((v.datetime||'').substring(11,13));
+    if (esDiario) {
+      if (f === c.p1.fecha) p1Idx = i;
+      if (f === c.p2.fecha) p2Idx = i;
+    } else {
+      if (f === c.p1.fecha && h === c.p1.hora_est) p1Idx = i;
+      if (f === c.p2.fecha && h === c.p2.hora_est) p2Idx = i;
+    }
+  });
+  if (p1Idx < 0 || p2Idx <= p1Idx) return false;
+
+  const slope = (c.p2.high - c.p1.high) / (p2Idx - p1Idx);
+  const visStart = Math.max(0, p1Idx - zoomStart);
+  const visEnd   = Math.min(visible ? visible.length - 1 : 0, allVelas.length - 1 - zoomStart);
+
+  // Verificar si el click está cerca de la línea del techo (±8px)
+  for (let k = visStart; k <= visEnd; k++) {
+    const absK  = k + zoomStart;
+    const precio = c.p1.high + slope * (absK - p1Idx);
+    const px    = xOf(k);
+    const py    = yOf(precio);
+    if (Math.abs(mx - px) < 12 && Math.abs(my - py) < 8) {
+      // Click sobre la línea — mostrar botón flotante
+      const btn = document.getElementById('canal-delete-btn');
+      btn.style.display = 'block';
+      btn.style.left    = `${e.clientX + 10}px`;
+      btn.style.top     = `${e.clientY - 20}px`;
+      return true;
+    }
+  }
+  return false;
+}
+
 function cambiarTF(tf) {
   timeframe = tf;
   document.querySelectorAll('.tf-btn').forEach(b =>
@@ -1484,7 +1548,15 @@ function render() {
 
         // Dibujar desde P1 hasta la última vela visible
         const startAbs = p1Idx;
-        const endAbs   = allVelas.length - 1;
+        // Si canal roto → dibujar solo hasta la fecha de ruptura
+        let endAbs = allVelas.length - 1;
+        if (c.roto && c.fecha_ruptura) {
+          for (let i = allVelas.length - 1; i >= 0; i--) {
+            if ((allVelas[i].datetime||'').startsWith(c.fecha_ruptura)) {
+              endAbs = i; break;
+            }
+          }
+        }
         const startIdx = Math.max(0, startAbs - zoomStart);
         const endIdx   = Math.min(visible.length - 1, endAbs - zoomStart);
 
@@ -1663,6 +1735,10 @@ cc.addEventListener('wheel', e => {
 // ═══════════════════════════════════════
 cc.addEventListener('mousedown', e => {
   if (drawMode) return;
+  // Verificar si click sobre línea del canal
+  if (detectarClickCanal(e)) return;
+  // Ocultar botón de borrar si está visible
+  document.getElementById('canal-delete-btn').style.display = 'none';
   panActive = true;
   panX0     = e.clientX;
   panZ0     = { start:zoomStart, end:zoomEnd, rango:zoomEnd-zoomStart };

@@ -252,6 +252,8 @@ def canal_vacio():
         "p2_actual_ts":   None,
         "v1_candidato":   None,
         "apagado":        False,
+        "roto":           False,   # True cuando la ruptura CNF/RCB fue exitosa
+        "fecha_ruptura":  None,    # Fecha en que ocurrió la ruptura
     }
 
 estado_dia = {a: estado_diario_vacio() for a in ACTIVOS}
@@ -695,6 +697,8 @@ def guardar_canales():
             data[a] = {
                 "on":             c["on"],
                 "apagado":        c["apagado"],
+                "roto":           c.get("roto", False),
+                "fecha_ruptura":  c.get("fecha_ruptura", None),
                 "p1":             c["p1"],
                 "p2":             c["p2"],
                 "p3":             c["p3"],
@@ -723,6 +727,8 @@ def cargar_canales():
             d = data[a]
             canal[a]["on"]             = d.get("on", False)
             canal[a]["apagado"]        = d.get("apagado", False)
+            canal[a]["roto"]           = d.get("roto", False)
+            canal[a]["fecha_ruptura"]  = d.get("fecha_ruptura", None)
             canal[a]["p1"]             = d.get("p1")
             canal[a]["p2"]             = d.get("p2")
             canal[a]["p3"]             = d.get("p3")
@@ -1583,18 +1589,14 @@ def evaluar_activo(simbolo, velas, ahora):
                     f"<b>Techo:</b> ${techo:.2f} | <b>Cierre:</b> ${v_close:.2f}\n"
                     f"<b>P1:</b> ${c['p1']['high']:.2f} | <b>P2:</b> ${c['p2_actual_high']:.2f}\n"
                 )
-                # Actualizar P2 con este high
-                c["p2_actual_high"] = v_high
-                c["p2"]["high"]     = v_high
-                c["p2_actual_ts"]   = ahora_dt
-                # P2 >= P1 → canal inválido → apagar
-                if c["p2_actual_high"] >= c["p1"]["high"]:
-                    c["on"] = False; c["apagado"] = True
-                    guardar_canales()
-                    enviar_telegram(f"🔕 <b>Canal APAGADO — {simbolo}</b>\nP2 ${v_high:.2f} >= P1 ${c['p1']['high']:.2f}")
-                else:
-                    guardar_canales()
-                print(f"{simbolo} {tipo_canal} ruptura V{hora_vela-8} techo=${techo:.2f} close=${v_close:.2f}")
+                # Canal roto — marcar y desactivar alertas futuras
+                # Se mantiene en JSON para que el chart lo dibuje hasta la ruptura
+                fecha_ruptura = ahora_dt.strftime("%Y-%m-%d")
+                c["roto"]          = True
+                c["fecha_ruptura"] = fecha_ruptura
+                c["apagado"]       = True  # no más alertas
+                guardar_canales()
+                print(f"{simbolo} {tipo_canal} ROTO — canal desactivado, queda en chart hasta {fecha_ruptura}")
             else:
                 # High >= P1 — canal apagado
                 c["apagado"] = True
@@ -3971,6 +3973,14 @@ def rellenar_velas():
 
     return jsonify({"fecha": str(hoy), "resultado": resultado}), 200
 
+@app.route("/reset_canales", methods=["GET"])
+def reset_canales():
+    """Resetea todos los canales a cero. Usar cuando se quiere empezar desde cero."""
+    for simbolo in ACTIVOS:
+        canal[simbolo] = canal_vacio()
+    guardar_canales()
+    return jsonify({"ok": True, "mensaje": "Todos los canales reseteados a cero"}), 200
+
 @app.route("/archivar_hoy", methods=["GET"])
 def archivar_hoy():
     """Archiva manualmente las señales del día actual. Llamar una vez al cierre."""
@@ -4788,15 +4798,17 @@ def canal_estado():
         piso_mitad = calcular_piso_mitad_canal(a, ahora_dt) if c["on"] and c["p3"] else (None, None)
 
         resultado[a] = {
-            "on":      c["on"],
-            "apagado": c.get("apagado", False),
-            "tipo":    "RCB" if (c["on"] and c["p3"]) else ("CNF" if c["on"] else "---"),
-            "p1":      c["p1"],
-            "p2":      c["p2"],
-            "p3":      c["p3"],
-            "techo":   round(techo, 2) if techo else None,
-            "mitad":   round(piso_mitad[1], 2) if piso_mitad[1] else None,
-            "piso":    round(piso_mitad[0], 2) if piso_mitad[0] else None,
+            "on":            c["on"],
+            "apagado":       c.get("apagado", False),
+            "roto":          c.get("roto", False),
+            "fecha_ruptura": c.get("fecha_ruptura", None),
+            "tipo":          "RCB" if (c["on"] and c["p3"]) else ("CNF" if c["on"] else "---"),
+            "p1":            c["p1"],
+            "p2":            c["p2"],
+            "p3":            c["p3"],
+            "techo":         round(techo, 2) if techo else None,
+            "mitad":         round(piso_mitad[1], 2) if piso_mitad[1] else None,
+            "piso":          round(piso_mitad[0], 2) if piso_mitad[0] else None,
         }
 
     return jsonify(resultado), 200
@@ -4999,7 +5011,7 @@ def arrancar_monitor():
     cargar_ordenes()
     cargar_estado_dia()
     construir_base_datos()       # build inicial si no existe — una sola vez
-    recalibrar_p2_canales()      # recalibra P2 una vez al arrancar
+    # NOTA: recalibrar_p2_canales() eliminada — P2 es manual, solo dinámico durante mercado
     threading.Thread(target=monitor_loop,              daemon=True).start()
     threading.Thread(target=loop_v7_anticipada,        daemon=True).start()
     threading.Thread(target=loop_limpiar_ordenes,      daemon=True).start()
