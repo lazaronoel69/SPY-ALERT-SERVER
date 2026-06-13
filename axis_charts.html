@@ -212,7 +212,7 @@
 </div>
 
 <header>
-  <div class="logo">AXIS<small>CHARTS v1.3.8 — SEÑALES</small></div>
+  <div class="logo">AXIS<small>CHARTS v1.3.9 — SEÑALES</small></div>
   <div class="tabs">
     <button class="tab on"  data-activo="SPY"  onclick="cambiar('SPY')">SPY</button>
     <button class="tab"     data-activo="AAPL" onclick="cambiar('AAPL')">AAPL</button>
@@ -458,6 +458,17 @@ function detectarClickCanal(e) {
   const mx   = e.clientX - rect.left;
   const my   = e.clientY - rect.top;
 
+  // Calcular visible localmente
+  const visibleLocal = allVelas.slice(zoomStart, zoomEnd + 1);
+  const W  = cc.width, H = cc.height;
+  const gW = W - M.left - M.right;
+  const gH = H - M.top - M.bottom;
+  const prices = visibleLocal.map(v => [v.h, v.l]).flat();
+  const maxP = Math.max(...prices);
+  const minP = Math.min(...prices);
+  const xOfL = i => M.left + (i / (visibleLocal.length - 1 || 1)) * gW;
+  const yOfL = p => M.top + (1 - (p - minP) / (maxP - minP || 1)) * gH;
+
   // Buscar p1Idx en allVelas
   const esDiario = (timeframe === 'daily' || timeframe === 'weekly' || timeframe === 'monthly');
   let p1Idx = -1, p2Idx = -1;
@@ -476,16 +487,15 @@ function detectarClickCanal(e) {
 
   const slope = (c.p2.high - c.p1.high) / (p2Idx - p1Idx);
   const visStart = Math.max(0, p1Idx - zoomStart);
-  const visEnd   = Math.min(visible ? visible.length - 1 : 0, allVelas.length - 1 - zoomStart);
+  const visEnd   = Math.min(visibleLocal.length - 1, allVelas.length - 1 - zoomStart);
 
   // Verificar si el click está cerca de la línea del techo (±8px)
   for (let k = visStart; k <= visEnd; k++) {
     const absK  = k + zoomStart;
     const precio = c.p1.high + slope * (absK - p1Idx);
-    const px    = xOf(k);
-    const py    = yOf(precio);
+    const px    = xOfL(k);
+    const py    = yOfL(precio);
     if (Math.abs(mx - px) < 12 && Math.abs(my - py) < 8) {
-      // Click sobre la línea — mostrar botón flotante
       const btn = document.getElementById('canal-delete-btn');
       btn.style.display = 'block';
       btn.style.left    = `${e.clientX + 10}px`;
@@ -506,11 +516,10 @@ function cerrarMenuVela() {
 }
 
 function mostrarMenuVela(e, v) {
-  // Solo en 1H
   if (timeframe !== '1H') return false;
-  const dt     = (v.datetime||'').trim();
-  const fecha  = dt.substring(0, 10);
-  const hora   = parseInt(dt.substring(11, 13));
+  const dt      = (v.datetime||'').trim();
+  const fecha   = dt.substring(0, 10);
+  const hora    = parseInt(dt.substring(11, 13));
   const velaLbl = v.vela || '—';
 
   _velaSeleccionada = { h: v.h, l: v.l, fecha, hora, vela: velaLbl };
@@ -518,14 +527,29 @@ function mostrarMenuVela(e, v) {
   document.getElementById('vm-info').innerHTML =
     `<b>${fecha}</b> ${velaLbl} &nbsp;|&nbsp; H: <b>$${v.h.toFixed(2)}</b> &nbsp;L: <b>$${v.l.toFixed(2)}</b>`;
 
+  // Canal activo = P1+P2 establecidos
+  const canalActivo = window.canalRailway && window.canalRailway.on
+    && window.canalRailway.p1 && window.canalRailway.p2;
+
+  // P3 solo visible cuando canal activo
+  const btnP3 = document.querySelector('.vm-btn-p3');
+  if (btnP3) btnP3.style.display = canalActivo ? 'inline-block' : 'none';
+
+  // P2: label normal sin canal, "↻ P2" con canal activo
+  const btnP2 = document.querySelector('.vm-btn-p2');
+  if (btnP2) btnP2.textContent = canalActivo ? '↻ P2' : 'P2';
+
+  // P1: solo visible cuando NO hay canal activo
+  const btnP1 = document.querySelector('.vm-btn-p1');
+  if (btnP1) btnP1.style.display = canalActivo ? 'none' : 'inline-block';
+
   const menu = document.getElementById('vela-menu');
   menu.style.display = 'block';
   menu.style.left    = `${e.clientX + 12}px`;
   menu.style.top     = `${e.clientY - 20}px`;
 
-  // Ajustar si sale de la pantalla
-  const mw = menu.offsetWidth || 200;
-  const mh = menu.offsetHeight || 120;
+  const mw = menu.offsetWidth || 160;
+  const mh = menu.offsetHeight || 80;
   if (e.clientX + 12 + mw > window.innerWidth)  menu.style.left = `${e.clientX - mw - 12}px`;
   if (e.clientY - 20 + mh > window.innerHeight) menu.style.top  = `${e.clientY - mh}px`;
 
@@ -550,22 +574,37 @@ async function establecerP(punto) {
     } catch(e) { toast('❌ Error conectando servidor'); }
 
   } else if (punto === 'P2') {
-    // Necesita P1 — activa canal automáticamente
-    const p1 = _p1Local || (window.canalRailway && window.canalRailway.p1);
-    if (!p1) { toast('⚠️ Selecciona P1 primero'); return; }
-    try {
-      const url = `${RAILWAY}/activar?activo=${activo}`
-        + `&p1_high=${p1.high}&p1_fecha=${p1.fecha}&p1_hora=${p1.hora_est}`
-        + `&p2_high=${v.h}&p2_fecha=${v.fecha}&p2_hora=${v.hora}`;
-      const r = await fetch(url);
-      if (r.ok) {
-        _p1Local = null;
-        invalidarCanal(activo);
-        await cargarEstadoCanal(activo);
-        render();
-        toast(`✅ Canal activo — P2 $${v.h.toFixed(2)} · ${v.fecha} ${v.vela}`);
-      } else { const d = await r.json(); toast(`❌ ${d.error || 'Error'}`); }
-    } catch(e) { toast('❌ Error conectando servidor'); }
+    const canalActivo = window.canalRailway && window.canalRailway.on;
+    if (canalActivo) {
+      // Canal activo → actualizar P2 dinámico
+      try {
+        const url = `${RAILWAY}/actualizar_p2?activo=${activo}&p2_high=${v.h}&p2_fecha=${v.fecha}&p2_hora=${v.hora}`;
+        const r = await fetch(url);
+        if (r.ok) {
+          invalidarCanal(activo);
+          await cargarEstadoCanal(activo);
+          render();
+          toast(`✅ P2 actualizado — $${v.h.toFixed(2)} · ${v.fecha} ${v.vela}`);
+        } else { const d = await r.json(); toast(`❌ ${d.error || 'Error'}`); }
+      } catch(e) { toast('❌ Error conectando servidor'); }
+    } else {
+      // Sin canal activo → necesita P1 → activar canal
+      const p1 = _p1Local || (window.canalRailway && window.canalRailway.p1);
+      if (!p1) { toast('⚠️ Selecciona P1 primero'); return; }
+      try {
+        const url = `${RAILWAY}/activar?activo=${activo}`
+          + `&p1_high=${p1.high}&p1_fecha=${p1.fecha}&p1_hora=${p1.hora_est}`
+          + `&p2_high=${v.h}&p2_fecha=${v.fecha}&p2_hora=${v.hora}`;
+        const r = await fetch(url);
+        if (r.ok) {
+          _p1Local = null;
+          invalidarCanal(activo);
+          await cargarEstadoCanal(activo);
+          render();
+          toast(`✅ Canal activo — P2 $${v.h.toFixed(2)} · ${v.fecha} ${v.vela}`);
+        } else { const d = await r.json(); toast(`❌ ${d.error || 'Error'}`); }
+      } catch(e) { toast('❌ Error conectando servidor'); }
+    }
 
   } else if (punto === 'P3') {
     // Necesita P1+P2 — convierte a RCB automáticamente
