@@ -317,6 +317,14 @@ let timeframe = '1H';  // 15min | 1H | daily | weekly | monthly
 let allVelas  = [];
 let stratState = { '1VR':true, 'RPG':true, 'GNA':true, 'GBA':true, 'HED':true, 'PM40':true, 'CNF':true, 'RCB':true, '4PS':true };
 let señalesHistoricas = {};  // { "2026-06-12": ["CNF","1VR"], ... }
+
+// ── Cache del browser ──
+// Evita llamadas repetidas a Railway cuando ya tienes los datos en sesión
+const _velasCache   = {};  // sym → velas procesadas
+const _canalCache   = {};  // sym → estado canal
+const _señalesCache = {};  // sym → historial señales
+function invalidarCanal(sym) { delete _canalCache[sym]; }
+function invalidarVelas(sym)  { delete _velasCache[sym]; }
 window.canalRailway = { on: false };
 window.canalLineas  = null;
 window.senalesHoy   = [];
@@ -409,6 +417,7 @@ async function cargarSenalesHistoricas(sym) {
     const res  = await fetch(`${RAILWAY}/señales_historicas?simbolo=${sym}&t=${Date.now()}`);
     const data = await res.json();
     señalesHistoricas = data.señales || {};
+    _señalesCache[sym] = señalesHistoricas;  // guardar en cache
   } catch(e) {
     señalesHistoricas = {};
   }
@@ -469,13 +478,16 @@ async function cargarDatos(sym, silencioso=false) {
     updatePrecio(velas);
     render();
 
+    // Guardar en cache del browser
+    _velasCache[sym] = velas;
+
     const desde = fmtFecha(velas[0].x);
     const auto  = (esMercadoAbierto() && (timeframe==='1H'||timeframe==='15min')) ? ' · 🟢 auto 60s' : '';
     document.getElementById('info').textContent = `${velas.length} velas · desde ${desde} · ${timeframe}${auto}`;
 
     clearTimeout(refreshTimer);
     if (esMercadoAbierto() && (timeframe === '1H' || timeframe === '15min'))
-      refreshTimer = setTimeout(() => cargarDatos(activo, true), 60 * 1000);
+      refreshTimer = setTimeout(() => { invalidarVelas(activo); cargarDatos(activo, true); }, 60 * 1000);
 
   } catch(e) {
     document.getElementById('info').textContent = 'Error: ' + e.message;
@@ -640,12 +652,20 @@ function calcSeñales(velas) {
   // Encontrar índices P1 y P2 del canal Railway si existe
   if (window.canalRailway && window.canalRailway.on && window.canalRailway.p1 && window.canalRailway.p2) {
     const cr = window.canalRailway;
+    const esDiario = (timeframe === 'daily' || timeframe === 'weekly' || timeframe === 'monthly');
     allVelas.forEach((v, i) => {
-      const dt   = (v.datetime||'').trim();
-      const f    = dt.substring(0,10);
-      const h    = parseInt(dt.substring(11,13));
-      if (f === cr.p1.fecha && h === cr.p1.hora_est) p1Idx = i;
-      if (f === cr.p2.fecha && h === cr.p2.hora_est) p2Idx = i;
+      const dt = (v.datetime||'').trim();
+      const f  = dt.substring(0,10);
+      const h  = parseInt(dt.substring(11,13));
+      if (esDiario) {
+        // En diario/semanal/mensual buscar solo por fecha
+        if (f === cr.p1.fecha) p1Idx = i;
+        if (f === cr.p2.fecha) p2Idx = i;
+      } else {
+        // En 1H/15min buscar por fecha y hora
+        if (f === cr.p1.fecha && h === cr.p1.hora_est) p1Idx = i;
+        if (f === cr.p2.fecha && h === cr.p2.hora_est) p2Idx = i;
+      }
     });
   }
 
@@ -960,6 +980,7 @@ async function cargarEstadoCanal(sym) {
     if (!c) return;
 
     window.canalRailway = c;
+    _canalCache[sym] = c;  // guardar en cache
     window.canalLineas  = null; // limpiar lineas anteriores
 
     // Si hay canal activo cargar líneas calculadas por Railway
@@ -1061,6 +1082,7 @@ async function activarCanal() {
     const data = await r.json();
     if (r.ok) {
       showToast(`✅ Canal ${data.status}`);
+      invalidarCanal(sym);  // limpiar cache para forzar datos frescos
       await cargarEstadoCanal(sym);
       render();
     } else {
@@ -1086,6 +1108,7 @@ async function actualizarP2() {
     const d   = await r.json();
     if (r.ok) {
       showToast(`✅ P2 actualizado — techo $${d.techo ?? '—'}`);
+      invalidarCanal(activo);  // limpiar cache
       await cargarEstadoCanal(activo);
       cargarDatos(activo);
     } else {
@@ -1100,6 +1123,7 @@ async function desactivarCanal() {
     const r = await fetch(`${RAILWAY}/desactivar?activo=${activo}`);
     if (r.ok) {
       showToast(`✅ Canal desactivado`);
+      invalidarCanal(activo);  // limpiar cache
       document.getElementById('ps-p1-high').value  = '';
       document.getElementById('ps-p1-fecha').value = '';
       document.getElementById('ps-p2-high').value  = '';
@@ -1429,15 +1453,22 @@ function render() {
     const color = c.tipo === 'RCB' ? '#f0b429' : '#58a6ff';
 
     if (c.p1 && c.p2) {
-      // Encontrar índices de P1 y P2 en allVelas (igual que PM40 usa p1Idx)
+      // Encontrar índices de P1 y P2 en allVelas
       let p1Idx = -1, p2Idx = -1, p3Idx = -1;
+      const esDiarioC = (timeframe === 'daily' || timeframe === 'weekly' || timeframe === 'monthly');
       allVelas.forEach((v, i) => {
-        const dt   = (v.datetime||'').trim();
+        const dt    = (v.datetime||'').trim();
         const fecha = dt.substring(0,10);
         const hora  = parseInt(dt.substring(11,13));
-        if (fecha === c.p1.fecha && hora === c.p1.hora_est) p1Idx = i;
-        if (fecha === c.p2.fecha && hora === c.p2.hora_est) p2Idx = i;
-        if (c.p3 && fecha === c.p3.fecha && hora === c.p3.hora_est) p3Idx = i;
+        if (esDiarioC) {
+          if (fecha === c.p1.fecha) p1Idx = i;
+          if (fecha === c.p2.fecha) p2Idx = i;
+          if (c.p3 && fecha === c.p3.fecha) p3Idx = i;
+        } else {
+          if (fecha === c.p1.fecha && hora === c.p1.hora_est) p1Idx = i;
+          if (fecha === c.p2.fecha && hora === c.p2.hora_est) p2Idx = i;
+          if (c.p3 && fecha === c.p3.fecha && hora === c.p3.hora_est) p3Idx = i;
+        }
       });
 
       if (p1Idx >= 0 && p2Idx > p1Idx) {
@@ -1691,16 +1722,40 @@ function togSMA(p) {
 async function cambiar(sym) {
   activo = sym;
   clearTimeout(refreshTimer);
-  allVelas=[]; zoomStart=0; zoomEnd=0;
-  window.senalesHoy = [];
-  señalesHistoricas = {};
   document.querySelectorAll('.tab').forEach(b => {
     b.classList.toggle('on', b.getAttribute('data-activo') === sym);
   });
   document.getElementById('activo-label').textContent = sym;
-  await cargarEstadoCanal(sym);
-  cargarSenalesHistoricas(sym);
-  cargarDatos(sym);
+
+  // Si todo está en cache → instantáneo
+  if (_canalCache[sym] && _velasCache[sym] && _señalesCache[sym]) {
+    window.canalRailway = _canalCache[sym];
+    señalesHistoricas   = _señalesCache[sym];
+    allVelas = _velasCache[sym];
+    zoomStart = 0; zoomEnd = allVelas.length - 1;
+    updatePrecio(allVelas);
+    render();
+    document.getElementById('info').textContent =
+      `${allVelas.length} velas · ${timeframe} · ⚡ cache`;
+    actualizarPrecioRT();
+    // Mantener refresh activo
+    clearTimeout(refreshTimer);
+    if (esMercadoAbierto() && (timeframe === '1H' || timeframe === '15min'))
+      refreshTimer = setTimeout(() => { invalidarVelas(activo); cargarDatos(activo, true); }, 60 * 1000);
+    return;
+  }
+
+  // Primera vez → cargar en paralelo
+  allVelas = []; zoomStart = 0; zoomEnd = 0;
+  window.senalesHoy = [];
+  señalesHistoricas = {};
+  document.getElementById('info').textContent = `Cargando ${sym}...`;
+
+  await Promise.all([
+    cargarEstadoCanal(sym),
+    cargarSenalesHistoricas(sym),
+    cargarDatos(sym),
+  ]);
   actualizarPrecioRT();
 }
 
