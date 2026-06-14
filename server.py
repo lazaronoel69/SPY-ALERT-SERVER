@@ -2154,7 +2154,7 @@ def home(path=""):
                   font-size: 12px; }}
   .mercado-on  {{ border-color: #00e676; color: #00e676; }}
   .mercado-off {{ border-color: #666688; color: #666688; }}
-  .nav-grid {{ display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px;
+  .nav-grid {{ display: grid; grid-template-columns: 1fr 1fr; gap: 16px;
                width: 100%; max-width: 700px; margin-bottom: 40px; }}
   .nav-card {{ background: #111118; border: 1px solid #2a2a3a; border-radius: 16px;
                padding: 28px; text-decoration: none; color: #e8e8f0;
@@ -2201,6 +2201,11 @@ def home(path=""):
       <div class="icon">📈</div>
       <div class="title">Análisis</div>
       <div class="desc">Historial · Win Rate · Comportamiento</div>
+    </a>
+    <a href="/bitacora" class="nav-card bitacora">
+      <div class="icon">📋</div>
+      <div class="title">Bitácora</div>
+      <div class="desc">Pendientes · Decisiones · Seguimiento</div>
     </a>
   </div>
   <div class="canales-grid">
@@ -4037,6 +4042,27 @@ def ruta_bitacora():
     with open(os.path.join(os.path.dirname(__file__), "axis_bitacora.html"), "r") as f:
         return f.read(), 200, {"Content-Type": "text/html"}
 
+@app.route("/bitacora/resolver", methods=["POST"])
+def ruta_bitacora_resolver():
+    """Marcar una entrada como resuelta."""
+    try:
+        body = request.get_json()
+        id_entrada = int(body.get("id"))
+        if not os.path.exists(BITACORA_FILE):
+            return jsonify({"error": "Bitácora vacía"}), 404
+        with open(BITACORA_FILE, "r") as f:
+            data = json.load(f)
+        for e in data["entradas"]:
+            if e["id"] == id_entrada:
+                e["estado"] = "done"
+                e["fecha_resuelto"] = datetime.now(EST).strftime("%Y-%m-%d %H:%M EST")
+                break
+        with open(BITACORA_FILE, "w") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        return jsonify({"ok": True}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 @app.route("/bitacora/data", methods=["GET"])
 def ruta_bitacora_data():
     """Devuelve todas las entradas de la bitácora en JSON — para uso de AI."""
@@ -4064,7 +4090,7 @@ def ruta_bitacora_agregar():
         entrada = {
             "id":          len(data["entradas"]) + 1,
             "fecha":       datetime.now(EST).strftime("%Y-%m-%d %H:%M EST"),
-            "categoria":   body.get("categoria", "📋 Pendiente"),
+            "estado":      body.get("estado", "pend"),
             "titulo":      body.get("titulo", ""),
             "descripcion": body.get("descripcion", ""),
             "autor":       body.get("autor", "Noel"),

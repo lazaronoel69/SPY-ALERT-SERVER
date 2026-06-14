@@ -4,187 +4,156 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>AXIS — Bitácora</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Space+Grotesk:wght@400;600;700&display=swap" rel="stylesheet">
 <style>
-  :root {
-    --bg:      #0d1117;
-    --surface: #161b22;
-    --border:  #30363d;
-    --text:    #e6edf3;
-    --dim:     #8b949e;
-    --accent:  #4fc3f7;
-    --mono:    'SF Mono', 'Fira Code', monospace;
-    --c-pend:  #f0b429;
-    --c-prog:  #58a6ff;
-    --c-done:  #3fb950;
-    --c-bug:   #f85149;
-    --c-dec:   #bc8cff;
-    --c-chart: #4fc3f7;
-    --c-broker:#ff9500;
-  }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; min-height: 100vh; }
+* { margin:0; padding:0; box-sizing:border-box; }
+:root {
+  --bg:      #0a0a0f;
+  --surface: #111118;
+  --border:  #2a2a3a;
+  --text:    #e8e8f0;
+  --dim:     #666688;
+  --accent:  #4fc3f7;
+  --mono:    'JetBrains Mono', monospace;
+  --sans:    'Space Grotesk', sans-serif;
+  --pend:    #f0b429;
+  --prog:    #58a6ff;
+  --done:    #3fb950;
+  --bug:     #f85149;
+}
+body {
+  background: var(--bg); color: var(--text);
+  font-family: var(--sans); min-height: 100vh;
+}
 
-  /* HEADER */
-  .header {
-    background: var(--surface);
-    border-bottom: 1px solid var(--border);
-    padding: 0 24px;
-    height: 52px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    position: sticky; top: 0; z-index: 100;
-  }
-  .header-left { display: flex; align-items: center; gap: 20px; }
-  .logo { font-family: var(--mono); font-size: 15px; font-weight: 700; color: var(--accent); letter-spacing: 2px; }
-  .logo small { color: var(--dim); font-size: 10px; font-weight: 400; margin-left: 6px; }
-  .nav { display: flex; gap: 4px; }
-  .nav a {
-    color: var(--dim); text-decoration: none; font-size: 12px;
-    padding: 5px 10px; border-radius: 5px; transition: all 0.15s;
-  }
-  .nav a:hover { color: var(--text); background: rgba(255,255,255,0.05); }
-  .nav a.active { color: var(--accent); }
-  .btn-new {
-    background: rgba(79,195,247,0.15); border: 1px solid var(--accent);
-    color: var(--accent); font-family: var(--mono); font-size: 11px;
-    font-weight: 700; padding: 6px 14px; border-radius: 6px;
-    cursor: pointer; transition: all 0.15s;
-  }
-  .btn-new:hover { background: rgba(79,195,247,0.25); }
+/* NAV */
+nav {
+  background: var(--surface); border-bottom: 1px solid var(--border);
+  padding: 0 32px; height: 52px;
+  display: flex; align-items: center; justify-content: space-between;
+  position: sticky; top: 0; z-index: 100;
+}
+.nav-logo { font-family: var(--mono); font-size: 14px; font-weight: 700; color: var(--accent); letter-spacing: 3px; }
+.nav-links { display: flex; gap: 4px; }
+.nav-links a {
+  color: var(--dim); text-decoration: none; font-size: 12px; font-family: var(--mono);
+  padding: 5px 12px; border-radius: 5px; transition: all 0.15s; letter-spacing: 0.5px;
+}
+.nav-links a:hover { color: var(--text); background: rgba(255,255,255,0.05); }
+.nav-links a.active { color: var(--accent); }
+.btn-add {
+  background: rgba(79,195,247,0.1); border: 1px solid var(--accent);
+  color: var(--accent); font-family: var(--mono); font-size: 11px;
+  font-weight: 700; padding: 6px 16px; border-radius: 6px;
+  cursor: pointer; letter-spacing: 1px; transition: all 0.15s;
+}
+.btn-add:hover { background: rgba(79,195,247,0.2); }
 
-  /* LAYOUT */
-  .container { max-width: 900px; margin: 0 auto; padding: 24px 20px; }
+/* MAIN */
+main { max-width: 760px; margin: 0 auto; padding: 32px 20px; }
 
-  /* FILTROS */
-  .filters {
-    display: flex; gap: 8px; margin-bottom: 20px; flex-wrap: wrap;
-    align-items: center;
-  }
-  .filter-btn {
-    padding: 4px 12px; border-radius: 20px; font-size: 11px; font-weight: 600;
-    cursor: pointer; border: 1px solid var(--border); background: transparent;
-    color: var(--dim); transition: all 0.15s; font-family: var(--mono);
-  }
-  .filter-btn:hover { border-color: var(--text); color: var(--text); }
-  .filter-btn.active { background: rgba(79,195,247,0.15); border-color: var(--accent); color: var(--accent); }
-  .search {
-    margin-left: auto;
-    background: var(--surface); border: 1px solid var(--border);
-    color: var(--text); padding: 5px 12px; border-radius: 6px;
-    font-size: 12px; width: 200px; outline: none;
-  }
-  .search:focus { border-color: var(--accent); }
+.page-title {
+  font-family: var(--mono); font-size: 11px; color: var(--dim);
+  letter-spacing: 2px; text-transform: uppercase; margin-bottom: 24px;
+}
 
-  /* STATS BAR */
-  .stats {
-    display: flex; gap: 16px; margin-bottom: 20px;
-    padding: 12px 16px; background: var(--surface);
-    border: 1px solid var(--border); border-radius: 8px;
-  }
-  .stat { text-align: center; }
-  .stat-num { font-family: var(--mono); font-size: 18px; font-weight: 700; }
-  .stat-lbl { font-size: 10px; color: var(--dim); margin-top: 2px; }
+/* ITEM */
+.item {
+  display: flex; align-items: flex-start; gap: 14px;
+  padding: 16px 0; border-bottom: 1px solid var(--border);
+}
+.item:last-child { border-bottom: none; }
 
-  /* ENTRIES */
-  .entry {
-    background: var(--surface); border: 1px solid var(--border);
-    border-radius: 8px; padding: 16px; margin-bottom: 12px;
-    transition: border-color 0.15s;
-  }
-  .entry:hover { border-color: rgba(79,195,247,0.3); }
-  .entry-header { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; flex-wrap: wrap; }
-  .badge {
-    font-size: 10px; font-weight: 700; font-family: var(--mono);
-    padding: 3px 8px; border-radius: 4px; white-space: nowrap;
-  }
-  .badge-pend  { background: rgba(240,180,41,0.15);  color: var(--c-pend);   border: 1px solid rgba(240,180,41,0.3); }
-  .badge-prog  { background: rgba(88,166,255,0.15);  color: var(--c-prog);   border: 1px solid rgba(88,166,255,0.3); }
-  .badge-done  { background: rgba(63,185,80,0.15);   color: var(--c-done);   border: 1px solid rgba(63,185,80,0.3); }
-  .badge-bug   { background: rgba(248,81,73,0.15);   color: var(--c-bug);    border: 1px solid rgba(248,81,73,0.3); }
-  .badge-dec   { background: rgba(188,140,255,0.15); color: var(--c-dec);    border: 1px solid rgba(188,140,255,0.3); }
-  .badge-chart { background: rgba(79,195,247,0.15);  color: var(--c-chart);  border: 1px solid rgba(79,195,247,0.3); }
-  .badge-broker{ background: rgba(255,149,0,0.15);   color: var(--c-broker); border: 1px solid rgba(255,149,0,0.3); }
-  .badge-ai    { background: rgba(188,140,255,0.1);  color: #bc8cff;         border: 1px solid rgba(188,140,255,0.2); font-style: italic; }
-  .entry-activo { font-size: 10px; color: var(--accent); font-family: var(--mono); font-weight: 700; }
-  .entry-fecha { font-size: 10px; color: var(--dim); margin-left: auto; font-family: var(--mono); }
-  .entry-titulo { font-size: 14px; font-weight: 600; color: var(--text); margin-bottom: 6px; }
-  .entry-desc { font-size: 13px; color: var(--dim); line-height: 1.6; white-space: pre-wrap; }
-  .entry-autor { font-size: 10px; color: var(--dim); margin-top: 8px; font-family: var(--mono); }
+.status-dot {
+  width: 10px; height: 10px; border-radius: 50%;
+  margin-top: 5px; flex-shrink: 0;
+}
+.dot-pend { background: var(--pend); box-shadow: 0 0 6px var(--pend); }
+.dot-prog { background: var(--prog); box-shadow: 0 0 6px var(--prog); }
+.dot-done { background: var(--done); }
+.dot-bug  { background: var(--bug);  box-shadow: 0 0 6px var(--bug); }
 
-  /* EMPTY */
-  .empty { text-align: center; padding: 60px 20px; color: var(--dim); }
-  .empty-icon { font-size: 40px; margin-bottom: 12px; }
-  .empty-text { font-size: 14px; }
+.item-body { flex: 1; }
+.item-titulo {
+  font-size: 14px; font-weight: 600; color: var(--text);
+  margin-bottom: 4px; line-height: 1.4;
+}
+.item-titulo.done { color: var(--dim); text-decoration: line-through; }
+.item-desc { font-size: 12px; color: var(--dim); line-height: 1.6; white-space: pre-wrap; }
+.item-meta {
+  display: flex; gap: 10px; margin-top: 6px; align-items: center;
+  font-family: var(--mono); font-size: 10px; color: var(--dim);
+}
+.tag-activo { color: var(--accent); font-weight: 700; }
+.tag-autor-ai { color: #bc8cff; }
+.item-actions { display: flex; gap: 8px; margin-left: auto; flex-shrink: 0; }
+.btn-status {
+  font-family: var(--mono); font-size: 10px; padding: 3px 8px;
+  border-radius: 4px; cursor: pointer; border: 1px solid var(--border);
+  background: transparent; color: var(--dim); transition: all 0.15s;
+}
+.btn-status:hover { border-color: var(--done); color: var(--done); }
 
-  /* MODAL */
-  .modal-overlay {
-    display: none; position: fixed; inset: 0;
-    background: rgba(0,0,0,0.7); z-index: 200;
-    align-items: center; justify-content: center;
-  }
-  .modal-overlay.open { display: flex; }
-  .modal {
-    background: var(--surface); border: 1px solid var(--border);
-    border-radius: 12px; padding: 24px; width: 100%; max-width: 520px;
-    margin: 20px;
-  }
-  .modal-title { font-family: var(--mono); font-size: 14px; font-weight: 700; color: var(--accent); margin-bottom: 20px; letter-spacing: 1px; }
-  .field { margin-bottom: 16px; }
-  .field label { display: block; font-size: 11px; color: var(--dim); margin-bottom: 6px; font-family: var(--mono); letter-spacing: 0.5px; }
-  .field select, .field input, .field textarea {
-    width: 100%; background: var(--bg); border: 1px solid var(--border);
-    color: var(--text); padding: 8px 12px; border-radius: 6px;
-    font-size: 13px; outline: none; font-family: inherit;
-    transition: border-color 0.15s;
-  }
-  .field select:focus, .field input:focus, .field textarea:focus { border-color: var(--accent); }
-  .field textarea { resize: vertical; min-height: 100px; line-height: 1.5; }
-  .modal-btns { display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px; }
-  .btn-cancel {
-    padding: 8px 18px; border-radius: 6px; border: 1px solid var(--border);
-    background: transparent; color: var(--dim); cursor: pointer; font-size: 13px;
-  }
-  .btn-save {
-    padding: 8px 18px; border-radius: 6px; border: 1px solid var(--accent);
-    background: rgba(79,195,247,0.15); color: var(--accent);
-    cursor: pointer; font-size: 13px; font-weight: 600; font-family: var(--mono);
-  }
-  .btn-save:hover { background: rgba(79,195,247,0.25); }
+/* EMPTY */
+.empty { text-align: center; padding: 60px 0; color: var(--dim); }
+.empty-icon { font-size: 32px; margin-bottom: 12px; }
 
-  /* TOAST */
-  #toast {
-    position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
-    background: #1a1a2e; border: 1px solid var(--border); color: var(--text);
-    padding: 10px 20px; border-radius: 8px; font-size: 13px; font-family: var(--mono);
-    display: none; z-index: 300; white-space: nowrap;
-  }
+/* MODAL */
+.overlay {
+  display: none; position: fixed; inset: 0;
+  background: rgba(0,0,0,0.75); z-index: 200;
+  align-items: center; justify-content: center;
+}
+.overlay.open { display: flex; }
+.modal {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 12px; padding: 28px; width: 100%; max-width: 500px; margin: 20px;
+}
+.modal-title { font-family: var(--mono); font-size: 12px; color: var(--accent); letter-spacing: 2px; margin-bottom: 20px; }
+.field { margin-bottom: 16px; }
+.field label { display: block; font-size: 10px; color: var(--dim); font-family: var(--mono); letter-spacing: 1px; margin-bottom: 6px; }
+.field input, .field select, .field textarea {
+  width: 100%; background: var(--bg); border: 1px solid var(--border);
+  color: var(--text); padding: 9px 12px; border-radius: 6px;
+  font-size: 13px; font-family: var(--sans); outline: none; transition: border-color 0.15s;
+}
+.field input:focus, .field select:focus, .field textarea:focus { border-color: var(--accent); }
+.field textarea { resize: vertical; min-height: 90px; line-height: 1.5; }
+.modal-footer { display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px; }
+.btn-cancel { padding: 8px 18px; border-radius: 6px; border: 1px solid var(--border); background: transparent; color: var(--dim); cursor: pointer; font-size: 13px; }
+.btn-save { padding: 8px 20px; border-radius: 6px; border: 1px solid var(--accent); background: rgba(79,195,247,0.1); color: var(--accent); cursor: pointer; font-size: 13px; font-weight: 600; font-family: var(--mono); }
+.btn-save:hover { background: rgba(79,195,247,0.2); }
+
+/* TOAST */
+#toast {
+  position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+  background: var(--surface); border: 1px solid var(--border);
+  color: var(--text); padding: 10px 20px; border-radius: 8px;
+  font-family: var(--mono); font-size: 12px; display: none; z-index: 300;
+}
 </style>
 </head>
 <body>
 
 <div id="toast"></div>
 
-<!-- MODAL NUEVA ENTRADA -->
-<div class="modal-overlay" id="modal">
+<!-- MODAL -->
+<div class="overlay" id="modal">
   <div class="modal">
-    <div class="modal-title">+ NUEVA ENTRADA</div>
+    <div class="modal-title">NUEVA ENTRADA</div>
     <div class="field">
-      <label>CATEGORÍA</label>
-      <select id="f-cat">
-        <option value="📋 Pendiente">📋 Pendiente</option>
-        <option value="🔄 En progreso">🔄 En progreso</option>
-        <option value="✅ Resuelto">✅ Resuelto</option>
-        <option value="⚠️ Bug">⚠️ Bug</option>
-        <option value="💡 Decisión">💡 Decisión de diseño</option>
-        <option value="📊 Análisis gráfico">📊 Análisis gráfico</option>
-        <option value="🔌 Broker/API">🔌 Broker/API</option>
+      <label>ESTADO</label>
+      <select id="f-estado">
+        <option value="pend">⏳ Pendiente</option>
+        <option value="prog">🔄 En progreso</option>
+        <option value="bug">🔴 Bug</option>
+        <option value="done">✅ Resuelto</option>
       </select>
     </div>
     <div class="field">
       <label>ACTIVO (opcional)</label>
       <select id="f-activo">
-        <option value="">— Todos —</option>
+        <option value="">— General —</option>
         <option>SPY</option><option>AAPL</option><option>BA</option>
         <option>GLD</option><option>NVDA</option><option>AMZN</option>
         <option>GOOG</option><option>META</option>
@@ -192,197 +161,143 @@
     </div>
     <div class="field">
       <label>TÍTULO</label>
-      <input id="f-titulo" type="text" placeholder="Resumen en una línea">
+      <input id="f-titulo" type="text" placeholder="¿Qué hay que hacer o qué pasó?">
     </div>
     <div class="field">
-      <label>DESCRIPCIÓN</label>
-      <textarea id="f-desc" placeholder="Detalle, pasos, observaciones..."></textarea>
+      <label>DETALLE (opcional)</label>
+      <textarea id="f-desc" placeholder="Pasos, observaciones, contexto..."></textarea>
     </div>
-    <div class="modal-btns">
-      <button class="btn-cancel" onclick="cerrarModal()">Cancelar</button>
-      <button class="btn-save" onclick="guardarEntrada()">Guardar</button>
+    <div class="modal-footer">
+      <button class="btn-cancel" onclick="cerrar()">Cancelar</button>
+      <button class="btn-save" onclick="guardar()">Guardar</button>
     </div>
   </div>
 </div>
 
-<!-- HEADER -->
-<header class="header">
-  <div class="header-left">
-    <div class="logo">AXIS<small>BITÁCORA v1.0</small></div>
-    <nav class="nav">
-      <a href="/charts">Charts</a>
-      <a href="/portfolio">Portfolio</a>
-      <a href="/analisis">Análisis</a>
-      <a href="/bitacora" class="active">Bitácora</a>
-    </nav>
+<!-- NAV -->
+<nav>
+  <div class="nav-logo">AXIS</div>
+  <div class="nav-links">
+    <a href="/">Home</a>
+    <a href="/charts">Charts</a>
+    <a href="/portfolio">Portfolio</a>
+    <a href="/analisis">Análisis</a>
+    <a href="/bitacora" class="active">Bitácora</a>
   </div>
-  <button class="btn-new" onclick="abrirModal()">+ Nueva entrada</button>
-</header>
+  <button class="btn-add" onclick="abrir()">+ AGREGAR</button>
+</nav>
 
-<!-- CONTENIDO -->
-<div class="container">
-
-  <!-- STATS -->
-  <div class="stats" id="stats-bar">
-    <div class="stat"><div class="stat-num" id="s-total" style="color:var(--accent)">0</div><div class="stat-lbl">Total</div></div>
-    <div class="stat"><div class="stat-num" id="s-pend" style="color:var(--c-pend)">0</div><div class="stat-lbl">Pendientes</div></div>
-    <div class="stat"><div class="stat-num" id="s-prog" style="color:var(--c-prog)">0</div><div class="stat-lbl">En progreso</div></div>
-    <div class="stat"><div class="stat-num" id="s-bug" style="color:var(--c-bug)">0</div><div class="stat-lbl">Bugs</div></div>
-    <div class="stat"><div class="stat-num" id="s-done" style="color:var(--c-done)">0</div><div class="stat-lbl">Resueltos</div></div>
-  </div>
-
-  <!-- FILTROS -->
-  <div class="filters">
-    <button class="filter-btn active" onclick="filtrar('todos', this)">Todos</button>
-    <button class="filter-btn" onclick="filtrar('📋 Pendiente', this)">📋 Pendiente</button>
-    <button class="filter-btn" onclick="filtrar('🔄 En progreso', this)">🔄 En progreso</button>
-    <button class="filter-btn" onclick="filtrar('⚠️ Bug', this)">⚠️ Bug</button>
-    <button class="filter-btn" onclick="filtrar('✅ Resuelto', this)">✅ Resuelto</button>
-    <button class="filter-btn" onclick="filtrar('📊 Análisis gráfico', this)">📊 Chart</button>
-    <button class="filter-btn" onclick="filtrar('🔌 Broker/API', this)">🔌 Broker</button>
-    <input class="search" id="search" type="text" placeholder="🔍 Buscar..." oninput="renderEntradas()">
-  </div>
-
-  <!-- ENTRADAS -->
-  <div id="entradas-list"></div>
-
-</div>
+<!-- MAIN -->
+<main>
+  <div class="page-title">📋 Bitácora AXIS — pendientes y seguimiento</div>
+  <div id="lista"></div>
+</main>
 
 <script>
-const RAILWAY = '';  // mismo origen
-let todasEntradas = [];
-let filtroActual  = 'todos';
+let entradas = [];
 
-function toast(msg, dur=2500) {
+function toast(msg) {
   const t = document.getElementById('toast');
   t.textContent = msg;
   t.style.display = 'block';
-  setTimeout(() => t.style.display = 'none', dur);
+  setTimeout(() => t.style.display = 'none', 2500);
 }
 
-function badgeClass(cat) {
-  if (cat.includes('Pendiente'))  return 'badge-pend';
-  if (cat.includes('progreso'))   return 'badge-prog';
-  if (cat.includes('Resuelto'))   return 'badge-done';
-  if (cat.includes('Bug'))        return 'badge-bug';
-  if (cat.includes('Decisión') || cat.includes('Decision')) return 'badge-dec';
-  if (cat.includes('gráfico') || cat.includes('grafico'))   return 'badge-chart';
-  if (cat.includes('Broker') || cat.includes('API'))        return 'badge-broker';
-  return 'badge-pend';
+function dotClass(estado) {
+  return { pend:'dot-pend', prog:'dot-prog', done:'dot-done', bug:'dot-bug' }[estado] || 'dot-pend';
 }
 
-function renderEntradas() {
-  const busqueda = document.getElementById('search').value.toLowerCase();
-  const lista    = document.getElementById('entradas-list');
+function render() {
+  const lista = document.getElementById('lista');
+  // Orden: bugs primero, luego pendientes, en progreso, resueltos al final
+  const orden = { bug:0, pend:1, prog:2, done:3 };
+  const sorted = [...entradas].sort((a,b) => (orden[a.estado]||1) - (orden[b.estado]||1));
 
-  let filtradas = todasEntradas.filter(e => {
-    const matchFiltro = filtroActual === 'todos' || e.categoria.includes(filtroActual.replace(/[📋🔄✅⚠️💡📊🔌]/g,'').trim());
-    const matchSearch = !busqueda ||
-      e.titulo.toLowerCase().includes(busqueda) ||
-      e.descripcion.toLowerCase().includes(busqueda) ||
-      (e.activo||'').toLowerCase().includes(busqueda);
-    return matchFiltro && matchSearch;
-  });
-
-  if (!filtradas.length) {
-    lista.innerHTML = `<div class="empty"><div class="empty-icon">📭</div><div class="empty-text">No hay entradas${busqueda ? ` para "${busqueda}"` : ''}</div></div>`;
+  if (!sorted.length) {
+    lista.innerHTML = '<div class="empty"><div class="empty-icon">📭</div><div>Sin entradas aún</div></div>';
     return;
   }
 
-  lista.innerHTML = filtradas.map(e => `
-    <div class="entry">
-      <div class="entry-header">
-        <span class="badge ${badgeClass(e.categoria)}">${e.categoria}</span>
-        ${e.activo ? `<span class="entry-activo">${e.activo}</span>` : ''}
-        ${e.autor === 'AXIS-AI' ? `<span class="badge badge-ai">🤖 AXIS AI</span>` : ''}
-        <span class="entry-fecha">${e.fecha}</span>
+  lista.innerHTML = sorted.map(e => `
+    <div class="item" id="item-${e.id}">
+      <div class="status-dot ${dotClass(e.estado)}"></div>
+      <div class="item-body">
+        <div class="item-titulo ${e.estado==='done'?'done':''}">${e.titulo}</div>
+        ${e.descripcion ? `<div class="item-desc">${e.descripcion}</div>` : ''}
+        <div class="item-meta">
+          ${e.activo ? `<span class="tag-activo">${e.activo}</span>` : ''}
+          ${e.autor === 'AXIS-AI' ? `<span class="tag-autor-ai">🤖 AI</span>` : ''}
+          <span>${e.fecha}</span>
+        </div>
       </div>
-      <div class="entry-titulo">${e.titulo}</div>
-      ${e.descripcion ? `<div class="entry-desc">${e.descripcion}</div>` : ''}
+      ${e.estado !== 'done' ? `
+      <div class="item-actions">
+        <button class="btn-status" onclick="marcarResuelto(${e.id})">✓ Resuelto</button>
+      </div>` : ''}
     </div>
   `).join('');
 }
 
-function actualizarStats() {
-  const e = todasEntradas;
-  document.getElementById('s-total').textContent = e.length;
-  document.getElementById('s-pend').textContent  = e.filter(x => x.categoria.includes('Pendiente')).length;
-  document.getElementById('s-prog').textContent  = e.filter(x => x.categoria.includes('progreso')).length;
-  document.getElementById('s-bug').textContent   = e.filter(x => x.categoria.includes('Bug')).length;
-  document.getElementById('s-done').textContent  = e.filter(x => x.categoria.includes('Resuelto')).length;
-}
-
-function filtrar(cat, btn) {
-  filtroActual = cat;
-  document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
-  btn.classList.add('active');
-  renderEntradas();
-}
-
-async function cargarEntradas() {
+async function cargar() {
   try {
     const r = await fetch('/bitacora/data');
     const d = await r.json();
-    todasEntradas = d.entradas || [];
-    actualizarStats();
-    renderEntradas();
+    entradas = d.entradas || [];
+    render();
   } catch(e) {
-    document.getElementById('entradas-list').innerHTML =
-      '<div class="empty"><div class="empty-icon">⚠️</div><div class="empty-text">Error cargando bitácora</div></div>';
+    document.getElementById('lista').innerHTML = '<div class="empty"><div>Error cargando bitácora</div></div>';
   }
 }
 
-function abrirModal() {
+function abrir() {
   document.getElementById('modal').classList.add('open');
   document.getElementById('f-titulo').focus();
 }
 
-function cerrarModal() {
+function cerrar() {
   document.getElementById('modal').classList.remove('open');
   document.getElementById('f-titulo').value = '';
   document.getElementById('f-desc').value   = '';
   document.getElementById('f-activo').value = '';
-  document.getElementById('f-cat').value    = '📋 Pendiente';
+  document.getElementById('f-estado').value = 'pend';
 }
 
-async function guardarEntrada() {
+async function guardar() {
   const titulo = document.getElementById('f-titulo').value.trim();
   if (!titulo) { toast('⚠️ El título es requerido'); return; }
-
-  const entrada = {
-    categoria:   document.getElementById('f-cat').value,
-    activo:      document.getElementById('f-activo').value,
-    titulo,
-    descripcion: document.getElementById('f-desc').value.trim(),
-    autor:       'Noel',
-  };
-
   try {
     const r = await fetch('/bitacora/agregar', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(entrada),
+      body: JSON.stringify({
+        estado:      document.getElementById('f-estado').value,
+        activo:      document.getElementById('f-activo').value,
+        titulo,
+        descripcion: document.getElementById('f-desc').value.trim(),
+        autor:       'Noel',
+      }),
     });
-    if (r.ok) {
-      cerrarModal();
-      toast('✅ Entrada guardada');
-      await cargarEntradas();
-    } else { toast('❌ Error guardando'); }
+    if (r.ok) { cerrar(); toast('✅ Guardado'); await cargar(); }
+    else { toast('❌ Error guardando'); }
   } catch(e) { toast('❌ Error de conexión'); }
 }
 
-// Cerrar modal con Escape
-document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') cerrarModal();
-});
+async function marcarResuelto(id) {
+  try {
+    const r = await fetch('/bitacora/resolver', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id }),
+    });
+    if (r.ok) { toast('✅ Marcado como resuelto'); await cargar(); }
+    else { toast('❌ Error'); }
+  } catch(e) { toast('❌ Error de conexión'); }
+}
 
-// Cerrar modal al click fuera
-document.getElementById('modal').addEventListener('click', e => {
-  if (e.target === document.getElementById('modal')) cerrarModal();
-});
+document.addEventListener('keydown', e => { if (e.key === 'Escape') cerrar(); });
+document.getElementById('modal').addEventListener('click', e => { if (e.target === document.getElementById('modal')) cerrar(); });
 
-// Cargar al inicio
-cargarEntradas();
+cargar();
 </script>
 </body>
 </html>

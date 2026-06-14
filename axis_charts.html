@@ -230,17 +230,7 @@
     <button class="tf-btn" data-tf="weekly"  onclick="cambiarTF('weekly')">W</button>
     <button class="tf-btn" data-tf="monthly" onclick="cambiarTF('monthly')">M</button>
   </div>
-  <div class="strat-selector">
-    <button class="strat-btn on" data-strat="1VR"  onclick="toggleStrat('1VR')">1VR</button>
-    <button class="strat-btn on" data-strat="RPG"  onclick="toggleStrat('RPG')">RPG</button>
-    <button class="strat-btn on" data-strat="GNA"  onclick="toggleStrat('GNA')">GNA</button>
-    <button class="strat-btn on" data-strat="GBA"  onclick="toggleStrat('GBA')">GBA</button>
-    <button class="strat-btn on" data-strat="HED"  onclick="toggleStrat('HED')">HED</button>
-    <button class="strat-btn on" data-strat="PM40" onclick="toggleStrat('PM40')">PM40</button>
-    <button class="strat-btn on" data-strat="CNF"  onclick="toggleStrat('CNF')">CNF</button>
-    <button class="strat-btn on" data-strat="RCB"  onclick="toggleStrat('RCB')">RCB</button>
-    <button class="strat-btn on" data-strat="4PS"  onclick="toggleStrat('4PS')">4PS</button>
-  </div>
+
   <div class="price-box">
     <span id="reloj" style="font-size:11px;font-weight:600;color:var(--dim);letter-spacing:1px;margin-right:12px;font-family:'JetBrains Mono',monospace;"></span>
     <span id="activo-label" style="font-size:15px;font-weight:700;color:var(--dim);letter-spacing:2px;margin-right:4px;">SPY</span>
@@ -255,6 +245,18 @@
 </header>
 
 <div class="toolbar">
+  <div class="tg">
+    <span class="tlbl">SEÑALES</span>
+    <button class="strat-btn on" data-strat="1VR"  onclick="toggleStrat('1VR')">1VR</button>
+    <button class="strat-btn on" data-strat="RPG"  onclick="toggleStrat('RPG')">RPG</button>
+    <button class="strat-btn on" data-strat="GNA"  onclick="toggleStrat('GNA')">GNA</button>
+    <button class="strat-btn on" data-strat="GBA"  onclick="toggleStrat('GBA')">GBA</button>
+    <button class="strat-btn on" data-strat="HED"  onclick="toggleStrat('HED')">HED</button>
+    <button class="strat-btn on" data-strat="PM40" onclick="toggleStrat('PM40')">PM40</button>
+    <button class="strat-btn on" data-strat="CNF"  onclick="toggleStrat('CNF')">CNF</button>
+    <button class="strat-btn on" data-strat="RCB"  onclick="toggleStrat('RCB')">RCB</button>
+    <button class="strat-btn on" data-strat="4PS"  onclick="toggleStrat('4PS')">4PS</button>
+  </div>
   <div class="tg">
     <span class="tlbl">SMA</span>
     <button class="btn s20 on"  id="b20"  onclick="togSMA(20)">20</button>
