@@ -269,6 +269,7 @@ PORTFOLIO_FILE  = "/data/axis_portfolio.json"
 ORDENES_FILE    = "/data/axis_ordenes.json"
 ESTADO_FILE     = "/data/axis_estado_dia.json"
 SEÑALES_FILE    = "/data/axis_señales_historicas.json"
+BITACORA_FILE   = "/data/axis_bitacora.json"
 DATA_DIR        = "/data"
 
 def cargar_señales_historicas():
@@ -4030,6 +4031,51 @@ def ruta_señales_historicas():
     else:
         # Devuelve todo
         return jsonify({"historial": historial}), 200
+
+@app.route("/bitacora", methods=["GET"])
+def ruta_bitacora():
+    with open(os.path.join(os.path.dirname(__file__), "axis_bitacora.html"), "r") as f:
+        return f.read(), 200, {"Content-Type": "text/html"}
+
+@app.route("/bitacora/data", methods=["GET"])
+def ruta_bitacora_data():
+    """Devuelve todas las entradas de la bitácora en JSON — para uso de AI."""
+    try:
+        if not os.path.exists(BITACORA_FILE):
+            return jsonify({"entradas": [], "total": 0}), 200
+        with open(BITACORA_FILE, "r") as f:
+            data = json.load(f)
+        return jsonify(data), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/bitacora/agregar", methods=["POST"])
+def ruta_bitacora_agregar():
+    """Agregar entrada a la bitácora. Usado por Noel y por la AI."""
+    try:
+        body = request.get_json()
+        if not body:
+            return jsonify({"error": "Body vacío"}), 400
+        if not os.path.exists(BITACORA_FILE):
+            data = {"entradas": []}
+        else:
+            with open(BITACORA_FILE, "r") as f:
+                data = json.load(f)
+        entrada = {
+            "id":          len(data["entradas"]) + 1,
+            "fecha":       datetime.now(EST).strftime("%Y-%m-%d %H:%M EST"),
+            "categoria":   body.get("categoria", "📋 Pendiente"),
+            "titulo":      body.get("titulo", ""),
+            "descripcion": body.get("descripcion", ""),
+            "autor":       body.get("autor", "Noel"),
+            "activo":      body.get("activo", ""),
+        }
+        data["entradas"].insert(0, entrada)  # más reciente primero
+        with open(BITACORA_FILE, "w") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        return jsonify({"ok": True, "entrada": entrada}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 @app.route("/velas_daily", methods=["GET"])
 def ruta_velas_daily():
