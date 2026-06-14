@@ -4044,12 +4044,13 @@ def ruta_bitacora():
 
 @app.route("/bitacora/seed", methods=["GET"])
 def ruta_bitacora_seed():
-    """Carga el contexto inicial en la bitácora. Solo funciona si está vacía."""
-    if os.path.exists(BITACORA_FILE):
+    """Carga el contexto inicial. Parámetro ?force=1 para sobreescribir."""
+    force = request.args.get("force", "0") == "1"
+    if os.path.exists(BITACORA_FILE) and not force:
         with open(BITACORA_FILE, "r") as f:
             data = json.load(f)
         if data.get("entradas"):
-            return jsonify({"ok": False, "msg": "Bitácora ya tiene entradas — no se sobreescribe"}), 200
+            return jsonify({"ok": False, "msg": "Bitácora ya tiene entradas — usa ?force=1 para sobreescribir"}), 200
 
     data = {
         "proyecto":   "AXIS Trading System",
