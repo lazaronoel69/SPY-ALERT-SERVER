@@ -4042,6 +4042,46 @@ def ruta_bitacora():
     with open(os.path.join(os.path.dirname(__file__), "axis_bitacora.html"), "r") as f:
         return f.read(), 200, {"Content-Type": "text/html"}
 
+@app.route("/bitacora/seed", methods=["GET"])
+def ruta_bitacora_seed():
+    """Carga el contexto inicial en la bitácora. Solo funciona si está vacía."""
+    if os.path.exists(BITACORA_FILE):
+        with open(BITACORA_FILE, "r") as f:
+            data = json.load(f)
+        if data.get("entradas"):
+            return jsonify({"ok": False, "msg": "Bitácora ya tiene entradas — no se sobreescribe"}), 200
+
+    data = {
+        "proyecto":   "AXIS Trading System",
+        "repo":       "https://github.com/lazaronoel69/SPY-ALERT-SERVER",
+        "produccion": "https://web-production-bf9d0.up.railway.app",
+        "instrucciones_ai": "Lee este archivo completo antes de actuar. NUNCA codifiques sin autorización de Noel. Conversa, diseña, Noel aprueba, luego implementas. Un cambio a la vez. Verifica con /status después de cada deploy.",
+        "versiones": {
+            "server_py":          "v8.61",
+            "axis_charts_html":   "v1.4.0",
+            "axis_portfolio_html":"v1.3",
+            "axis_bitacora_html": "v1.0"
+        },
+        "activos": ["SPY","AAPL","BA","GLD","NVDA","AMZN","GOOG","META"],
+        "entradas": [
+            {"id":1,"fecha":"2026-06-13 20:00 EST","estado":"done","titulo":"Base de datos local de velas permanente","descripcion":"988 barras 15min + 502 días diarios por activo. Build inicial con Tradier. Actualización incremental automática. /rellenar_velas para reparar.","autor":"AXIS-AI","activo":""},
+            {"id":2,"fecha":"2026-06-13 20:00 EST","estado":"done","titulo":"Chart multi-timeframe 15m/1H/D/W/M","descripcion":"Selector en toolbar. 1H es default. Canal dibujado en todas las temporalidades. Cache browser + Promise.all.","autor":"AXIS-AI","activo":""},
+            {"id":3,"fecha":"2026-06-13 20:00 EST","estado":"done","titulo":"Click en vela para establecer P1/P2/P3","descripcion":"1H: click vela → menú [P1][P2][P3]. P1 guarda high. P2 activa canal CNF. P3 convierte a RCB. Canal activo: menú muestra [↻P2][P3].","autor":"AXIS-AI","activo":""},
+            {"id":4,"fecha":"2026-06-13 20:00 EST","estado":"done","titulo":"recalibrar_p2_canales() eliminada","descripcion":"Sobreescribía P2 manuales con highs históricos al reiniciar. Eliminada permanentemente.","autor":"AXIS-AI","activo":""},
+            {"id":5,"fecha":"2026-06-13 20:00 EST","estado":"done","titulo":"Canal roto al disparar señal CNF/RCB","descripcion":"roto=True + fecha_ruptura. Canal queda dibujado hasta esa fecha sin proyección. Click en línea → borrar.","autor":"AXIS-AI","activo":""},
+            {"id":6,"fecha":"2026-06-13 20:00 EST","estado":"done","titulo":"Overlay señales históricas + bitácora creada","descripcion":"axis_señales_historicas.json acumulativo. Archivado 4:16 PM EST. Bitácora en /bitacora con /bitacora/data para AI.","autor":"AXIS-AI","activo":""},
+            {"id":7,"fecha":"2026-06-13 20:00 EST","estado":"pend","titulo":"Confirmar P3 funciona con click en vela","descripcion":"Pendiente prueba real con canal activo P1+P2.","autor":"AXIS-AI","activo":""},
+            {"id":8,"fecha":"2026-06-13 20:00 EST","estado":"pend","titulo":"Regla mínimo 4 velas entre P1 y P2 — no mismo día","descripcion":"Existe en PRD pero no codificada. Implementar en /activar, /establecer_p1, /actualizar_p2 y P2 dinámico. Conversar con Noel antes.","autor":"AXIS-AI","activo":""},
+            {"id":9,"fecha":"2026-06-13 20:00 EST","estado":"pend","titulo":"Autenticación con password","descripcion":"Variable AXIS_PASSWORD en Railway. Cookie sesión sin expiración. Protege todas las páginas y endpoints admin.","autor":"AXIS-AI","activo":""},
+            {"id":10,"fecha":"2026-06-13 20:00 EST","estado":"pend","titulo":"Buscar alternativa a Tradier para ejecución de órdenes","descripcion":"Noel tiene cuentas en varios brokers. Evaluar cuál tiene mejor API REST + Telegram. Tradier funciona pero no es ideal.","autor":"Noel","activo":""},
+            {"id":11,"fecha":"2026-06-13 20:00 EST","estado":"pend","titulo":"Revisar y afinar estrategias con data acumulada","descripcion":"Win rate por estrategia. Indicador 🔥 zona cara/barata. Estrategias: 1VR, RPG, GNA, GBA, HED, CNF, RCB, 4PASOS.","autor":"Noel","activo":""},
+            {"id":12,"fecha":"2026-06-13 20:00 EST","estado":"pend","titulo":"Expandir a ~20 activos","descripcion":"Arquitectura lista. Solo agregar símbolos a ACTIVOS[] en server.py.","autor":"AXIS-AI","activo":""}
+        ]
+    }
+    with open(BITACORA_FILE, "w") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+    return jsonify({"ok": True, "entradas": len(data["entradas"]), "msg": "Bitácora inicializada"}), 200
+
 @app.route("/bitacora/resolver", methods=["POST"])
 def ruta_bitacora_resolver():
     """Marcar una entrada como resuelta."""
