@@ -2856,6 +2856,12 @@ def ruta_bitacora_data():
             data = json.load(f)
         # v8.62 — timestamp para que AI sepa hora/día al conectarse
         data["ahora_est"] = datetime.now(EST).strftime("%Y-%m-%d %H:%M EST")
+        data["fuentes"] = {
+            "server_py":   "https://web-production-bf9d0.up.railway.app/source/server.py?key=axis2026",
+            "charts_html": "https://web-production-bf9d0.up.railway.app/source/axis_charts.html?key=axis2026",
+            "status":      "https://web-production-bf9d0.up.railway.app/status",
+            "diagnostico": "https://web-production-bf9d0.up.railway.app/diagnostico",
+        }
         return jsonify(data), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
