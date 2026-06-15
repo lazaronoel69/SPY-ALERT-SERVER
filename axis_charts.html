@@ -1107,7 +1107,7 @@ function calcSeñales(velas) {
         const c = window.canalRailway;
         if (c.p1 && c.p2 && p1Idx >= 0 && p2Idx > p1Idx) {
           const slope     = (c.p2.high - c.p1.high) / (p2Idx - p1Idx);
-          const absI      = i - zoomStart;
+          const absI      = i;
           const techoCNF  = c.p1.high + slope * (absI - p1Idx);
           if (esAlcista(v) && v.c > techoCNF && v.h < c.p1.high) {
             const tipo = c.tipo === 'RCB' ? 'RCB' : 'CNF';
