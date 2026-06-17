@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v8.64
+AXIS Breakout Sentinel v8.65
 Estrategias: 1VR | 1VR+ | RPG | GNA | GBA | RCB/CNF
 Multi-activo: SPY, AAPL, BA, GLD
 v8.43: Portfolio fix — ejecutar_orden_tradier en webhook exec/reto | Panic Button al bid |
@@ -347,7 +347,8 @@ ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 def analizar_portfolio_claude(posiciones, reto):
     if not ANTHROPIC_API_KEY:
         return "API key de Anthropic no configurada."
-    if not posiciones and not any(c["posicion"] for c in reto["carriles"]):
+    derby = reto  # derby recibe el objeto derby
+    if not posiciones and not any(c["posicion"] for c in derby.get("caballos", [])):
         return "Sin posiciones abiertas para analizar."
     try:
         ahora = datetime.now(EST)
@@ -359,7 +360,7 @@ def analizar_portfolio_claude(posiciones, reto):
                 f"| Estrategia: {pos['estrategia']}"
                 f"{' | RETO Carril #' + str(pos['carril_id']) if pos.get('es_reto') else ''}"
             )
-        capital_reto = sum(c["capital"] for c in reto["carriles"])
+        capital_reto = sum(c["capital"] for c in reto.get("caballos", []))
         prompt = (
             f"Eres el analista de AXIS, un sistema de trading de opciones. "
             f"Hora actual: {ahora.strftime('%A %I:%M %p EST')}. "
@@ -399,16 +400,27 @@ def analizar_portfolio_claude(posiciones, reto):
 # ═══════════════════════════════════════════════════════════
 # PORTFOLIO — ESTRUCTURA Y PERSISTENCIA
 # ═══════════════════════════════════════════════════════════
+DERBY_CABALLOS = [
+    {"id": 1, "nombre": "Noel"},
+    {"id": 2, "nombre": "Paula"},
+    {"id": 3, "nombre": "Noel Andres"},
+    {"id": 4, "nombre": "Emilia"},
+]
+
 def portfolio_vacio():
     return {
         "posiciones":  [],
         "historial":   [],
-        "reto": {
+        "derby": {
+            "nombre":          "REAL LAZARO-PALMA",
             "activo":          False,
             "turno_actual":    1,
-            "carriles": [
+            "ganador":         None,
+            "esperando_cierre": False,
+            "caballos": [
                 {
-                    "id":              i+1,
+                    "id":              c["id"],
+                    "nombre":          c["nombre"],
                     "capital":         0,
                     "capital_inicial": 0,
                     "ronda":           0,
@@ -416,7 +428,7 @@ def portfolio_vacio():
                     "eliminado":       False,
                     "historial":       []
                 }
-                for i in range(10)
+                for c in DERBY_CABALLOS
             ]
         }
     }
@@ -429,6 +441,16 @@ def cargar_portfolio():
         if os.path.exists(PORTFOLIO_FILE):
             with open(PORTFOLIO_FILE, 'r') as f:
                 _portfolio = json.load(f)
+            # Migrar reto→derby si viene de versión anterior
+            if "reto" in _portfolio and "derby" not in _portfolio:
+                vacio = portfolio_vacio()
+                _portfolio["derby"] = vacio["derby"]
+                print("Migración: reto→derby completada")
+                guardar_portfolio()
+            elif "derby" not in _portfolio:
+                vacio = portfolio_vacio()
+                _portfolio["derby"] = vacio["derby"]
+                guardar_portfolio()
             print(f"Portfolio cargado — {len(_portfolio['posiciones'])} posiciones abiertas")
         else:
             _portfolio = portfolio_vacio()
@@ -598,7 +620,8 @@ def cerrar_posicion(pos_id, precio_cierre, motivo="panic"):
         pos["fecha_maximo"]  = fecha_cierre
 
     if pos.get("es_reto") and pos.get("carril_id"):
-        for c in _portfolio["reto"]["carriles"]:
+        derby = _portfolio["derby"]
+        for c in derby["caballos"]:
             if c["id"] == pos["carril_id"]:
                 nuevo_capital = round(c["capital"] + pl_usd, 2)
                 c["capital"]  = nuevo_capital
@@ -614,10 +637,30 @@ def cerrar_posicion(pos_id, precio_cierre, motivo="panic"):
                 if nuevo_capital < CAPITAL_MINIMO:
                     c["eliminado"] = True
                     enviar_telegram(
-                        f"💀 <b>Carril #{c['id']} ELIMINADO</b>\n"
-                        f"Capital final: ${nuevo_capital:.2f} — insuficiente para siguiente ronda\n"
+                        f"💀 <b>{c['nombre']} ELIMINADO — REAL LAZARO-PALMA</b>\n"
+                        f"Capital final: ${nuevo_capital:.2f} — insuficiente para siguiente carrera\n"
                         f"Capital inicial fue: ${c.get('capital_inicial', 0):.2f}"
                     )
+                # Verificar si queda un solo caballo vivo
+                vivos = [x for x in derby["caballos"] if not x.get("eliminado")]
+                if len(vivos) == 1 and derby["activo"]:
+                    ganador = vivos[0]
+                    derby["ganador"] = ganador["nombre"]
+                    derby["activo"]  = False
+                    if ganador["capital"] > 0 and ganador["posicion"] is not None:
+                        derby["esperando_cierre"] = True
+                        enviar_telegram(
+                            f"🏆 <b>GANADOR DEL REAL LAZARO-PALMA: {ganador['nombre']}</b>\n"
+                            f"Capital acumulado: ${ganador['capital']:.2f}\n"
+                            f"⏳ Esperando cierre de posición para confirmar premio final..."
+                        )
+                    else:
+                        derby["esperando_cierre"] = False
+                        enviar_telegram(
+                            f"🏆 <b>GANADOR DEL REAL LAZARO-PALMA: {ganador['nombre']}</b>\n"
+                            f"Premio metálico: ${ganador['capital']:.2f}\n"
+                            f"🏇 Derby finalizado — activa uno nuevo cuando quieras"
+                        )
                 break
 
     _portfolio["posiciones"] = [p for p in _portfolio["posiciones"] if p["id"] != pos_id]
@@ -1879,24 +1922,27 @@ def enviar_telegram_botones(mensaje, orden_id):
     global _portfolio
     if _portfolio is None:
         cargar_portfolio()
-    reto_activo = _portfolio["reto"]["activo"]
-    carril_disponible = None
-    if reto_activo:
-        turno = _portfolio["reto"].get("turno_actual", 1)
-        carriles = _portfolio["reto"]["carriles"]
-        orden = list(range(turno - 1, 10)) + list(range(0, turno - 1))
+    derby = _portfolio["derby"]
+    derby_activo = derby["activo"]
+    caballo_disponible = None
+    caballo_nombre = None
+    if derby_activo:
+        turno = derby.get("turno_actual", 1)
+        caballos = derby["caballos"]
+        orden = list(range(turno - 1, 4)) + list(range(0, turno - 1))
         for idx in orden:
-            c = carriles[idx]
+            c = caballos[idx]
             if not c.get("eliminado") and c["posicion"] is None:
-                carril_disponible = c["id"]
+                caballo_disponible = c["id"]
+                caballo_nombre = c["nombre"]
                 break
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     botones = [
         {"text": "✅ EJECUTAR", "callback_data": f"exec:{orden_id}"},
         {"text": "❌ IGNORAR",  "callback_data": f"skip:{orden_id}"},
     ]
-    if reto_activo and carril_disponible:
-        botones.insert(1, {"text": f"🏆 RETO C{carril_disponible}", "callback_data": f"reto:{orden_id}:{carril_disponible}"})
+    if derby_activo and caballo_disponible:
+        botones.insert(1, {"text": f"🏇 {caballo_nombre}", "callback_data": f"reto:{orden_id}:{caballo_disponible}"})
     payload = {
         "chat_id":    TELEGRAM_CHAT_ID,
         "text":       mensaje,
@@ -2026,7 +2072,7 @@ def reporte_horario():
 # LOOP PRINCIPAL
 # ═══════════════════════════════════════════════════════════
 def monitor_loop():
-    print("AXIS Breakout Sentinel v8.64 iniciado...")
+    print("AXIS Breakout Sentinel v8.65 iniciado...")
     while True:
         ahora = datetime.now(EST)
         mins  = ahora.hour * 60 + ahora.minute
@@ -2140,11 +2186,16 @@ def home(path=""):
       <div class="title">Bitácora</div>
       <div class="desc">Pendientes · Decisiones · Seguimiento</div>
     </a>
+    <a href="/derby" class="nav-card" style="border-color:#3d0000; grid-column: 1 / -1;">
+      <div class="icon">🏇</div>
+      <div class="title">REAL LAZARO-PALMA</div>
+      <div class="desc">Noel · Paula · Noel Andrés · Emilia — Derby de Opciones</div>
+    </a>
   </div>
   <div class="canales-grid">
     {canales_html}
   </div>
-  <div class="footer">AXIS Breakout Sentinel v8.64 · {activos_str}</div>
+  <div class="footer">AXIS Breakout Sentinel v8.65 · {activos_str}</div>
 </body>
 </html>"""
     from flask import Response
@@ -2164,7 +2215,7 @@ def test():
         else:
             lineas_canal.append(f"  {a}: OFF")
     enviar_telegram(
-        f"✅ <b>AXIS Breakout Sentinel v8.64</b>\n"
+        f"✅ <b>AXIS Breakout Sentinel v8.65</b>\n"
         f"<b>Hora:</b> {ahora.strftime('%A %d/%m/%Y %H:%M EST')}\n"
         f"<b>Mercado:</b> {'Abierto' if es_dia_mercado(ahora) else 'Cerrado'}\n"
         f"<b>1VR:</b> {'ON' if VR1_ON else 'OFF'} | "
@@ -2482,7 +2533,8 @@ def portfolio_data():
     return jsonify({
         "posiciones": _portfolio["posiciones"],
         "historial":  _portfolio["historial"][-20:],
-        "reto":       _portfolio["reto"],
+        "derby":      _portfolio.get("derby", {}),
+        "reto":       _portfolio.get("derby", {}),  # compatibilidad
     }), 200
 
 @app.route("/portfolio/cerrar", methods=["GET", "POST"])
@@ -2516,25 +2568,86 @@ def portfolio_claude():
     analisis = analizar_portfolio_claude(_portfolio["posiciones"], _portfolio["reto"])
     return jsonify({"analisis": analisis}), 200
 
-@app.route("/portfolio/reto/activar", methods=["GET"])
-def reto_activar():
+@app.route("/derby/activar", methods=["GET"])
+def derby_activar():
     global _portfolio
     if _portfolio is None:
         cargar_portfolio()
-    _portfolio["reto"]["activo"] = True
+    derby = _portfolio["derby"]
+    derby["activo"]           = True
+    derby["ganador"]          = None
+    derby["esperando_cierre"] = False
+    derby["turno_actual"]     = 1
+    # Resetear caballos
+    for c in derby["caballos"]:
+        c["capital"]         = 0
+        c["capital_inicial"] = 0
+        c["ronda"]           = 0
+        c["posicion"]        = None
+        c["eliminado"]       = False
+        c["historial"]       = []
     guardar_portfolio()
-    enviar_telegram("🏆 <b>Reto Millonario ACTIVADO</b>\n10 carriles × $200 = $2,000\n¡A duplicar!")
-    return jsonify({"ok": True, "reto": _portfolio["reto"]}), 200
+    enviar_telegram(
+        f"🏇 <b>REAL LAZARO-PALMA — NUEVO DERBY ACTIVADO</b>\n"
+        f"Caballos: Noel · Paula · Noel Andrés · Emilia\n"
+        f"¡Que gane el mejor!"
+    )
+    return jsonify({"ok": True, "derby": _portfolio["derby"]}), 200
+
+@app.route("/derby/desactivar", methods=["GET"])
+def derby_desactivar():
+    global _portfolio
+    if _portfolio is None:
+        cargar_portfolio()
+    _portfolio["derby"]["activo"] = False
+    guardar_portfolio()
+    enviar_telegram("⏸ <b>REAL LAZARO-PALMA PAUSADO</b>")
+    return jsonify({"ok": True}), 200
+
+@app.route("/derby/status", methods=["GET"])
+def derby_status():
+    global _portfolio
+    if _portfolio is None:
+        cargar_portfolio()
+    derby = _portfolio["derby"]
+    caballos_info = []
+    for c in derby["caballos"]:
+        caballos_info.append({
+            "id":       c["id"],
+            "nombre":   c["nombre"],
+            "capital":  c["capital"],
+            "ronda":    c["ronda"],
+            "posicion": c["posicion"],
+            "eliminado": c.get("eliminado", False),
+            "historial": c.get("historial", []),
+        })
+    return jsonify({
+        "nombre":           derby["nombre"],
+        "activo":           derby["activo"],
+        "ganador":          derby.get("ganador"),
+        "esperando_cierre": derby.get("esperando_cierre", False),
+        "turno_actual":     derby.get("turno_actual", 1),
+        "caballos":         caballos_info,
+    }), 200
+
+# Mantener compatibilidad con rutas antiguas
+@app.route("/portfolio/reto/activar", methods=["GET"])
+def reto_activar():
+    return derby_activar()
 
 @app.route("/portfolio/reto/desactivar", methods=["GET"])
 def reto_desactivar():
-    global _portfolio
-    if _portfolio is None:
-        cargar_portfolio()
-    _portfolio["reto"]["activo"] = False
-    guardar_portfolio()
-    enviar_telegram("⏸ <b>Reto Millonario PAUSADO</b>")
-    return jsonify({"ok": True}), 200
+    return derby_desactivar()
+
+@app.route("/derby", methods=["GET"])
+def serve_derby():
+    from flask import Response
+    import os
+    html_path = os.path.join(os.path.dirname(__file__), "axis_derby.html")
+    if os.path.exists(html_path):
+        with open(html_path, "r") as f:
+            return Response(f.read(), mimetype="text/html")
+    return Response("<h1>axis_derby.html no encontrado</h1>", mimetype="text/html"), 404
 
 @app.route("/charts", methods=["GET"])
 def serve_charts():
@@ -2611,7 +2724,7 @@ def telegram_webhook():
             )
 
         elif accion == "reto":
-            carril_id = carril_id_reto or 1
+            caballo_id = carril_id_reto or 1
             datos = ordenes_pendientes.pop(orden_id, None)
             guardar_ordenes()
             if not datos:
@@ -2619,72 +2732,81 @@ def telegram_webhook():
                 return jsonify({"ok": True}), 200
             opcion     = datos["opcion"]
             estrategia = datos.get("estrategia", "AXIS")
-            carril = next((c for c in _portfolio["reto"]["carriles"] if c["id"] == carril_id), None)
-            if not carril or carril.get("eliminado"):
-                agregar_recibo(f"━━━━━━━━━━━━━━━━━━\n⚠️ <b>Carril #{carril_id} no disponible</b>")
-                return jsonify({"ok": True}), 200
-            if carril["posicion"] is not None:
-                turno = carril_id + 1
+            derby = _portfolio["derby"]
+            caballo = next((c for c in derby["caballos"] if c["id"] == caballo_id), None)
+            if not caballo or caballo.get("eliminado"):
+                # Buscar siguiente disponible
                 nuevo_id = None
-                orden_b  = list(range(turno - 1, 10)) + list(range(0, turno - 1))
-                for idx in orden_b:
-                    c = _portfolio["reto"]["carriles"][idx]
+                for c in derby["caballos"]:
                     if not c.get("eliminado") and c["posicion"] is None:
                         nuevo_id = c["id"]
                         break
                 if not nuevo_id:
-                    agregar_recibo(f"━━━━━━━━━━━━━━━━━━\n⚠️ <b>Sin carriles disponibles</b>")
+                    agregar_recibo(f"━━━━━━━━━━━━━━━━━━\n⚠️ <b>Todos los caballos ocupados o eliminados</b>")
                     return jsonify({"ok": True}), 200
-                carril_id = nuevo_id
-                carril    = next((c for c in _portfolio["reto"]["carriles"] if c["id"] == carril_id), None)
+                caballo_id = nuevo_id
+                caballo    = next((c for c in derby["caballos"] if c["id"] == caballo_id), None)
+            if caballo["posicion"] is not None:
+                # Buscar otro caballo libre
+                nuevo_id = None
+                for c in derby["caballos"]:
+                    if not c.get("eliminado") and c["posicion"] is None and c["id"] != caballo_id:
+                        nuevo_id = c["id"]
+                        break
+                if not nuevo_id:
+                    agregar_recibo(f"━━━━━━━━━━━━━━━━━━\n⚠️ <b>Todos los caballos en carrera</b>")
+                    return jsonify({"ok": True}), 200
+                caballo_id = nuevo_id
+                caballo    = next((c for c in derby["caballos"] if c["id"] == caballo_id), None)
             costo_1cont = round(opcion["ask"] * 100, 2)
-            if carril["capital"] == 0:
-                carril["capital"]         = costo_1cont
-                carril["capital_inicial"] = costo_1cont
+            if caballo["capital"] == 0:
+                # Primera carrera — sin límite de capital
+                caballo["capital"]         = costo_1cont
+                caballo["capital_inicial"] = costo_1cont
                 contratos   = 1
                 presupuesto = costo_1cont
             else:
-                presupuesto = round(carril["capital"] * 0.80, 2)
+                # Carreras siguientes — usa capital acumulado
+                presupuesto = round(caballo["capital"] * 0.80, 2)
                 if costo_1cont > presupuesto:
                     opcion_reto = buscar_opcion_reto(opcion, presupuesto)
                     if not opcion_reto:
-                        rec_claude = recomendar_opcion_claude(opcion, carril["capital"], presupuesto)
+                        rec_claude = recomendar_opcion_claude(opcion, caballo["capital"], presupuesto)
                         agregar_recibo(
                             f"━━━━━━━━━━━━━━━━━━\n"
-                            f"⚠️ <b>Capital insuficiente — Carril #{carril_id}</b>\n"
-                            f"Capital: ${carril['capital']:.2f} | Presupuesto: ${presupuesto:.2f}\n"
+                            f"⚠️ <b>Capital insuficiente — {caballo['nombre']}</b>\n"
+                            f"Capital: ${caballo['capital']:.2f} | Presupuesto: ${presupuesto:.2f}\n"
                             f"🤖 <b>Claude recomienda:</b>\n{rec_claude}"
                         )
                         return jsonify({"ok": True}), 200
                     opcion = opcion_reto
                     costo_1cont = round(opcion["ask"] * 100, 2)
                 contratos = max(1, int(presupuesto // costo_1cont))
-            carriles = _portfolio["reto"]["carriles"]
+            # Actualizar turno al siguiente caballo disponible
             siguiente = None
-            orden = list(range(carril_id, 10)) + list(range(0, carril_id))
-            for idx in orden:
-                c = carriles[idx]
-                if not c.get("eliminado") and c["posicion"] is None and c["id"] != carril_id:
+            for c in derby["caballos"]:
+                if not c.get("eliminado") and c["posicion"] is None and c["id"] != caballo_id:
                     siguiente = c["id"]
                     break
-            _portfolio["reto"]["turno_actual"] = siguiente if siguiente else carril_id
+            derby["turno_actual"] = siguiente if siguiente else caballo_id
             resultado_tradier = ejecutar_orden_tradier_contratos(opcion, contratos)
             tradier_orden_id = resultado_tradier.get("id")    if resultado_tradier["ok"] else None
             tradier_gtc_id   = resultado_tradier.get("venta_id") if resultado_tradier["ok"] else None
             costo_total = round(opcion["ask"] * 100 * contratos, 2)
             registrar_posicion(opcion, estrategia, opcion["subyacente"], opcion["ask"],
-                               es_reto=True, carril_id=carril_id, contratos=contratos,
+                               es_reto=True, carril_id=caballo_id, contratos=contratos,
                                tradier_orden_id=tradier_orden_id, tradier_gtc_id=tradier_gtc_id)
+            caballo["ronda"] += 1
             estado_tradier = "✅ Orden enviada a sandbox" if resultado_tradier["ok"] else f"⚠️ Error: {resultado_tradier.get('error','')}"
-            es_primera = carril["capital_inicial"] == costo_1cont and carril["ronda"] == 1
+            es_primera = caballo["ronda"] == 1
             agregar_recibo(
                 f"━━━━━━━━━━━━━━━━━━\n"
-                f"🏆 <b>RETO C{carril_id} — {'PRIMERA ENTRADA' if es_primera else 'EJECUTADO'}</b>\n"
+                f"🏇 <b>{caballo['nombre']} — {'PRIMERA CARRERA' if es_primera else f'CARRERA #{caballo[chr(114)+chr(111)+chr(110)+chr(100)+chr(97)]}'}</b>\n"
                 f"📋 <b>Opción:</b> {opcion['symbol']}\n"
                 f"📊 <b>Contratos:</b> {contratos} × ${opcion['ask']:.2f} = ${costo_total:.2f}\n"
-                f"💰 <b>Capital carril:</b> ${carril['capital']:.2f}\n"
+                f"💰 <b>Capital:</b> ${caballo['capital']:.2f}\n"
                 f"🎯 <b>GTC:</b> ${opcion['ask']*2:.2f} (+100%)\n"
-                f"🔄 <b>Siguiente turno:</b> C{_portfolio['reto']['turno_actual']}\n"
+                f"🔄 <b>Siguiente:</b> {next((x['nombre'] for x in derby['caballos'] if x['id'] == derby['turno_actual']), 'N/A')}\n"
                 f"🏦 <b>Tradier:</b> {estado_tradier}"
             )
 
@@ -3053,12 +3175,14 @@ def system_status():
     if _portfolio is None:
         cargar_portfolio()
     pos_abiertas = len(_portfolio["posiciones"])
-    reto = _portfolio["reto"]
-    carriles_vivos = [c for c in reto["carriles"] if not c.get("eliminado")]
+    derby = _portfolio.get("derby", _portfolio.get("reto", {}))
+    caballos_vivos = [c for c in derby.get("caballos", derby.get("carriles", [])) if not c.get("eliminado")]
     reto_resumen = {
-        "activo": reto["activo"], "turno_actual": reto.get("turno_actual", 1),
-        "carriles_vivos": len(carriles_vivos),
-        "capital_total": round(sum(c["capital"] for c in carriles_vivos), 2),
+        "activo": derby.get("activo", False),
+        "turno_actual": derby.get("turno_actual", 1),
+        "carriles_vivos": len(caballos_vivos),
+        "capital_total": round(sum(c["capital"] for c in caballos_vivos), 2),
+        "ganador": derby.get("ganador"),
     }
     archivos_data = {}
     for fname in ["axis_canales.json", "axis_portfolio.json", "axis_ordenes.json", "axis_estado_dia.json"]:
@@ -3083,7 +3207,7 @@ def system_status():
         except Exception as e:
             velas_db[a] = {"status": f"❌ ERROR: {e}"}
     return jsonify({
-        "sistema": "AXIS Breakout Sentinel v8.64",
+        "sistema": "AXIS Breakout Sentinel v8.65",
         "hora_est": ahora.strftime("%Y-%m-%d %H:%M:%S EST"),
         "mercado": "ABIERTO ✅" if mercado_abierto else "CERRADO ⏸",
         "threads": threads_vivos, "activos": ACTIVOS,
@@ -3410,9 +3534,9 @@ def enviar_resumen_diario(ahora):
         cerradas_hoy = [p for p in _portfolio["historial"] if str(p.get("ts_cierre", "")).startswith(fecha_hoy)]
         pl_dia = sum(p.get("pl_usd", 0) or 0 for p in cerradas_hoy)
         wins   = sum(1 for p in cerradas_hoy if (p.get("pl_usd", 0) or 0) > 0)
-        reto   = _portfolio["reto"]
-        cap_reto = sum(c["capital"] for c in reto["carriles"] if not c.get("eliminado"))
-        vivos  = sum(1 for c in reto["carriles"] if not c.get("eliminado"))
+        reto   = _portfolio.get("derby", _portfolio.get("reto", {}))
+        cap_reto = sum(c["capital"] for c in reto.get("caballos", reto.get("carriles", [])) if not c.get("eliminado"))
+        vivos  = sum(1 for c in reto.get("caballos", reto.get("carriles", [])) if not c.get("eliminado"))
         hist_total = len(_portfolio["historial"])
         hist_wins  = sum(1 for p in _portfolio["historial"] if (p.get("pl_usd", 0) or 0) > 0)
         wr = f"{round(hist_wins/hist_total*100,1)}%" if hist_total else "—"
