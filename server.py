@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v8.63
+AXIS Breakout Sentinel v8.64
 Estrategias: 1VR | 1VR+ | RPG | GNA | GBA | RCB/CNF
 Multi-activo: SPY, AAPL, BA, GLD
 v8.43: Portfolio fix — ejecutar_orden_tradier en webhook exec/reto | Panic Button al bid |
@@ -239,6 +239,7 @@ def estado_diario_vacio():
         "4ps_activo":         False,
         "4ps_fired":          False,
         "4ps_vela_idx":       0,
+        "4ps_ultima_senal":   None,
     }
 
 def canal_vacio():
@@ -1143,6 +1144,27 @@ def reset_diario_activo(simbolo, fecha_hoy, v7_ayer_close):
     print(f"Reset {simbolo} — V7 ayer: ${v7_ayer_close:.2f}" if v7_ayer_close else f"Reset {simbolo} — sin V7 ayer")
 
 # ═══════════════════════════════════════════════════════════
+# 4PASOS — VERIFICACION SLOPE (max 2 lows cortados)
+# ═══════════════════════════════════════════════════════════
+def verificar_slope_4ps(p1_low, p1_idx, p2_low_cand, p2_idx_cand, historial_lows):
+    """
+    Verifica que el slope P1->P2_candidato no corte mas de 2 lows intermedios.
+    historial_lows: lista de (idx, low) de velas entre P1 y P2 candidato.
+    Retorna True si es valido (0, 1 o 2 lows cortados).
+    """
+    if p2_idx_cand <= p1_idx:
+        return False
+    slope = (p2_low_cand - p1_low) / (p2_idx_cand - p1_idx)
+    lows_cortados = 0
+    for idx, low in historial_lows:
+        if idx <= p1_idx or idx >= p2_idx_cand:
+            continue
+        proyeccion = p1_low + slope * (idx - p1_idx)
+        if low < proyeccion:
+            lows_cortados += 1
+    return lows_cortados <= 2
+
+# ═══════════════════════════════════════════════════════════
 # EVALUAR VELA POR ACTIVO
 # ═══════════════════════════════════════════════════════════
 def evaluar_activo(simbolo, velas, ahora):
@@ -1393,26 +1415,46 @@ def evaluar_activo(simbolo, velas, ahora):
 
         # 4PASOS en V1
         if c["on"] and not c["apagado"] and c["p3"] is not None and not ed["4ps_fired"]:
-            ed["4ps_vela_idx"] = 1
-            if not ed["4ps_activo"]:
-                ed["4ps_activo"]         = True
-                ed["4ps_p1_low"]         = v_low
-                ed["4ps_p1_idx"]         = 1
-                ed["4ps_p2_low"]         = None
-                ed["4ps_p2_idx"]         = None
-                ed["4ps_velas_sobre_p1"] = 0
-                ed["4ps_p1_maduro"]      = False
-            elif v_low <= ed["4ps_p1_low"]:
-                ed["4ps_p1_low"]         = v_low
-                ed["4ps_p1_idx"]         = 1
-                ed["4ps_p2_low"]         = None
-                ed["4ps_p2_idx"]         = None
-                ed["4ps_velas_sobre_p1"] = 0
-                ed["4ps_p1_maduro"]      = False
-            else:
-                ed["4ps_velas_sobre_p1"] += 1
-                if ed["4ps_velas_sobre_p1"] >= 3:
-                    ed["4ps_p1_maduro"] = True
+            # Verificar 24 horas de espera post-senal
+            ultima_senal = ed.get("4ps_ultima_senal")
+            _4ps_en_espera = False
+            if ultima_senal:
+                try:
+                    from datetime import datetime as _dt2
+                    ts_ultima = _dt2.fromisoformat(ultima_senal)
+                    if ts_ultima.tzinfo is None:
+                        ts_ultima = EST.localize(ts_ultima)
+                    _4ps_en_espera = (ahora - ts_ultima).total_seconds() < 86400
+                except:
+                    pass
+
+            if not _4ps_en_espera:
+                ed["4ps_vela_idx"] = 1
+                # Verificar zona valida P1: desde piso hasta 85% sobre la media
+                ahora_dt_4ps_v1 = EST.localize(datetime.strptime(vela_actual["datetime"], "%Y-%m-%d %H:%M:%S"))
+                techo_v1_4ps, piso_v1_4ps = calcular_techo_canal(simbolo, ahora_dt_4ps_v1), None
+                piso_v1_4ps, mitad_v1_4ps = calcular_piso_mitad_canal(simbolo, ahora_dt_4ps_v1)
+                zona_p1_valida = False
+                if techo_v1_4ps and piso_v1_4ps and mitad_v1_4ps:
+                    zona_max_p1 = mitad_v1_4ps + (techo_v1_4ps - piso_v1_4ps) * 0.85 / 2
+                    zona_p1_valida = piso_v1_4ps <= v_low <= zona_max_p1
+
+                if zona_p1_valida:
+                    if not ed["4ps_activo"]:
+                        ed["4ps_activo"]         = True
+                        ed["4ps_p1_low"]         = v_low
+                        ed["4ps_p1_idx"]         = 1
+                        ed["4ps_p2_low"]         = None
+                        ed["4ps_p2_idx"]         = None
+                        ed["4ps_historial_lows"] = [(1, v_low)]
+                    elif v_low <= ed["4ps_p1_low"]:
+                        ed["4ps_p1_low"]         = v_low
+                        ed["4ps_p1_idx"]         = 1
+                        ed["4ps_p2_low"]         = None
+                        ed["4ps_p2_idx"]         = None
+                        ed["4ps_historial_lows"] = [(1, v_low)]
+                    else:
+                        ed.setdefault("4ps_historial_lows", []).append((1, v_low))
 
         return
 
@@ -1607,60 +1649,77 @@ def evaluar_activo(simbolo, velas, ahora):
         ahora_dt_4ps = EST.localize(datetime.strptime(vela_actual["datetime"], "%Y-%m-%d %H:%M:%S"))
         techo_4ps    = calcular_techo_canal(simbolo, ahora_dt_4ps)
         piso_4ps, mitad_4ps = calcular_piso_mitad_canal(simbolo, ahora_dt_4ps)
-        en_zona_valida = False
-        if techo_4ps and piso_4ps:
-            altura_canal = techo_4ps - piso_4ps
-            zona_25      = techo_4ps - altura_canal * 0.25
-            en_zona_valida = v_close >= zona_25
 
+        # Registrar low de esta vela en historial para verificacion slope
+        ed.setdefault("4ps_historial_lows", []).append((idx_4ps, v_low))
+
+        # Reset si precio sale del canal RCB
         if techo_4ps and piso_4ps and (v_close > techo_4ps or v_close < piso_4ps):
-            ed["4ps_activo"]         = False
-            ed["4ps_p1_low"]         = None
-            ed["4ps_p1_idx"]         = None
-            ed["4ps_p2_low"]         = None
-            ed["4ps_p2_idx"]         = None
-            ed["4ps_velas_sobre_p1"] = 0
-            ed["4ps_p1_maduro"]      = False
+            ed["4ps_activo"]          = False
+            ed["4ps_p1_low"]          = None
+            ed["4ps_p1_idx"]          = None
+            ed["4ps_p2_low"]          = None
+            ed["4ps_p2_idx"]          = None
+            ed["4ps_historial_lows"]  = []
 
-        elif v_low <= ed["4ps_p1_low"]:
+        # P1 se mueve si aparece low menor (solo durante formacion — antes de tener P2)
+        elif v_low <= ed["4ps_p1_low"] and ed["4ps_p2_idx"] is None:
             ed["4ps_p1_low"]         = v_low
             ed["4ps_p1_idx"]         = idx_4ps
             ed["4ps_p2_low"]         = None
             ed["4ps_p2_idx"]         = None
-            ed["4ps_velas_sobre_p1"] = 0
-            ed["4ps_p1_maduro"]      = False
+            ed["4ps_historial_lows"] = [(idx_4ps, v_low)]
 
         else:
-            ed["4ps_velas_sobre_p1"] += 1
-            if ed["4ps_velas_sobre_p1"] >= 3:
-                ed["4ps_p1_maduro"] = True
+            distancia_4ps = idx_4ps - ed["4ps_p1_idx"]
+            historial_lows = ed.get("4ps_historial_lows", [])
 
-            if ed["4ps_p1_maduro"]:
-                distancia_4ps = idx_4ps - ed["4ps_p1_idx"]
-
-                if ed["4ps_p2_idx"] is None and distancia_4ps >= 4:
+            # ── Sin P2 aun: buscar primer candidato valido (min 6 velas desde P1) ──
+            if ed["4ps_p2_idx"] is None and distancia_4ps >= 6:
+                if verificar_slope_4ps(ed["4ps_p1_low"], ed["4ps_p1_idx"], v_low, idx_4ps, historial_lows):
                     ed["4ps_p2_low"] = v_low
                     ed["4ps_p2_idx"] = idx_4ps
+                    print(f"{simbolo} 4PASOS P2 fijado: ${v_low:.2f} idx={idx_4ps}")
 
-                elif ed["4ps_p2_idx"] is not None:
-                    slope_4ps   = (ed["4ps_p2_low"] - ed["4ps_p1_low"]) / (ed["4ps_p2_idx"] - ed["4ps_p1_idx"])
-                    piso_slope  = ed["4ps_p1_low"] + slope_4ps * (idx_4ps - ed["4ps_p1_idx"])
+            # ── Con P2: evaluar ruptura o actualizacion ──
+            elif ed["4ps_p2_idx"] is not None:
+                slope_4ps  = (ed["4ps_p2_low"] - ed["4ps_p1_low"]) / (ed["4ps_p2_idx"] - ed["4ps_p1_idx"])
+                piso_slope = ed["4ps_p1_low"] + slope_4ps * (idx_4ps - ed["4ps_p1_idx"])
 
-                    if v_low > ed["4ps_p2_low"] and v_low > ed["4ps_p1_low"]:
+                # Caso A — LOW (mecha) rompe slope pero CIERRE queda arriba → nuevo P2
+                if v_low < piso_slope and v_close >= piso_slope:
+                    if verificar_slope_4ps(ed["4ps_p1_low"], ed["4ps_p1_idx"], v_low, idx_4ps, historial_lows):
                         ed["4ps_p2_low"] = v_low
                         ed["4ps_p2_idx"] = idx_4ps
+                        print(f"{simbolo} 4PASOS P2 actualizado por mecha: ${v_low:.2f} idx={idx_4ps}")
 
-                    elif v_roja and v_close < piso_slope and en_zona_valida:
-                        ed["4ps_fired"]  = True
-                        guardar_estado_dia()
-                        ed["4ps_activo"] = False
-                        enviar_senal_con_botones(
-                            simbolo, "4PASOS — RUPTURA SOPORTE ALCISTA",
-                            f"{hora_vela+1}:00 EST", v_close, "PUT",
-                            f"<b>P1:</b> ${ed['4ps_p1_low']:.2f} | <b>P2:</b> ${ed['4ps_p2_low']:.2f}\n"
-                            f"<b>Soporte:</b> ${piso_slope:.2f} | <b>Cierre:</b> ${v_close:.2f}\n"
-                            f"<b>Techo RCB:</b> ${techo_4ps:.2f}\n"
-                        )
+                # Caso B — CIERRE rompe slope → SEÑAL PUT
+                elif v_roja and v_close < piso_slope:
+                    # Determinar label: 🔥 si ruptura ocurre en 50% superior del canal RCB
+                    label_4ps = "4PASOS"
+                    extra_fuego = ""
+                    if techo_4ps and piso_4ps and mitad_4ps:
+                        if v_close >= mitad_4ps:
+                            label_4ps  = "4PASOS 🔥"
+                            extra_fuego = f"<b>Zona:</b> 50% superior del canal — contexto de alta probabilidad\n"
+                    ed["4ps_fired"]         = True
+                    ed["4ps_ultima_senal"]  = ahora_dt_4ps.isoformat()
+                    guardar_estado_dia()
+                    ed["4ps_activo"]        = False
+                    enviar_senal_con_botones(
+                        simbolo, f"{label_4ps} — RUPTURA SOPORTE ALCISTA",
+                        f"{hora_vela+1}:00 EST", v_close, "PUT",
+                        f"<b>P1:</b> ${ed['4ps_p1_low']:.2f} | <b>P2:</b> ${ed['4ps_p2_low']:.2f}\n"
+                        f"<b>Soporte:</b> ${piso_slope:.2f} | <b>Cierre:</b> ${v_close:.2f}\n"
+                        f"{extra_fuego}"
+                        f"<b>Techo RCB:</b> ${techo_4ps:.2f}\n"
+                    )
+
+                # Caso C — LOW mayor que P2 actual → P2 sube (tendencia alcista continua)
+                elif v_low > ed["4ps_p2_low"]:
+                    if verificar_slope_4ps(ed["4ps_p1_low"], ed["4ps_p1_idx"], v_low, idx_4ps, historial_lows):
+                        ed["4ps_p2_low"] = v_low
+                        ed["4ps_p2_idx"] = idx_4ps
 
     print(f"{simbolo} V{hora_vela-8} {hora_vela+1}:00 — O:{v_open:.2f} C:{v_close:.2f} | RPG:{ed['rpg_activo']} GNA:{ed['gna_activo']} GBA:{ed['gba_activo']} PM40:{ed['pm40_activo']} 4PS:{ed['4ps_activo']}")
 
@@ -1967,7 +2026,7 @@ def reporte_horario():
 # LOOP PRINCIPAL
 # ═══════════════════════════════════════════════════════════
 def monitor_loop():
-    print("AXIS Breakout Sentinel v8.63 iniciado...")
+    print("AXIS Breakout Sentinel v8.64 iniciado...")
     while True:
         ahora = datetime.now(EST)
         mins  = ahora.hour * 60 + ahora.minute
@@ -2085,7 +2144,7 @@ def home(path=""):
   <div class="canales-grid">
     {canales_html}
   </div>
-  <div class="footer">AXIS Breakout Sentinel v8.63 · {activos_str}</div>
+  <div class="footer">AXIS Breakout Sentinel v8.64 · {activos_str}</div>
 </body>
 </html>"""
     from flask import Response
@@ -2105,7 +2164,7 @@ def test():
         else:
             lineas_canal.append(f"  {a}: OFF")
     enviar_telegram(
-        f"✅ <b>AXIS Breakout Sentinel v8.63</b>\n"
+        f"✅ <b>AXIS Breakout Sentinel v8.64</b>\n"
         f"<b>Hora:</b> {ahora.strftime('%A %d/%m/%Y %H:%M EST')}\n"
         f"<b>Mercado:</b> {'Abierto' if es_dia_mercado(ahora) else 'Cerrado'}\n"
         f"<b>1VR:</b> {'ON' if VR1_ON else 'OFF'} | "
@@ -3024,7 +3083,7 @@ def system_status():
         except Exception as e:
             velas_db[a] = {"status": f"❌ ERROR: {e}"}
     return jsonify({
-        "sistema": "AXIS Breakout Sentinel v8.63",
+        "sistema": "AXIS Breakout Sentinel v8.64",
         "hora_est": ahora.strftime("%Y-%m-%d %H:%M:%S EST"),
         "mercado": "ABIERTO ✅" if mercado_abierto else "CERRADO ⏸",
         "threads": threads_vivos, "activos": ACTIVOS,
