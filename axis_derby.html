@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>REAL LAZARO-PALMA — Derby</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Space+Grotesk:wght@300;400;600;700&display=swap" rel="stylesheet">
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #0a0a0f; color: #e8e8f0; font-family: 'Space Grotesk', sans-serif; min-height: 100vh; padding: 24px; }
+.header { text-align: center; margin-bottom: 32px; }
+.logo { font-family: 'JetBrains Mono', monospace; font-size: 14px; color: #666688; letter-spacing: 3px; text-transform: uppercase; margin-bottom: 8px; }
+.title { font-size: 36px; font-weight: 700; letter-spacing: -1px; }
+.title span { color: #c0392b; }
+.subtitle { color: #666688; font-size: 13px; margin-top: 6px; letter-spacing: 2px; text-transform: uppercase; }
+.status-bar { display: flex; gap: 12px; justify-content: center; margin-bottom: 32px; flex-wrap: wrap; }
+.pill { background: #111118; border: 1px solid #2a2a3a; border-radius: 20px; padding: 6px 16px; font-family: 'JetBrains Mono', monospace; font-size: 12px; }
+.pill.activo { border-color: #c0392b; color: #e74c3c; }
+.pill.inactivo { border-color: #666688; color: #666688; }
+.pill.ganador { border-color: #f1c40f; color: #f1c40f; }
+.caballos-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; max-width: 1100px; margin: 0 auto 32px; }
+.caballo-card { background: #111118; border: 2px solid #2a2a3a; border-radius: 20px; padding: 24px; transition: all 0.2s; position: relative; overflow: hidden; }
+.caballo-card.activo { border-color: #c0392b; }
+.caballo-card.eliminado { border-color: #333; opacity: 0.5; }
+.caballo-card.ganador { border-color: #f1c40f; background: #1a1800; }
+.caballo-card.en-carrera { border-color: #e67e22; }
+.caballo-emoji { font-size: 48px; margin-bottom: 8px; display: block; }
+.caballo-nombre { font-size: 22px; font-weight: 700; margin-bottom: 4px; }
+.caballo-estado { font-size: 11px; color: #666688; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 16px; }
+.caballo-capital { font-family: 'JetBrains Mono', monospace; }
+.capital-label { font-size: 11px; color: #666688; text-transform: uppercase; letter-spacing: 1px; }
+.capital-valor { font-size: 28px; font-weight: 700; color: #00e676; }
+.capital-valor.negativo { color: #e74c3c; }
+.capital-valor.cero { color: #666688; }
+.ronda-badge { position: absolute; top: 16px; right: 16px; background: #1a1a24; border: 1px solid #2a2a3a; border-radius: 12px; padding: 4px 12px; font-size: 11px; font-family: 'JetBrains Mono', monospace; color: #666688; }
+.historial { margin-top: 16px; border-top: 1px solid #1a1a24; padding-top: 16px; }
+.historial-title { font-size: 11px; color: #666688; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }
+.historial-item { display: flex; justify-content: space-between; font-size: 12px; font-family: 'JetBrains Mono', monospace; padding: 3px 0; border-bottom: 1px solid #111; }
+.win { color: #00e676; }
+.loss { color: #e74c3c; }
+.posicion-badge { background: #1a1000; border: 1px solid #e67e22; border-radius: 8px; padding: 6px 10px; font-size: 11px; color: #e67e22; margin-top: 10px; font-family: 'JetBrains Mono', monospace; }
+.eliminado-banner { position: absolute; top: 0; left: 0; right: 0; bottom: 0; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.6); border-radius: 18px; font-size: 40px; }
+.ganador-banner { text-align: center; background: #1a1800; border: 2px solid #f1c40f; border-radius: 20px; padding: 32px; max-width: 600px; margin: 0 auto 32px; }
+.ganador-banner h2 { font-size: 28px; color: #f1c40f; margin-bottom: 8px; }
+.ganador-banner .premio { font-size: 48px; font-weight: 700; color: #00e676; font-family: 'JetBrains Mono', monospace; }
+.controles { display: flex; gap: 12px; justify-content: center; margin-bottom: 32px; flex-wrap: wrap; }
+.btn { padding: 12px 28px; border: none; border-radius: 12px; font-size: 14px; font-weight: 600; cursor: pointer; transition: all 0.2s; font-family: 'Space Grotesk', sans-serif; }
+.btn-activar { background: #c0392b; color: white; }
+.btn-activar:hover { background: #e74c3c; }
+.btn-desactivar { background: #1a1a24; color: #666688; border: 1px solid #2a2a3a; }
+.btn-desactivar:hover { color: #e8e8f0; }
+.btn-home { background: #1a1a24; color: #4fc3f7; border: 1px solid #1a3a4a; }
+.btn-home:hover { background: #1a3a4a; }
+.track { max-width: 1100px; margin: 0 auto 32px; background: #111118; border: 1px solid #2a2a3a; border-radius: 20px; padding: 24px; }
+.track-title { font-size: 13px; color: #666688; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 16px; }
+.track-row { display: flex; align-items: center; gap: 16px; margin-bottom: 12px; }
+.track-nombre { width: 120px; font-size: 13px; font-weight: 600; }
+.track-bar-container { flex: 1; background: #1a1a24; border-radius: 8px; height: 24px; overflow: hidden; position: relative; }
+.track-bar { height: 100%; border-radius: 8px; transition: width 0.8s ease; min-width: 4px; }
+.track-capital { width: 100px; text-align: right; font-family: 'JetBrains Mono', monospace; font-size: 13px; }
+.loading { text-align: center; color: #666688; padding: 40px; font-family: 'JetBrains Mono', monospace; }
+.error { text-align: center; color: #e74c3c; padding: 20px; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="logo">AXIS Trading System</div>
+  <div class="title">🏇 REAL <span>LAZARO-PALMA</span></div>
+  <div class="subtitle">Derby de Opciones · 4 Caballos · El Mejor Gana</div>
+</div>
+
+<div class="status-bar" id="statusBar">
+  <div class="pill inactivo" id="pillEstado">⏸ INACTIVO</div>
+  <div class="pill" id="pillCapital">Capital: $0</div>
+  <div class="pill" id="pillVivos">Caballos vivos: 4</div>
+  <div class="pill" id="pillTurno">Turno: —</div>
+</div>
+
+<div class="controles">
+  <button class="btn btn-activar" onclick="activarDerby()">🏇 Activar Nuevo Derby</button>
+  <button class="btn btn-desactivar" onclick="desactivarDerby()">⏸ Pausar</button>
+  <button class="btn btn-home" onclick="location.href='/'">← Home</button>
+</div>
+
+<div id="ganadorBanner" style="display:none"></div>
+
+<div class="track" id="trackSection">
+  <div class="track-title">🏁 Posiciones en la pista</div>
+  <div id="trackRows"><div class="loading">Cargando...</div></div>
+</div>
+
+<div class="caballos-grid" id="caballosGrid">
+  <div class="loading">Cargando caballos...</div>
+</div>
+
+<script>
+const COLORES = ['#e74c3c', '#3498db', '#2ecc71', '#f39c12'];
+const EMOJIS  = ['🏇', '🐴', '🎠', '🦄'];
+
+async function cargarDerby() {
+  try {
+    const r = await fetch('/derby/status');
+    const d = await r.json();
+    renderDerby(d);
+  } catch(e) {
+    document.getElementById('caballosGrid').innerHTML = '<div class="error">Error cargando derby</div>';
+  }
+}
+
+function renderDerby(d) {
+  // Status bar
+  const pillEstado = document.getElementById('pillEstado');
+  if (d.ganador) {
+    pillEstado.className = 'pill ganador';
+    pillEstado.textContent = `🏆 GANADOR: ${d.ganador}`;
+  } else if (d.activo) {
+    pillEstado.className = 'pill activo';
+    pillEstado.textContent = '🏇 EN CARRERA';
+  } else {
+    pillEstado.className = 'pill inactivo';
+    pillEstado.textContent = '⏸ INACTIVO';
+  }
+
+  const vivos = d.caballos.filter(c => !c.eliminado);
+  const capitalTotal = vivos.reduce((s, c) => s + c.capital, 0);
+  document.getElementById('pillCapital').textContent = `Capital: $${capitalTotal.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+  document.getElementById('pillVivos').textContent = `Caballos vivos: ${vivos.length}`;
+  const turnoActual = d.caballos.find(c => c.id === d.turno_actual);
+  document.getElementById('pillTurno').textContent = turnoActual ? `Turno: ${turnoActual.nombre}` : 'Turno: —';
+
+  // Banner ganador
+  const banner = document.getElementById('ganadorBanner');
+  if (d.ganador) {
+    const ganadorObj = d.caballos.find(c => c.nombre === d.ganador);
+    const premio = ganadorObj ? ganadorObj.capital : 0;
+    banner.style.display = 'block';
+    banner.innerHTML = `
+      <div class="ganador-banner">
+        <div style="font-size:60px">🏆</div>
+        <h2>GANADOR DEL REAL LAZARO-PALMA</h2>
+        <div style="font-size:24px; margin: 8px 0; color:#e8e8f0">${d.ganador}</div>
+        ${premio > 0 ? `<div class="premio">$${premio.toLocaleString('en-US', {minimumFractionDigits: 2})}</div>` : '<div style="color:#666688; margin-top:8px">Premio pendiente de confirmar</div>'}
+        <div style="margin-top:16px; color:#666688; font-size:13px">Derby finalizado — activa uno nuevo cuando quieras</div>
+      </div>`;
+  } else {
+    banner.style.display = 'none';
+  }
+
+  // Track (barras de progreso)
+  const maxCapital = Math.max(...d.caballos.map(c => c.capital), 1);
+  let trackHTML = '';
+  d.caballos.forEach((c, i) => {
+    const pct = Math.max((c.capital / maxCapital) * 100, c.capital > 0 ? 2 : 0);
+    const color = c.eliminado ? '#333' : COLORES[i];
+    trackHTML += `
+      <div class="track-row">
+        <div class="track-nombre">${c.eliminado ? '💀' : EMOJIS[i]} ${c.nombre}</div>
+        <div class="track-bar-container">
+          <div class="track-bar" style="width:${pct}%; background:${color}"></div>
+        </div>
+        <div class="track-capital" style="color:${c.eliminado ? '#333' : c.capital > 0 ? '#00e676' : '#666688'}">
+          $${c.capital.toFixed(2)}
+        </div>
+      </div>`;
+  });
+  document.getElementById('trackRows').innerHTML = trackHTML;
+
+  // Cards de caballos
+  let cardsHTML = '';
+  d.caballos.forEach((c, i) => {
+    const enCarrera = c.posicion !== null && !c.eliminado;
+    let cardClass = 'caballo-card';
+    if (c.nombre === d.ganador) cardClass += ' ganador';
+    else if (c.eliminado) cardClass += ' eliminado';
+    else if (enCarrera) cardClass += ' en-carrera';
+    else if (d.activo) cardClass += ' activo';
+
+    let capitalClass = c.capital > 0 ? 'capital-valor' : c.capital < 0 ? 'capital-valor negativo' : 'capital-valor cero';
+    let historialHTML = '';
+    if (c.historial && c.historial.length > 0) {
+      historialHTML = `<div class="historial">
+        <div class="historial-title">Historial de carreras</div>`;
+      c.historial.slice(-5).reverse().forEach(h => {
+        const cls = h.pl_usd >= 0 ? 'win' : 'loss';
+        const signo = h.pl_usd >= 0 ? '+' : '';
+        historialHTML += `<div class="historial-item">
+          <span>Carrera #${h.ronda}</span>
+          <span class="${cls}">${signo}$${h.pl_usd.toFixed(2)} (${signo}${h.pl_pct.toFixed(1)}%)</span>
+        </div>`;
+      });
+      historialHTML += '</div>';
+    }
+
+    cardsHTML += `
+      <div class="${cardClass}">
+        <div class="ronda-badge">Carrera #${c.ronda}</div>
+        <span class="caballo-emoji">${c.nombre === d.ganador ? '🏆' : c.eliminado ? '💀' : EMOJIS[i]}</span>
+        <div class="caballo-nombre">${c.nombre}</div>
+        <div class="caballo-estado">${c.nombre === d.ganador ? '🏆 GANADOR' : c.eliminado ? '💀 Eliminado' : enCarrera ? '🏇 En carrera' : d.activo ? '✅ Disponible' : '⏸ En espera'}</div>
+        <div class="caballo-capital">
+          <div class="capital-label">Capital acumulado</div>
+          <div class="${capitalClass}">$${c.capital.toFixed(2)}</div>
+        </div>
+        ${enCarrera ? `<div class="posicion-badge">📋 Posición activa</div>` : ''}
+        ${historialHTML}
+        ${c.eliminado ? '<div class="eliminado-banner">💀</div>' : ''}
+      </div>`;
+  });
+  document.getElementById('caballosGrid').innerHTML = cardsHTML;
+}
+
+async function activarDerby() {
+  if (!confirm('¿Activar nuevo derby REAL LAZARO-PALMA? Esto reiniciará todos los caballos.')) return;
+  try {
+    const r = await fetch('/derby/activar');
+    const d = await r.json();
+    if (d.ok) { cargarDerby(); }
+    else { alert('Error: ' + JSON.stringify(d)); }
+  } catch(e) { alert('Error de conexión'); }
+}
+
+async function desactivarDerby() {
+  try {
+    const r = await fetch('/derby/desactivar');
+    await r.json();
+    cargarDerby();
+  } catch(e) { alert('Error de conexión'); }
+}
+
+// Cargar al inicio y refrescar cada 30s
+cargarDerby();
+setInterval(cargarDerby, 30000);
+</script>
+</body>
+</html>
