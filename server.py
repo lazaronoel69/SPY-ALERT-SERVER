@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v8.62
+AXIS Breakout Sentinel v8.63
 Estrategias: 1VR | 1VR+ | RPG | GNA | GBA | RCB/CNF
 Multi-activo: SPY, AAPL, BA, GLD
 v8.43: Portfolio fix — ejecutar_orden_tradier en webhook exec/reto | Panic Button al bid |
@@ -31,7 +31,7 @@ v8.24: Timer 15min ordenes pendientes + thread limpieza.
 v8.25: Ruta /canal_estado — devuelve P1/P2/P3 actuales por activo para sincronizar con dashboard. en ordenes pendientes — expiran automaticamente con aviso a Telegram. Webhook mejorado.
 v8.26: Persistencia canales en archivo JSON — sobrevive reinicios. Precarga SPY CNF y GLD RCB.
 v8.27: Ruta /canal_lineas — Railway calcula techo/mitad/piso por cada vela. Dashboard dibuja exactamente lo mismo que Railway evalua.
-v8.62: FIX 1VR reconstruccion — ahora verifica condiciones adicionales (RCB 30% o SMA40>SMA20) igual que evaluacion normal.
+v8.63: FIX 1VR reconstruccion — ahora verifica condiciones adicionales (RCB 30% o SMA40>SMA20) igual que evaluacion normal.
        FIX landing page — mercado abierto solo en horario 9:30-16:00 EST.
        FIX /bitacora/data — agrega ahora_est timestamp.
        NEW /source endpoint — expone codigo fuente para lectura de AI.
@@ -1196,7 +1196,7 @@ def evaluar_activo(simbolo, velas, ahora):
                 v7_c = ed["v7_ayer_close"]
 
                 # ══════════════════════════════════════════════════════
-                # v8.62 FIX — 1VR reconstrucción verifica condiciones
+                # v8.63 FIX — 1VR reconstrucción verifica condiciones
                 # adicionales igual que la evaluación normal
                 # ══════════════════════════════════════════════════════
                 if VR1_ON and v1_close_r < v1_open_r and not ed["vr1_fired"]:
@@ -1215,18 +1215,21 @@ def evaluar_activo(simbolo, velas, ahora):
                         and zona_30_r <= v1_close_r <= techo_r
                     )
                     sma40_gt_sma20_r = sma40_r and sma20_r and sma40_r > sma20_r
-                    if en_rcb_30_r or sma40_gt_sma20_r:
-                        if hora == 10:
-                            label_vr = "1VR+" if en_rcb_30_r else "1VR"
-                            extra_vr = f"<b>Canal RCB:</b> Techo ${techo_r:.2f} | Zona 30%: ${zona_30_r:.2f}\n" if en_rcb_30_r else \
-                                       f"<b>SMA40:</b> ${sma40_r:.2f} > <b>SMA20:</b> ${sma20_r:.2f}\n"
-                            enviar_senal_con_botones(
-                                simbolo, f"{label_vr} — PRIMERA VELA ROJA",
-                                "10:00 EST", v1_close_r, "PUT",
-                                f"<b>Open:</b> ${v1_open_r:.2f} | <b>Close:</b> ${v1_close_r:.2f}\n{extra_vr}"
-                            )
-                    else:
-                        print(f"{simbolo} 1VR reconstrucción sin condición adicional — no dispara")
+                    # 1VR dispara siempre que V1 cierre roja
+                    # Condición adicional solo cambia el label (1VR vs 1VR+)
+                    if hora == 10:
+                        label_vr = "1VR+" if en_rcb_30_r else "1VR"
+                        if en_rcb_30_r:
+                            extra_vr = f"<b>Canal RCB:</b> Techo ${techo_r:.2f} | Zona 30%: ${zona_30_r:.2f}\n"
+                        elif sma40_gt_sma20_r:
+                            extra_vr = f"<b>SMA40:</b> ${sma40_r:.2f} > <b>SMA20:</b> ${sma20_r:.2f}\n"
+                        else:
+                            extra_vr = ""
+                        enviar_senal_con_botones(
+                            simbolo, f"{label_vr} — PRIMERA VELA ROJA",
+                            "10:00 EST", v1_close_r, "PUT",
+                            f"<b>Open:</b> ${v1_open_r:.2f} | <b>Close:</b> ${v1_close_r:.2f}\n{extra_vr}"
+                        )
                     ed["vr1_fired"] = True
                     guardar_estado_dia()
 
@@ -1294,19 +1297,22 @@ def evaluar_activo(simbolo, velas, ahora):
 
             sma40_gt_sma20 = sma40_vr and sma20_vr and sma40_vr > sma20_vr
 
-            if en_rcb_30 or sma40_gt_sma20:
-                ed["vr1_fired"] = True
-                guardar_estado_dia()
-                label_vr = "1VR+" if en_rcb_30 else "1VR"
-                extra_vr = f"<b>Canal RCB:</b> Techo ${techo_vr:.2f} | Zona 30%: ${zona_30:.2f}\n" if en_rcb_30 else \
-                           f"<b>SMA40:</b> ${sma40_vr:.2f} > <b>SMA20:</b> ${sma20_vr:.2f}\n"
-                enviar_senal_con_botones(
-                    simbolo, f"{label_vr} — PRIMERA VELA ROJA",
-                    "10:00 EST", v_close, "PUT",
-                    f"<b>Open:</b> ${v_open:.2f} | <b>Close:</b> ${v_close:.2f}\n{extra_vr}"
-                )
+            # 1VR dispara siempre que V1 cierre roja
+            # Condición adicional solo cambia el label (1VR vs 1VR+)
+            ed["vr1_fired"] = True
+            guardar_estado_dia()
+            label_vr = "1VR+" if en_rcb_30 else "1VR"
+            if en_rcb_30:
+                extra_vr = f"<b>Canal RCB:</b> Techo ${techo_vr:.2f} | Zona 30%: ${zona_30:.2f}\n"
+            elif sma40_gt_sma20:
+                extra_vr = f"<b>SMA40:</b> ${sma40_vr:.2f} > <b>SMA20:</b> ${sma20_vr:.2f}\n"
             else:
-                print(f"{simbolo} 1VR sin condición adicional — no dispara")
+                extra_vr = ""
+            enviar_senal_con_botones(
+                simbolo, f"{label_vr} — PRIMERA VELA ROJA",
+                "10:00 EST", v_close, "PUT",
+                f"<b>Open:</b> ${v_open:.2f} | <b>Close:</b> ${v_close:.2f}\n{extra_vr}"
+            )
 
         # RPG — gap mínimo 0.5%, V1 verde
         if RPG_ON and v7_ayer and v_close > v_open and not ed["rpg_fired"]:
@@ -1961,7 +1967,7 @@ def reporte_horario():
 # LOOP PRINCIPAL
 # ═══════════════════════════════════════════════════════════
 def monitor_loop():
-    print("AXIS Breakout Sentinel v8.62 iniciado...")
+    print("AXIS Breakout Sentinel v8.63 iniciado...")
     while True:
         ahora = datetime.now(EST)
         mins  = ahora.hour * 60 + ahora.minute
@@ -1988,7 +1994,7 @@ def monitor_loop():
 @app.route("/", defaults={"path": ""}, methods=["GET"])
 def home(path=""):
     ahora   = datetime.now(EST)
-    # ── v8.62 FIX: verificar horario además de día hábil ──
+    # ── v8.63 FIX: verificar horario además de día hábil ──
     mercado = es_dia_mercado(ahora) and (570 <= ahora.hour * 60 + ahora.minute < 960)
     pos_count = len(_portfolio["posiciones"]) if _portfolio else 0
     activos_str = " | ".join(ACTIVOS)
@@ -2052,7 +2058,7 @@ def home(path=""):
     </div>
     <div class="status-pill">{ahora.strftime('%H:%M EST')}</div>
     <div class="status-pill">{pos_count} posición{'es' if pos_count != 1 else ''} abierta{'s' if pos_count != 1 else ''}</div>
-    <div class="status-pill">v8.62 · {len(ACTIVOS)} activos</div>
+    <div class="status-pill">v8.63 · {len(ACTIVOS)} activos</div>
   </div>
   <div class="nav-grid">
     <a href="/charts" class="nav-card">
@@ -2079,7 +2085,7 @@ def home(path=""):
   <div class="canales-grid">
     {canales_html}
   </div>
-  <div class="footer">AXIS Breakout Sentinel v8.62 · {activos_str}</div>
+  <div class="footer">AXIS Breakout Sentinel v8.63 · {activos_str}</div>
 </body>
 </html>"""
     from flask import Response
@@ -2099,7 +2105,7 @@ def test():
         else:
             lineas_canal.append(f"  {a}: OFF")
     enviar_telegram(
-        f"✅ <b>AXIS Breakout Sentinel v8.62</b>\n"
+        f"✅ <b>AXIS Breakout Sentinel v8.63</b>\n"
         f"<b>Hora:</b> {ahora.strftime('%A %d/%m/%Y %H:%M EST')}\n"
         f"<b>Mercado:</b> {'Abierto' if es_dia_mercado(ahora) else 'Cerrado'}\n"
         f"<b>1VR:</b> {'ON' if VR1_ON else 'OFF'} | "
@@ -2814,7 +2820,7 @@ def ruta_bitacora_seed():
         "produccion": "https://web-production-bf9d0.up.railway.app",
         "instrucciones_ai": "Lee este archivo completo antes de actuar. NUNCA codifiques sin autorización de Noel. Conversa, diseña, Noel aprueba, luego implementas. Un cambio a la vez. Verifica con /status después de cada deploy.",
         "versiones": {
-            "server_py":          "v8.62",
+            "server_py":          "v8.63",
             "axis_charts_html":   "v1.4.1",
             "axis_portfolio_html":"v1.3",
             "axis_bitacora_html": "v1.0"
@@ -2854,7 +2860,7 @@ def ruta_bitacora_data():
             return jsonify({"entradas": [], "total": 0}), 200
         with open(BITACORA_FILE, "r") as f:
             data = json.load(f)
-        # v8.62 — timestamp para que AI sepa hora/día al conectarse
+        # v8.63 — timestamp para que AI sepa hora/día al conectarse
         data["ahora_est"] = datetime.now(EST).strftime("%Y-%m-%d %H:%M EST")
         data["fuentes"] = {
             "server_py":   "https://web-production-bf9d0.up.railway.app/source/server.py?key=axis2026",
@@ -3018,7 +3024,7 @@ def system_status():
         except Exception as e:
             velas_db[a] = {"status": f"❌ ERROR: {e}"}
     return jsonify({
-        "sistema": "AXIS Breakout Sentinel v8.62",
+        "sistema": "AXIS Breakout Sentinel v8.63",
         "hora_est": ahora.strftime("%Y-%m-%d %H:%M:%S EST"),
         "mercado": "ABIERTO ✅" if mercado_abierto else "CERRADO ⏸",
         "threads": threads_vivos, "activos": ACTIVOS,
@@ -3364,7 +3370,7 @@ def enviar_resumen_diario(ahora):
             f"<b>Win Rate global:</b> {wr} ({hist_wins}/{hist_total})\n\n"
             f"🏆 <b>Reto Millonario:</b> {'Activo' if reto['activo'] else 'Inactivo'}\n"
             f"  Carriles vivos: {vivos}/10 | Capital total: ${cap_reto:,.2f}\n\n"
-            f"<i>AXIS v8.62 | {ahora.strftime('%H:%M EST')}</i>"
+            f"<i>AXIS v8.63 | {ahora.strftime('%H:%M EST')}</i>"
         )
         enviar_telegram(msg)
     except Exception as e:
