@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v8.69
+AXIS Breakout Sentinel v8.70
 Estrategias: 1VR | 1VR+ | RPG | GNA | GBA | RCB/CNF
 Multi-activo: SPY, AAPL, BA, GLD
 v8.43: Portfolio fix — ejecutar_orden_tradier en webhook exec/reto | Panic Button al bid |
@@ -505,7 +505,7 @@ def registrar_posicion(opcion, estrategia, simbolo, precio_entrada, es_reto=Fals
     }
     _portfolio["posiciones"].append(pos)
     if es_reto and carril_id:
-        for c in _portfolio["reto"]["carriles"]:
+        for c in _portfolio["derby"]["caballos"]:
             if c["id"] == carril_id:
                 c["posicion"] = pos["id"]
                 c["ronda"]   += 1
@@ -622,7 +622,7 @@ def cerrar_posicion(pos_id, precio_cierre, motivo="panic"):
     if pos.get("es_reto") and pos.get("carril_id"):
         derby = _portfolio["derby"]
         for c in derby["caballos"]:
-            if c["id"] == pos["carril_id"]:
+            if c["id"] == pos["carril_id"] and c.get("capital_inicial", 0) > 0:
                 nuevo_capital = round(c["capital"] + pl_usd, 2)
                 c["capital"]  = nuevo_capital
                 c["posicion"] = None
@@ -2092,7 +2092,7 @@ def reporte_horario():
 # LOOP PRINCIPAL
 # ═══════════════════════════════════════════════════════════
 def monitor_loop():
-    print("AXIS Breakout Sentinel v8.69 iniciado...")
+    print("AXIS Breakout Sentinel v8.70 iniciado...")
     while True:
         ahora = datetime.now(EST)
         mins  = ahora.hour * 60 + ahora.minute
@@ -2215,7 +2215,7 @@ def home(path=""):
   <div class="canales-grid">
     {canales_html}
   </div>
-  <div class="footer">AXIS Breakout Sentinel v8.69 · {activos_str}</div>
+  <div class="footer">AXIS Breakout Sentinel v8.70 · {activos_str}</div>
 </body>
 </html>"""
     from flask import Response
@@ -2235,7 +2235,7 @@ def test():
         else:
             lineas_canal.append(f"  {a}: OFF")
     enviar_telegram(
-        f"✅ <b>AXIS Breakout Sentinel v8.69</b>\n"
+        f"✅ <b>AXIS Breakout Sentinel v8.70</b>\n"
         f"<b>Hora:</b> {ahora.strftime('%A %d/%m/%Y %H:%M EST')}\n"
         f"<b>Mercado:</b> {'Abierto' if es_dia_mercado(ahora) else 'Cerrado'}\n"
         f"<b>1VR:</b> {'ON' if VR1_ON else 'OFF'} | "
@@ -2598,6 +2598,11 @@ def derby_activar():
     derby["ganador"]          = None
     derby["esperando_cierre"] = False
     derby["turno_actual"]     = 1
+    # Limpiar posiciones abiertas del portfolio — desvinculadas del derby nuevo
+    for pos in _portfolio["posiciones"]:
+        if pos.get("estado") == "abierta":
+            pos["es_reto"]   = False
+            pos["carril_id"] = None
     # Resetear caballos
     for c in derby["caballos"]:
         c["capital"]         = 0
@@ -3196,11 +3201,11 @@ def system_status():
         cargar_portfolio()
     pos_abiertas = len(_portfolio["posiciones"])
     derby = _portfolio.get("derby", _portfolio.get("reto", {}))
-    caballos_vivos = [c for c in derby.get("caballos", derby.get("carriles", [])) if not c.get("eliminado")]
+    caballos_vivos = [c for c in derby.get("caballos", []) if not c.get("eliminado")]
     reto_resumen = {
         "activo": derby.get("activo", False),
         "turno_actual": derby.get("turno_actual", 1),
-        "carriles_vivos": len(caballos_vivos),
+        "caballos_vivos": len(caballos_vivos),
         "capital_total": round(sum(c["capital"] for c in caballos_vivos), 2),
         "ganador": derby.get("ganador"),
     }
@@ -3227,7 +3232,7 @@ def system_status():
         except Exception as e:
             velas_db[a] = {"status": f"❌ ERROR: {e}"}
     return jsonify({
-        "sistema": "AXIS Breakout Sentinel v8.69",
+        "sistema": "AXIS Breakout Sentinel v8.70",
         "hora_est": ahora.strftime("%Y-%m-%d %H:%M:%S EST"),
         "mercado": "ABIERTO ✅" if mercado_abierto else "CERRADO ⏸",
         "threads": threads_vivos, "activos": ACTIVOS,
@@ -3555,8 +3560,8 @@ def enviar_resumen_diario(ahora):
         pl_dia = sum(p.get("pl_usd", 0) or 0 for p in cerradas_hoy)
         wins   = sum(1 for p in cerradas_hoy if (p.get("pl_usd", 0) or 0) > 0)
         reto   = _portfolio.get("derby", _portfolio.get("reto", {}))
-        cap_reto = sum(c["capital"] for c in reto.get("caballos", reto.get("carriles", [])) if not c.get("eliminado"))
-        vivos  = sum(1 for c in reto.get("caballos", reto.get("carriles", [])) if not c.get("eliminado"))
+        cap_reto = sum(c["capital"] for c in reto.get("caballos", []) if not c.get("eliminado"))
+        vivos  = sum(1 for c in reto.get("caballos", []) if not c.get("eliminado"))
         hist_total = len(_portfolio["historial"])
         hist_wins  = sum(1 for p in _portfolio["historial"] if (p.get("pl_usd", 0) or 0) > 0)
         wr = f"{round(hist_wins/hist_total*100,1)}%" if hist_total else "—"
