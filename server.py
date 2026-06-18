@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v8.68
+AXIS Breakout Sentinel v8.69
 Estrategias: 1VR | 1VR+ | RPG | GNA | GBA | RCB/CNF
 Multi-activo: SPY, AAPL, BA, GLD
 v8.43: Portfolio fix — ejecutar_orden_tradier en webhook exec/reto | Panic Button al bid |
@@ -1082,15 +1082,23 @@ def get_velas(simbolo, outputsize=280):
                 h = max(float(b["high"]) for b in bs)
                 l = min(float(b["low"])  for b in bs)
                 c = float(bs[-1]["close"])
-                # Regla definitiva: una vela solo existe si su ultima barra de 15min
-                # ya cerro + 1 minuto (para dar tiempo a Tradier de consolidar el dato)
-                ultima_barra_ts = bs[-1]["time"].replace("T", " ")[:19]
+                # Regla definitiva AXIS: una vela solo existe a partir del :01
+                # despues de su hora de cierre completa
+                # V1 cierra a las 10:00 → disponible a las 10:01
+                # V2 cierra a las 11:00 → disponible a las 11:01
+                # etc.
+                vela_cierre_hora = {
+                    "V1": 10, "V2": 11, "V3": 12, "V4": 13,
+                    "V5": 14, "V6": 15, "V7": 16
+                }
                 try:
-                    ultima_barra_dt = dt2.strptime(ultima_barra_ts, "%Y-%m-%d %H:%M:%S")
-                    vela_disponible = EST.localize(ultima_barra_dt + timedelta(minutes=16))
-                    ahora_est_gv = datetime.now(EST)
-                    if ahora_est_gv < vela_disponible:
-                        continue  # vela aun no disponible — ultima barra no cerro + 1min
+                    hora_cierre = vela_cierre_hora.get(vela)
+                    if hora_cierre:
+                        anno, mes, dia = int(fecha[:4]), int(fecha[5:7]), int(fecha[8:10])
+                        cierre_dt = datetime(anno, mes, dia, hora_cierre, 1, 0)
+                        cierre_est = EST.localize(cierre_dt)
+                        if datetime.now(EST) < cierre_est:
+                            continue  # vela no disponible aun
                 except:
                     pass
 
@@ -2084,7 +2092,7 @@ def reporte_horario():
 # LOOP PRINCIPAL
 # ═══════════════════════════════════════════════════════════
 def monitor_loop():
-    print("AXIS Breakout Sentinel v8.68 iniciado...")
+    print("AXIS Breakout Sentinel v8.69 iniciado...")
     while True:
         ahora = datetime.now(EST)
         mins  = ahora.hour * 60 + ahora.minute
@@ -2207,7 +2215,7 @@ def home(path=""):
   <div class="canales-grid">
     {canales_html}
   </div>
-  <div class="footer">AXIS Breakout Sentinel v8.68 · {activos_str}</div>
+  <div class="footer">AXIS Breakout Sentinel v8.69 · {activos_str}</div>
 </body>
 </html>"""
     from flask import Response
@@ -2227,7 +2235,7 @@ def test():
         else:
             lineas_canal.append(f"  {a}: OFF")
     enviar_telegram(
-        f"✅ <b>AXIS Breakout Sentinel v8.68</b>\n"
+        f"✅ <b>AXIS Breakout Sentinel v8.69</b>\n"
         f"<b>Hora:</b> {ahora.strftime('%A %d/%m/%Y %H:%M EST')}\n"
         f"<b>Mercado:</b> {'Abierto' if es_dia_mercado(ahora) else 'Cerrado'}\n"
         f"<b>1VR:</b> {'ON' if VR1_ON else 'OFF'} | "
@@ -3219,7 +3227,7 @@ def system_status():
         except Exception as e:
             velas_db[a] = {"status": f"❌ ERROR: {e}"}
     return jsonify({
-        "sistema": "AXIS Breakout Sentinel v8.68",
+        "sistema": "AXIS Breakout Sentinel v8.69",
         "hora_est": ahora.strftime("%Y-%m-%d %H:%M:%S EST"),
         "mercado": "ABIERTO ✅" if mercado_abierto else "CERRADO ⏸",
         "threads": threads_vivos, "activos": ACTIVOS,
