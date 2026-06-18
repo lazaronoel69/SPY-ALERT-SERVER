@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v8.67
+AXIS Breakout Sentinel v8.68
 Estrategias: 1VR | 1VR+ | RPG | GNA | GBA | RCB/CNF
 Multi-activo: SPY, AAPL, BA, GLD
 v8.43: Portfolio fix — ejecutar_orden_tradier en webhook exec/reto | Panic Button al bid |
@@ -956,23 +956,10 @@ def construir_base_datos_activo(simbolo):
             if s3 and s3 != "null":
                 b3 = s3.get("data", [])
                 if isinstance(b3, dict): b3 = [b3]
-                from datetime import datetime as _dt3, timedelta as _td3
-                ahora_est_c = datetime.now(EST)
-                b3_cerradas = []
                 for barra in b3:
-                    try:
-                        ts_str = barra["time"].replace("T", " ")[:19]
-                        barra_dt = _dt3.strptime(ts_str, "%Y-%m-%d %H:%M:%S")
-                        barra_cierre = barra_dt + _td3(minutes=1)
-                        barra_cierre_est = EST.localize(barra_cierre)
-                        if ahora_est_c >= barra_cierre_est:
-                            barra["interval"] = "15min"
-                            b3_cerradas.append(barra)
-                    except:
-                        barra["interval"] = "15min"
-                        b3_cerradas.append(barra)
-                todas_barras.extend(b3_cerradas)
-                print(f"  {simbolo} timesales 15min hoy: {len(b3_cerradas)} barras cerradas (de {len(b3)} recibidas)")
+                    barra["interval"] = "15min"
+                todas_barras.extend(b3)
+                print(f"  {simbolo} timesales 15min hoy: {len(b3)} barras")
     except Exception as e:
         print(f"  {simbolo} error timesales: {e}")
 
@@ -1037,31 +1024,10 @@ def actualizar_velas_local(simbolo):
         print(f"Error actualizando velas {simbolo}: {e}")
 
     if nuevas:
-        # FILTER: no guardar barras cuyo periodo de 15min no haya cerrado
-        # Buffer de 2 minutos extra para delay de Tradier
-        from datetime import datetime as _dt2, timedelta as _td2
-        ahora_est_utc = datetime.now(EST)
-        nuevas_cerradas = []
-        for b in nuevas:
-            try:
-                ts_str = b["time"].replace("T", " ")[:19]
-                barra_dt = _dt2.strptime(ts_str, "%Y-%m-%d %H:%M:%S")
-                barra_cierre = barra_dt + _td2(minutes=1)  # 15min + 2min buffer
-                barra_cierre_est = EST.localize(barra_cierre)
-                if ahora_est_utc >= barra_cierre_est:
-                    nuevas_cerradas.append(b)
-                else:
-                    print(f"{simbolo}: barra {b['time']} aun abierta — no guardada")
-            except Exception as e:
-                print(f"{simbolo}: error verificando barra {b.get('time','?')}: {e}")
-                nuevas_cerradas.append(b)  # en caso de error, guardar igual
-        if nuevas_cerradas:
-            local["barras"].extend(nuevas_cerradas)
-            local["ultima_barra"] = nuevas_cerradas[-1]["time"]
-            guardar_velas_local(simbolo, local)
-            print(f"{simbolo}: +{len(nuevas_cerradas)} barras cerradas guardadas (de {len(nuevas)} recibidas)")
-        elif nuevas:
-            print(f"{simbolo}: {len(nuevas)} barras recibidas pero ninguna cerrada aun — sin cambios")
+        local["barras"].extend(nuevas)
+        local["ultima_barra"] = nuevas[-1]["time"]
+        guardar_velas_local(simbolo, local)
+        print(f"{simbolo}: +{len(nuevas)} barras nuevas guardadas")
 
     return True
 
@@ -1116,6 +1082,18 @@ def get_velas(simbolo, outputsize=280):
                 h = max(float(b["high"]) for b in bs)
                 l = min(float(b["low"])  for b in bs)
                 c = float(bs[-1]["close"])
+                # Regla definitiva: una vela solo existe si su ultima barra de 15min
+                # ya cerro + 1 minuto (para dar tiempo a Tradier de consolidar el dato)
+                ultima_barra_ts = bs[-1]["time"].replace("T", " ")[:19]
+                try:
+                    ultima_barra_dt = dt2.strptime(ultima_barra_ts, "%Y-%m-%d %H:%M:%S")
+                    vela_disponible = EST.localize(ultima_barra_dt + timedelta(minutes=16))
+                    ahora_est_gv = datetime.now(EST)
+                    if ahora_est_gv < vela_disponible:
+                        continue  # vela aun no disponible — ultima barra no cerro + 1min
+                except:
+                    pass
+
                 resultado.append({
                     "datetime":      f"{fecha} {vela_hora[vela]}",
                     "open":          str(round(o, 4)),
@@ -2106,7 +2084,7 @@ def reporte_horario():
 # LOOP PRINCIPAL
 # ═══════════════════════════════════════════════════════════
 def monitor_loop():
-    print("AXIS Breakout Sentinel v8.67 iniciado...")
+    print("AXIS Breakout Sentinel v8.68 iniciado...")
     while True:
         ahora = datetime.now(EST)
         mins  = ahora.hour * 60 + ahora.minute
@@ -2229,7 +2207,7 @@ def home(path=""):
   <div class="canales-grid">
     {canales_html}
   </div>
-  <div class="footer">AXIS Breakout Sentinel v8.67 · {activos_str}</div>
+  <div class="footer">AXIS Breakout Sentinel v8.68 · {activos_str}</div>
 </body>
 </html>"""
     from flask import Response
@@ -2249,7 +2227,7 @@ def test():
         else:
             lineas_canal.append(f"  {a}: OFF")
     enviar_telegram(
-        f"✅ <b>AXIS Breakout Sentinel v8.67</b>\n"
+        f"✅ <b>AXIS Breakout Sentinel v8.68</b>\n"
         f"<b>Hora:</b> {ahora.strftime('%A %d/%m/%Y %H:%M EST')}\n"
         f"<b>Mercado:</b> {'Abierto' if es_dia_mercado(ahora) else 'Cerrado'}\n"
         f"<b>1VR:</b> {'ON' if VR1_ON else 'OFF'} | "
@@ -2947,21 +2925,10 @@ def rellenar_velas():
             barras_tradier = s.get("data", [])
             if isinstance(barras_tradier, dict): barras_tradier = [barras_tradier]
             tiempos_existentes = {b["time"] for b in b15}
-            from datetime import datetime as _dtr, timedelta as _tdr
-            ahora_est_r = datetime.now(EST)
             nuevas = []
             for b in barras_tradier:
                 t = b["time"]
                 if t not in tiempos_existentes:
-                    # Verificar que la barra ya cerro (buffer 17min)
-                    try:
-                        ts_str = t.replace("T", " ")[:19]
-                        barra_dt = _dtr.strptime(ts_str, "%Y-%m-%d %H:%M:%S")
-                        barra_cierre = EST.localize(barra_dt + _tdr(minutes=1))
-                        if ahora_est_r < barra_cierre:
-                            continue  # barra aun abierta — no guardar
-                    except:
-                        pass
                     b["interval"] = "15min"
                     nuevas.append(b)
             if nuevas:
@@ -3252,7 +3219,7 @@ def system_status():
         except Exception as e:
             velas_db[a] = {"status": f"❌ ERROR: {e}"}
     return jsonify({
-        "sistema": "AXIS Breakout Sentinel v8.67",
+        "sistema": "AXIS Breakout Sentinel v8.68",
         "hora_est": ahora.strftime("%Y-%m-%d %H:%M:%S EST"),
         "mercado": "ABIERTO ✅" if mercado_abierto else "CERRADO ⏸",
         "threads": threads_vivos, "activos": ACTIVOS,
