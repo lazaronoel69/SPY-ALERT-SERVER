@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v8.66
+AXIS Breakout Sentinel v8.67
 Estrategias: 1VR | 1VR+ | RPG | GNA | GBA | RCB/CNF
 Multi-activo: SPY, AAPL, BA, GLD
 v8.43: Portfolio fix — ejecutar_orden_tradier en webhook exec/reto | Panic Button al bid |
@@ -963,7 +963,7 @@ def construir_base_datos_activo(simbolo):
                     try:
                         ts_str = barra["time"].replace("T", " ")[:19]
                         barra_dt = _dt3.strptime(ts_str, "%Y-%m-%d %H:%M:%S")
-                        barra_cierre = barra_dt + _td3(minutes=17)
+                        barra_cierre = barra_dt + _td3(minutes=1)
                         barra_cierre_est = EST.localize(barra_cierre)
                         if ahora_est_c >= barra_cierre_est:
                             barra["interval"] = "15min"
@@ -1046,7 +1046,7 @@ def actualizar_velas_local(simbolo):
             try:
                 ts_str = b["time"].replace("T", " ")[:19]
                 barra_dt = _dt2.strptime(ts_str, "%Y-%m-%d %H:%M:%S")
-                barra_cierre = barra_dt + _td2(minutes=17)  # 15min + 2min buffer
+                barra_cierre = barra_dt + _td2(minutes=1)  # 15min + 2min buffer
                 barra_cierre_est = EST.localize(barra_cierre)
                 if ahora_est_utc >= barra_cierre_est:
                     nuevas_cerradas.append(b)
@@ -2106,7 +2106,7 @@ def reporte_horario():
 # LOOP PRINCIPAL
 # ═══════════════════════════════════════════════════════════
 def monitor_loop():
-    print("AXIS Breakout Sentinel v8.66 iniciado...")
+    print("AXIS Breakout Sentinel v8.67 iniciado...")
     while True:
         ahora = datetime.now(EST)
         mins  = ahora.hour * 60 + ahora.minute
@@ -2229,7 +2229,7 @@ def home(path=""):
   <div class="canales-grid">
     {canales_html}
   </div>
-  <div class="footer">AXIS Breakout Sentinel v8.66 · {activos_str}</div>
+  <div class="footer">AXIS Breakout Sentinel v8.67 · {activos_str}</div>
 </body>
 </html>"""
     from flask import Response
@@ -2249,7 +2249,7 @@ def test():
         else:
             lineas_canal.append(f"  {a}: OFF")
     enviar_telegram(
-        f"✅ <b>AXIS Breakout Sentinel v8.66</b>\n"
+        f"✅ <b>AXIS Breakout Sentinel v8.67</b>\n"
         f"<b>Hora:</b> {ahora.strftime('%A %d/%m/%Y %H:%M EST')}\n"
         f"<b>Mercado:</b> {'Abierto' if es_dia_mercado(ahora) else 'Cerrado'}\n"
         f"<b>1VR:</b> {'ON' if VR1_ON else 'OFF'} | "
@@ -2957,7 +2957,7 @@ def rellenar_velas():
                     try:
                         ts_str = t.replace("T", " ")[:19]
                         barra_dt = _dtr.strptime(ts_str, "%Y-%m-%d %H:%M:%S")
-                        barra_cierre = EST.localize(barra_dt + _tdr(minutes=17))
+                        barra_cierre = EST.localize(barra_dt + _tdr(minutes=1))
                         if ahora_est_r < barra_cierre:
                             continue  # barra aun abierta — no guardar
                     except:
@@ -3252,7 +3252,7 @@ def system_status():
         except Exception as e:
             velas_db[a] = {"status": f"❌ ERROR: {e}"}
     return jsonify({
-        "sistema": "AXIS Breakout Sentinel v8.66",
+        "sistema": "AXIS Breakout Sentinel v8.67",
         "hora_est": ahora.strftime("%Y-%m-%d %H:%M:%S EST"),
         "mercado": "ABIERTO ✅" if mercado_abierto else "CERRADO ⏸",
         "threads": threads_vivos, "activos": ACTIVOS,
