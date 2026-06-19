@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v8.73
+AXIS Breakout Sentinel v8.74
 Estrategias: 1VR | 1VR+ | RPG | GNA | GBA | RCB/CNF
 Multi-activo: SPY, AAPL, BA, GLD
 v8.43: Portfolio fix — ejecutar_orden_tradier en webhook exec/reto | Panic Button al bid |
@@ -875,10 +875,13 @@ def guardar_velas_local(simbolo, data):
         print(f"Error guardando velas locales {simbolo}: {e}")
 
 def agregar_barra_diaria(simbolo, fecha_str=None):
-    """Calcula el OHLC diario desde las barras 15min de una fecha y lo agrega
+    """Obtiene el OHLC diario OFICIAL directo de Tradier history (no lo
+    construye desde barras 15min, para evitar discrepancias) y lo agrega
     a la base permanente si no existe ya. Usado tanto en tiempo real (4:16 PM)
-    como en las redes de seguridad (arranque y /rellenar_velas)."""
-    from datetime import date as _date, datetime as _dt2
+    como en las redes de seguridad (arranque y /rellenar_velas).
+    No afecta las velas AXIS por hora (V1-V7) — esas siguen usando barras 15min."""
+    from datetime import date as _date
+
     if fecha_str is None:
         fecha_str = _date.today().strftime("%Y-%m-%d")
 
@@ -888,26 +891,38 @@ def agregar_barra_diaria(simbolo, fecha_str=None):
     if fecha_str in fechas_existentes:
         return False  # ya existe, no duplicar
 
-    barras_15min_dia = [
-        b for b in local["barras"]
-        if b.get("interval") == "15min" and b["time"][:10] == fecha_str
-    ]
-    if len(barras_15min_dia) < 4:
-        return False  # dia incompleto, no construir barra diaria todavia
+    try:
+        r = requests.get(
+            f"{TRADIER_BASE_REAL}/markets/history",
+            headers=TRADIER_HEADERS_REAL,
+            params={"symbol": simbolo, "interval": "daily", "start": fecha_str, "end": fecha_str},
+            timeout=15
+        )
+        if r.status_code != 200:
+            print(f"{simbolo}: error HTTP {r.status_code} pidiendo daily {fecha_str}")
+            return False
+        hist = r.json().get("history") or {}
+        dias = hist.get("day", [])
+        if isinstance(dias, dict): dias = [dias]
+        if not dias:
+            return False  # Tradier aun no tiene el dato consolidado de ese dia
+        d = dias[0]
+        nueva_daily = {
+            "time":     fecha_str + "T16:00:00",
+            "open":     float(d["open"]),
+            "high":     float(d["high"]),
+            "low":      float(d["low"]),
+            "close":    float(d["close"]),
+            "volume":   int(d.get("volume", 0)),
+            "interval": "daily"
+        }
+    except Exception as e:
+        print(f"{simbolo}: error obteniendo daily Tradier {fecha_str}: {e}")
+        return False
 
-    barras_15min_dia.sort(key=lambda x: x["time"])
-    nueva_daily = {
-        "time":     fecha_str + "T16:00:00",
-        "open":     float(barras_15min_dia[0]["open"]),
-        "high":     max(float(b["high"]) for b in barras_15min_dia),
-        "low":      min(float(b["low"])  for b in barras_15min_dia),
-        "close":    float(barras_15min_dia[-1]["close"]),
-        "volume":   sum(int(b.get("volume", 0)) for b in barras_15min_dia),
-        "interval": "daily"
-    }
     local["barras"].append(nueva_daily)
     guardar_velas_local(simbolo, local)
-    print(f"{simbolo}: barra diaria agregada — {fecha_str} O:{nueva_daily['open']:.2f} C:{nueva_daily['close']:.2f}")
+    print(f"{simbolo}: barra diaria agregada (Tradier oficial) — {fecha_str} O:{nueva_daily['open']:.2f} C:{nueva_daily['close']:.2f}")
     return True
 
 def rellenar_dias_faltantes(simbolo, dias_atras=10):
@@ -2152,7 +2167,7 @@ def reporte_horario():
 # LOOP PRINCIPAL
 # ═══════════════════════════════════════════════════════════
 def monitor_loop():
-    print("AXIS Breakout Sentinel v8.73 iniciado...")
+    print("AXIS Breakout Sentinel v8.74 iniciado...")
     while True:
         ahora = datetime.now(EST)
         mins  = ahora.hour * 60 + ahora.minute
@@ -2275,7 +2290,7 @@ def home(path=""):
   <div class="canales-grid">
     {canales_html}
   </div>
-  <div class="footer">AXIS Breakout Sentinel v8.73 · {activos_str}</div>
+  <div class="footer">AXIS Breakout Sentinel v8.74 · {activos_str}</div>
 </body>
 </html>"""
     from flask import Response
@@ -2295,7 +2310,7 @@ def test():
         else:
             lineas_canal.append(f"  {a}: OFF")
     enviar_telegram(
-        f"✅ <b>AXIS Breakout Sentinel v8.73</b>\n"
+        f"✅ <b>AXIS Breakout Sentinel v8.74</b>\n"
         f"<b>Hora:</b> {ahora.strftime('%A %d/%m/%Y %H:%M EST')}\n"
         f"<b>Mercado:</b> {'Abierto' if es_dia_mercado(ahora) else 'Cerrado'}\n"
         f"<b>1VR:</b> {'ON' if VR1_ON else 'OFF'} | "
@@ -3411,7 +3426,7 @@ def system_status():
         except Exception as e:
             velas_db[a] = {"status": f"❌ ERROR: {e}"}
     return jsonify({
-        "sistema": "AXIS Breakout Sentinel v8.73",
+        "sistema": "AXIS Breakout Sentinel v8.74",
         "hora_est": ahora.strftime("%Y-%m-%d %H:%M:%S EST"),
         "mercado": "ABIERTO ✅" if mercado_abierto else "CERRADO ⏸",
         "threads": threads_vivos, "activos": ACTIVOS,
