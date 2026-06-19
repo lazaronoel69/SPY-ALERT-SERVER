@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v8.71
+AXIS Breakout Sentinel v8.72
 Estrategias: 1VR | 1VR+ | RPG | GNA | GBA | RCB/CNF
 Multi-activo: SPY, AAPL, BA, GLD
 v8.43: Portfolio fix — ejecutar_orden_tradier en webhook exec/reto | Panic Button al bid |
@@ -874,6 +874,58 @@ def guardar_velas_local(simbolo, data):
     except Exception as e:
         print(f"Error guardando velas locales {simbolo}: {e}")
 
+def agregar_barra_diaria(simbolo, fecha_str=None):
+    """Calcula el OHLC diario desde las barras 15min de una fecha y lo agrega
+    a la base permanente si no existe ya. Usado tanto en tiempo real (4:16 PM)
+    como en las redes de seguridad (arranque y /rellenar_velas)."""
+    from datetime import date as _date, datetime as _dt2
+    if fecha_str is None:
+        fecha_str = _date.today().strftime("%Y-%m-%d")
+
+    local = cargar_velas_local(simbolo)
+    barras_daily = [b for b in local["barras"] if b.get("interval") == "daily"]
+    fechas_existentes = {b["time"][:10] for b in barras_daily}
+    if fecha_str in fechas_existentes:
+        return False  # ya existe, no duplicar
+
+    barras_15min_dia = [
+        b for b in local["barras"]
+        if b.get("interval") == "15min" and b["time"][:10] == fecha_str
+    ]
+    if len(barras_15min_dia) < 4:
+        return False  # dia incompleto, no construir barra diaria todavia
+
+    barras_15min_dia.sort(key=lambda x: x["time"])
+    nueva_daily = {
+        "time":     fecha_str + "T16:00:00",
+        "open":     float(barras_15min_dia[0]["open"]),
+        "high":     max(float(b["high"]) for b in barras_15min_dia),
+        "low":      min(float(b["low"])  for b in barras_15min_dia),
+        "close":    float(barras_15min_dia[-1]["close"]),
+        "volume":   sum(int(b.get("volume", 0)) for b in barras_15min_dia),
+        "interval": "daily"
+    }
+    local["barras"].append(nueva_daily)
+    guardar_velas_local(simbolo, local)
+    print(f"{simbolo}: barra diaria agregada — {fecha_str} O:{nueva_daily['open']:.2f} C:{nueva_daily['close']:.2f}")
+    return True
+
+def rellenar_dias_faltantes(simbolo, dias_atras=10):
+    """Red de seguridad: revisa los ultimos N dias habiles y agrega
+    cualquier barra diaria faltante usando las barras 15min ya guardadas."""
+    from datetime import date as _date, timedelta as _td
+    hoy = _date.today()
+    agregadas = 0
+    for i in range(dias_atras):
+        fecha = hoy - _td(days=i)
+        if fecha.weekday() >= 5:
+            continue
+        if not es_dia_mercado(EST.localize(datetime(fecha.year, fecha.month, fecha.day, 12, 0))):
+            continue
+        if agregar_barra_diaria(simbolo, fecha.strftime("%Y-%m-%d")):
+            agregadas += 1
+    return agregadas
+
 def construir_base_datos_activo(simbolo):
     from datetime import date as _date, timedelta as _td
     local = cargar_velas_local(simbolo)
@@ -1036,6 +1088,14 @@ def construir_base_datos():
     for simbolo in ACTIVOS:
         construir_base_datos_activo(simbolo)
     print("Base de datos de velas lista.")
+    print("Verificando barras diarias faltantes (red de seguridad)...")
+    for simbolo in ACTIVOS:
+        try:
+            agregadas = rellenar_dias_faltantes(simbolo, dias_atras=10)
+            if agregadas:
+                print(f"{simbolo}: {agregadas} barras diarias recuperadas")
+        except Exception as e:
+            print(f"Error rellenando dias faltantes {simbolo}: {e}")
 
 def get_velas(simbolo, outputsize=280):
     try:
@@ -2092,7 +2152,7 @@ def reporte_horario():
 # LOOP PRINCIPAL
 # ═══════════════════════════════════════════════════════════
 def monitor_loop():
-    print("AXIS Breakout Sentinel v8.71 iniciado...")
+    print("AXIS Breakout Sentinel v8.72 iniciado...")
     while True:
         ahora = datetime.now(EST)
         mins  = ahora.hour * 60 + ahora.minute
@@ -2215,7 +2275,7 @@ def home(path=""):
   <div class="canales-grid">
     {canales_html}
   </div>
-  <div class="footer">AXIS Breakout Sentinel v8.71 · {activos_str}</div>
+  <div class="footer">AXIS Breakout Sentinel v8.72 · {activos_str}</div>
 </body>
 </html>"""
     from flask import Response
@@ -2235,7 +2295,7 @@ def test():
         else:
             lineas_canal.append(f"  {a}: OFF")
     enviar_telegram(
-        f"✅ <b>AXIS Breakout Sentinel v8.71</b>\n"
+        f"✅ <b>AXIS Breakout Sentinel v8.72</b>\n"
         f"<b>Hora:</b> {ahora.strftime('%A %d/%m/%Y %H:%M EST')}\n"
         f"<b>Mercado:</b> {'Abierto' if es_dia_mercado(ahora) else 'Cerrado'}\n"
         f"<b>1VR:</b> {'ON' if VR1_ON else 'OFF'} | "
@@ -2993,6 +3053,13 @@ def rellenar_velas():
                 resultado[simbolo] = f"✅ +{len(nuevas)} barras nuevas ({antes} → {antes+len(nuevas)})"
             else:
                 resultado[simbolo] = f"✅ Sin faltantes ({antes} barras)"
+            # Red de seguridad — rellenar barras diarias faltantes tambien
+            try:
+                daily_agregadas = rellenar_dias_faltantes(simbolo, dias_atras=10)
+                if daily_agregadas:
+                    resultado[simbolo] += f" | +{daily_agregadas} barras diarias recuperadas"
+            except Exception as e:
+                resultado[simbolo] += f" | error daily: {e}"
         except Exception as e:
             resultado[simbolo] = f"❌ Error: {e}"
     return jsonify({"fecha": str(hoy), "resultado": resultado}), 200
@@ -3273,7 +3340,7 @@ def system_status():
         except Exception as e:
             velas_db[a] = {"status": f"❌ ERROR: {e}"}
     return jsonify({
-        "sistema": "AXIS Breakout Sentinel v8.71",
+        "sistema": "AXIS Breakout Sentinel v8.72",
         "hora_est": ahora.strftime("%Y-%m-%d %H:%M:%S EST"),
         "mercado": "ABIERTO ✅" if mercado_abierto else "CERRADO ⏸",
         "threads": threads_vivos, "activos": ACTIVOS,
@@ -3659,6 +3726,12 @@ def loop_v7_anticipada():
                             corregir_cierre_v7(simbolo); ejecutado_416.add(simbolo)
                     if "resumen" not in ejecutado_416:
                         ejecutado_416.add("resumen")
+                        fecha_hoy_v7 = ahora.strftime("%Y-%m-%d")
+                        for simbolo_daily in ACTIVOS:
+                            try:
+                                agregar_barra_diaria(simbolo_daily, fecha_hoy_v7)
+                            except Exception as e:
+                                print(f"Error agregando barra diaria {simbolo_daily}: {e}")
                         guardar_snapshot_precios(ahora)
                         archivar_señales_dia(ahora.strftime("%Y-%m-%d"))
                         enviar_resumen_diario(ahora)
