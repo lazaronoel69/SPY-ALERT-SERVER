@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v8.74
+AXIS Breakout Sentinel v8.75
 Estrategias: 1VR | 1VR+ | RPG | GNA | GBA | RCB/CNF
 Multi-activo: SPY, AAPL, BA, GLD
 v8.43: Portfolio fix — ejecutar_orden_tradier en webhook exec/reto | Panic Button al bid |
@@ -2167,7 +2167,7 @@ def reporte_horario():
 # LOOP PRINCIPAL
 # ═══════════════════════════════════════════════════════════
 def monitor_loop():
-    print("AXIS Breakout Sentinel v8.74 iniciado...")
+    print("AXIS Breakout Sentinel v8.75 iniciado...")
     while True:
         ahora = datetime.now(EST)
         mins  = ahora.hour * 60 + ahora.minute
@@ -2290,7 +2290,7 @@ def home(path=""):
   <div class="canales-grid">
     {canales_html}
   </div>
-  <div class="footer">AXIS Breakout Sentinel v8.74 · {activos_str}</div>
+  <div class="footer">AXIS Breakout Sentinel v8.75 · {activos_str}</div>
 </body>
 </html>"""
     from flask import Response
@@ -2310,7 +2310,7 @@ def test():
         else:
             lineas_canal.append(f"  {a}: OFF")
     enviar_telegram(
-        f"✅ <b>AXIS Breakout Sentinel v8.74</b>\n"
+        f"✅ <b>AXIS Breakout Sentinel v8.75</b>\n"
         f"<b>Hora:</b> {ahora.strftime('%A %d/%m/%Y %H:%M EST')}\n"
         f"<b>Mercado:</b> {'Abierto' if es_dia_mercado(ahora) else 'Cerrado'}\n"
         f"<b>1VR:</b> {'ON' if VR1_ON else 'OFF'} | "
@@ -3014,7 +3014,7 @@ def tradier_raw():
                 "volume": int(d.get("volume", 0))
             } for d in data]
         else:
-            fecha_ini = hoy - _td(days=2)
+            fecha_ini = hoy - _td(days=dias)
             r = requests.get(
                 f"{TRADIER_BASE_REAL}/markets/timesales",
                 headers=TRADIER_HEADERS_REAL,
@@ -3024,7 +3024,7 @@ def tradier_raw():
                     "end": f"{hoy.strftime('%Y-%m-%d')} 16:30",
                     "session_filter": "open",
                 },
-                timeout=15
+                timeout=20
             )
             if r.status_code != 200:
                 return jsonify({"error": f"Tradier HTTP {r.status_code}"}), 500
@@ -3033,7 +3033,6 @@ def tradier_raw():
             if series and series != "null":
                 data = series.get("data", [])
                 if isinstance(data, dict): data = [data]
-            data = data[-dias:]
             resultado = [{
                 "time": d["time"], "open": float(d["open"]), "high": float(d["high"]),
                 "low": float(d["low"]), "close": float(d["close"])
@@ -3426,7 +3425,7 @@ def system_status():
         except Exception as e:
             velas_db[a] = {"status": f"❌ ERROR: {e}"}
     return jsonify({
-        "sistema": "AXIS Breakout Sentinel v8.74",
+        "sistema": "AXIS Breakout Sentinel v8.75",
         "hora_est": ahora.strftime("%Y-%m-%d %H:%M:%S EST"),
         "mercado": "ABIERTO ✅" if mercado_abierto else "CERRADO ⏸",
         "threads": threads_vivos, "activos": ACTIVOS,
