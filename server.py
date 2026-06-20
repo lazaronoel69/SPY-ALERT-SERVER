@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v8.75
+AXIS Breakout Sentinel v8.76
 Estrategias: 1VR | 1VR+ | RPG | GNA | GBA | RCB/CNF
 Multi-activo: SPY, AAPL, BA, GLD
 v8.43: Portfolio fix — ejecutar_orden_tradier en webhook exec/reto | Panic Button al bid |
@@ -1501,13 +1501,22 @@ def evaluar_activo(simbolo, velas, ahora):
                 ed["gba_activo"] = True
                 print(f"{simbolo} GBA activado — techo: ${v_close:.2f}")
 
-        # Canal V1 candidato
-        if c["on"] and not c["apagado"]:
-            ahora_dt = EST.localize(datetime.strptime(vela_actual["datetime"], "%Y-%m-%d %H:%M:%S"))
-            techo = calcular_techo_canal(simbolo, ahora_dt)
-            if techo and v_close > techo and v_alcista:
-                c["v1_candidato"] = v_high
-                print(f"{simbolo} Canal V1 candidato Auto-P2: ${v_high:.2f}")
+        # Canal V1 — P2 dinamico especial: cualquier tipo de vela
+        # Si V1 rompe el techo (mecha o cuerpo, sin importar tipo de vela)
+        # y el high es menor que P1, se convierte directamente en nuevo P2.
+        # Esto aplica SOLO a V1 — V2-V7 usan su propia logica mas abajo.
+        if c["on"] and not c["apagado"] and c.get("p1") and c.get("p2_actual_high") is not None:
+            ahora_dt_v1c = EST.localize(datetime.strptime(vela_actual["datetime"], "%Y-%m-%d %H:%M:%S"))
+            techo_v1c = calcular_techo_canal(simbolo, ahora_dt_v1c)
+            if techo_v1c and v_high > techo_v1c and v_high < c["p1"]["high"]:
+                p2_ant_v1c = c["p2_actual_high"]
+                c["p2_actual_high"] = v_high
+                c["p2"]["high"]     = v_high
+                c["p2"]["fecha"]    = ahora_dt_v1c.strftime("%Y-%m-%d")
+                c["p2"]["hora_est"] = ahora_dt_v1c.hour
+                c["p2_actual_ts"]   = ahora_dt_v1c
+                guardar_canales()
+                print(f"{simbolo} P2 dinamico (V1): ${p2_ant_v1c:.2f} -> ${v_high:.2f} ({ahora_dt_v1c.strftime('%Y-%m-%d')}) silencioso")
 
         # PM40 — P1 dinámico en V1
         if not c["on"] and not ed["pm40_fired"]:
@@ -2167,7 +2176,7 @@ def reporte_horario():
 # LOOP PRINCIPAL
 # ═══════════════════════════════════════════════════════════
 def monitor_loop():
-    print("AXIS Breakout Sentinel v8.75 iniciado...")
+    print("AXIS Breakout Sentinel v8.76 iniciado...")
     while True:
         ahora = datetime.now(EST)
         mins  = ahora.hour * 60 + ahora.minute
@@ -2290,7 +2299,7 @@ def home(path=""):
   <div class="canales-grid">
     {canales_html}
   </div>
-  <div class="footer">AXIS Breakout Sentinel v8.75 · {activos_str}</div>
+  <div class="footer">AXIS Breakout Sentinel v8.76 · {activos_str}</div>
 </body>
 </html>"""
     from flask import Response
@@ -2310,7 +2319,7 @@ def test():
         else:
             lineas_canal.append(f"  {a}: OFF")
     enviar_telegram(
-        f"✅ <b>AXIS Breakout Sentinel v8.75</b>\n"
+        f"✅ <b>AXIS Breakout Sentinel v8.76</b>\n"
         f"<b>Hora:</b> {ahora.strftime('%A %d/%m/%Y %H:%M EST')}\n"
         f"<b>Mercado:</b> {'Abierto' if es_dia_mercado(ahora) else 'Cerrado'}\n"
         f"<b>1VR:</b> {'ON' if VR1_ON else 'OFF'} | "
@@ -3425,7 +3434,7 @@ def system_status():
         except Exception as e:
             velas_db[a] = {"status": f"❌ ERROR: {e}"}
     return jsonify({
-        "sistema": "AXIS Breakout Sentinel v8.75",
+        "sistema": "AXIS Breakout Sentinel v8.76",
         "hora_est": ahora.strftime("%Y-%m-%d %H:%M:%S EST"),
         "mercado": "ABIERTO ✅" if mercado_abierto else "CERRADO ⏸",
         "threads": threads_vivos, "activos": ACTIVOS,
