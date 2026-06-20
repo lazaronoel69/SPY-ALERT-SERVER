@@ -1751,11 +1751,13 @@ function render() {
           distancia = techoEnP3 - c.p3.low;
         }
 
-        // Dibujar desde P1 hasta la última vela visible
+        // Dibujar desde P1 hasta la última vela visible.
+        // El corte por fecha_ruptura SOLO aplica si el canal sigue inactivo (on=false).
+        // Si el canal esta activo (on=true), la linea se extiende hasta hoy
+        // aunque haya tenido una ruptura en el pasado (canal reactivado).
         const startAbs = p1Idx;
-        // Si canal roto → dibujar solo hasta la fecha de ruptura
         let endAbs = allVelas.length - 1;
-        if (c.roto && c.fecha_ruptura) {
+        if (!c.on && c.roto && c.fecha_ruptura) {
           for (let i = allVelas.length - 1; i >= 0; i--) {
             if ((allVelas[i].datetime||'').startsWith(c.fecha_ruptura)) {
               endAbs = i; break;
