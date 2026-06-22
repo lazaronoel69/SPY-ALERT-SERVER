@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v8.77
+AXIS Breakout Sentinel v8.78
 Estrategias: 1VR | 1VR+ | RPG | GNA | GBA | RCB/CNF
 Multi-activo: SPY, AAPL, BA, GLD
 v8.43: Portfolio fix — ejecutar_orden_tradier en webhook exec/reto | Panic Button al bid |
@@ -1286,21 +1286,23 @@ def reset_diario_activo(simbolo, fecha_hoy, v7_ayer_close):
 # ═══════════════════════════════════════════════════════════
 def verificar_slope_4ps(p1_low, p1_idx, p2_low_cand, p2_idx_cand, historial_lows):
     """
-    Verifica que el slope P1->P2_candidato no corte mas de 2 lows intermedios.
+    Verifica que el slope P1->P2_candidato no corte NINGUN low intermedio (0 tolerancia).
     historial_lows: lista de (idx, low) de velas entre P1 y P2 candidato.
-    Retorna True si es valido (0, 1 o 2 lows cortados).
+    Tambien rechaza si P2 candidato es <= P1 (P2 siempre debe ser mayor que P1).
+    Retorna True solo si es completamente valido (0 lows cortados).
     """
     if p2_idx_cand <= p1_idx:
         return False
+    if p2_low_cand <= p1_low:
+        return False
     slope = (p2_low_cand - p1_low) / (p2_idx_cand - p1_idx)
-    lows_cortados = 0
     for idx, low in historial_lows:
         if idx <= p1_idx or idx >= p2_idx_cand:
             continue
         proyeccion = p1_low + slope * (idx - p1_idx)
         if low < proyeccion:
-            lows_cortados += 1
-    return lows_cortados <= 2
+            return False
+    return True
 
 # ═══════════════════════════════════════════════════════════
 # EVALUAR VELA POR ACTIVO
@@ -1812,7 +1814,7 @@ def evaluar_activo(simbolo, velas, ahora):
             ed["4ps_p2_idx"]          = None
             ed["4ps_historial_lows"]  = []
 
-        # P1 se mueve si aparece low menor (solo durante formacion — antes de tener P2)
+        # P1 se mueve si aparece low menor o igual (solo durante formacion - antes de tener P2)
         elif v_low <= ed["4ps_p1_low"] and ed["4ps_p2_idx"] is None:
             ed["4ps_p1_low"]         = v_low
             ed["4ps_p1_idx"]         = idx_4ps
@@ -1820,19 +1822,36 @@ def evaluar_activo(simbolo, velas, ahora):
             ed["4ps_p2_idx"]         = None
             ed["4ps_historial_lows"] = [(idx_4ps, v_low)]
 
-        else:
+        elif ed["4ps_p2_idx"] is None:
             distancia_4ps = idx_4ps - ed["4ps_p1_idx"]
             historial_lows = ed.get("4ps_historial_lows", [])
 
-            # ── Sin P2 aun: buscar primer candidato valido (min 6 velas desde P1) ──
-            if ed["4ps_p2_idx"] is None and distancia_4ps >= 6:
+            proyeccion_rota = False
+            if distancia_4ps > 0:
+                slope_proyectado = (v_low - ed["4ps_p1_low"]) / distancia_4ps
+                for idx_h, low_h in historial_lows:
+                    if idx_h <= ed["4ps_p1_idx"] or idx_h >= idx_4ps:
+                        continue
+                    proy = ed["4ps_p1_low"] + slope_proyectado * (idx_h - ed["4ps_p1_idx"])
+                    if low_h < proy:
+                        proyeccion_rota = True
+                        break
+
+            if proyeccion_rota:
+                ed["4ps_p1_low"]         = v_low
+                ed["4ps_p1_idx"]         = idx_4ps
+                ed["4ps_p2_low"]         = None
+                ed["4ps_p2_idx"]         = None
+                ed["4ps_historial_lows"] = [(idx_4ps, v_low)]
+                print(f"{simbolo} 4PASOS P1 reiniciado por ruptura de proyeccion: ${v_low:.2f} idx={idx_4ps}")
+            elif distancia_4ps >= 6:
                 if verificar_slope_4ps(ed["4ps_p1_low"], ed["4ps_p1_idx"], v_low, idx_4ps, historial_lows):
                     ed["4ps_p2_low"] = v_low
                     ed["4ps_p2_idx"] = idx_4ps
                     print(f"{simbolo} 4PASOS P2 fijado: ${v_low:.2f} idx={idx_4ps}")
 
-            # ── Con P2: evaluar ruptura o actualizacion ──
-            elif ed["4ps_p2_idx"] is not None:
+        # Con P2: evaluar ruptura o actualizacion
+        elif ed["4ps_p2_idx"] is not None:
                 slope_4ps  = (ed["4ps_p2_low"] - ed["4ps_p1_low"]) / (ed["4ps_p2_idx"] - ed["4ps_p1_idx"])
                 piso_slope = ed["4ps_p1_low"] + slope_4ps * (idx_4ps - ed["4ps_p1_idx"])
 
@@ -2179,7 +2198,7 @@ def reporte_horario():
 # LOOP PRINCIPAL
 # ═══════════════════════════════════════════════════════════
 def monitor_loop():
-    print("AXIS Breakout Sentinel v8.77 iniciado...")
+    print("AXIS Breakout Sentinel v8.78 iniciado...")
     while True:
         ahora = datetime.now(EST)
         mins  = ahora.hour * 60 + ahora.minute
@@ -2302,7 +2321,7 @@ def home(path=""):
   <div class="canales-grid">
     {canales_html}
   </div>
-  <div class="footer">AXIS Breakout Sentinel v8.77 · {activos_str}</div>
+  <div class="footer">AXIS Breakout Sentinel v8.78 · {activos_str}</div>
 </body>
 </html>"""
     from flask import Response
@@ -2322,7 +2341,7 @@ def test():
         else:
             lineas_canal.append(f"  {a}: OFF")
     enviar_telegram(
-        f"✅ <b>AXIS Breakout Sentinel v8.77</b>\n"
+        f"✅ <b>AXIS Breakout Sentinel v8.78</b>\n"
         f"<b>Hora:</b> {ahora.strftime('%A %d/%m/%Y %H:%M EST')}\n"
         f"<b>Mercado:</b> {'Abierto' if es_dia_mercado(ahora) else 'Cerrado'}\n"
         f"<b>1VR:</b> {'ON' if VR1_ON else 'OFF'} | "
@@ -3437,7 +3456,7 @@ def system_status():
         except Exception as e:
             velas_db[a] = {"status": f"❌ ERROR: {e}"}
     return jsonify({
-        "sistema": "AXIS Breakout Sentinel v8.77",
+        "sistema": "AXIS Breakout Sentinel v8.78",
         "hora_est": ahora.strftime("%Y-%m-%d %H:%M:%S EST"),
         "mercado": "ABIERTO ✅" if mercado_abierto else "CERRADO ⏸",
         "threads": threads_vivos, "activos": ACTIVOS,
