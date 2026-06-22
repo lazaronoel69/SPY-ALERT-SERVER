@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v8.76
+AXIS Breakout Sentinel v8.77
 Estrategias: 1VR | 1VR+ | RPG | GNA | GBA | RCB/CNF
 Multi-activo: SPY, AAPL, BA, GLD
 v8.43: Portfolio fix — ejecutar_orden_tradier en webhook exec/reto | Panic Button al bid |
@@ -1608,7 +1608,9 @@ def evaluar_activo(simbolo, velas, ahora):
     # ── VELAS 2-7 ──
     v1_close = ed["v1_close"]
 
-    # RPG
+    # RPG — dispara siempre con ruptura del piso (v8.77).
+    # Condicion adicional (RCB 30% o SMA20>SMA40) solo decide el label RPG vs RPG+,
+    # nunca bloquea el disparo. Mismo patron que el fix de 1VR en v8.63.
     if RPG_ON and ed["rpg_activo"] and not ed["rpg_fired"] and ed["rpg_piso"]:
         if v_close < ed["rpg_piso"]:
             ahora_dt_rpg = EST.localize(datetime.strptime(vela_actual["datetime"], "%Y-%m-%d %H:%M:%S"))
@@ -1629,20 +1631,21 @@ def evaluar_activo(simbolo, velas, ahora):
             s40_rpg = ed.get("rpg_s40")
             sma20_gt_sma40 = s20_rpg and s40_rpg and s20_rpg > s40_rpg
 
-            if en_rcb_30_rpg or sma20_gt_sma40:
-                ed["rpg_fired"]  = True
-                ed["rpg_activo"] = False
-                guardar_estado_dia()
-                label_rpg = "RPG+" if en_rcb_30_rpg else "RPG"
-                extra_rpg = f"<b>Canal RCB:</b> Techo ${techo_rpg:.2f} | Zona 30%: ${zona_30_rpg:.2f}\n" if en_rcb_30_rpg else \
-                            f"<b>SMA20:</b> ${s20_rpg:.2f} > <b>SMA40:</b> ${s40_rpg:.2f}\n"
-                enviar_senal_con_botones(
-                    simbolo, f"{label_rpg} — RUPTURA PISO GAP",
-                    f"{hora_vela+1}:00 EST", v_close, "PUT",
-                    f"<b>Piso V1:</b> ${ed['rpg_piso']:.2f} | <b>Cierre:</b> ${v_close:.2f}\n{extra_rpg}"
-                )
+            ed["rpg_fired"]  = True
+            ed["rpg_activo"] = False
+            guardar_estado_dia()
+            label_rpg = "RPG+" if (en_rcb_30_rpg or sma20_gt_sma40) else "RPG"
+            if en_rcb_30_rpg:
+                extra_rpg = f"<b>Canal RCB:</b> Techo ${techo_rpg:.2f} | Zona 30%: ${zona_30_rpg:.2f}\n"
+            elif sma20_gt_sma40:
+                extra_rpg = f"<b>SMA20:</b> ${s20_rpg:.2f} > <b>SMA40:</b> ${s40_rpg:.2f}\n"
             else:
-                print(f"{simbolo} RPG ruptura sin condición adicional — no dispara")
+                extra_rpg = ""
+            enviar_senal_con_botones(
+                simbolo, f"{label_rpg} — RUPTURA PISO GAP",
+                f"{hora_vela+1}:00 EST", v_close, "PUT",
+                f"<b>Piso V1:</b> ${ed['rpg_piso']:.2f} | <b>Cierre:</b> ${v_close:.2f}\n{extra_rpg}"
+            )
 
     # GNA
     if GNA_ON and ed["gna_activo"] and not ed["gna_fired"] and v1_close:
@@ -2176,7 +2179,7 @@ def reporte_horario():
 # LOOP PRINCIPAL
 # ═══════════════════════════════════════════════════════════
 def monitor_loop():
-    print("AXIS Breakout Sentinel v8.76 iniciado...")
+    print("AXIS Breakout Sentinel v8.77 iniciado...")
     while True:
         ahora = datetime.now(EST)
         mins  = ahora.hour * 60 + ahora.minute
@@ -2299,7 +2302,7 @@ def home(path=""):
   <div class="canales-grid">
     {canales_html}
   </div>
-  <div class="footer">AXIS Breakout Sentinel v8.76 · {activos_str}</div>
+  <div class="footer">AXIS Breakout Sentinel v8.77 · {activos_str}</div>
 </body>
 </html>"""
     from flask import Response
@@ -2319,7 +2322,7 @@ def test():
         else:
             lineas_canal.append(f"  {a}: OFF")
     enviar_telegram(
-        f"✅ <b>AXIS Breakout Sentinel v8.76</b>\n"
+        f"✅ <b>AXIS Breakout Sentinel v8.77</b>\n"
         f"<b>Hora:</b> {ahora.strftime('%A %d/%m/%Y %H:%M EST')}\n"
         f"<b>Mercado:</b> {'Abierto' if es_dia_mercado(ahora) else 'Cerrado'}\n"
         f"<b>1VR:</b> {'ON' if VR1_ON else 'OFF'} | "
@@ -3434,7 +3437,7 @@ def system_status():
         except Exception as e:
             velas_db[a] = {"status": f"❌ ERROR: {e}"}
     return jsonify({
-        "sistema": "AXIS Breakout Sentinel v8.76",
+        "sistema": "AXIS Breakout Sentinel v8.77",
         "hora_est": ahora.strftime("%Y-%m-%d %H:%M:%S EST"),
         "mercado": "ABIERTO ✅" if mercado_abierto else "CERRADO ⏸",
         "threads": threads_vivos, "activos": ACTIVOS,
