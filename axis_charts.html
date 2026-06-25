@@ -1664,11 +1664,13 @@ function render() {
   // Estas sobreescriben cualquier recálculo del dashboard
   const fechaHoyNY = new Date().toLocaleDateString('en-US',{timeZone:'America/New_York'});
   (window.senalesHoy || []).forEach(s => {
-    // Buscar la vela V1 de hoy para anclar la etiqueta
+    // Usar la vela REAL donde Railway disparo la senal (viene del backend desde v8.81).
+    // Si por compatibilidad no viene vela (senales viejas), usar V1 como fallback.
+    const velaObjetivo = s.vela || 'V1';
     for (let i = zoomStart; i <= zoomEnd; i++) {
       const v = allVelas[i];
       const fv = new Date(v.x).toLocaleDateString('en-US',{timeZone:'America/New_York'});
-      if (fv === fechaHoyNY && v.vela === 'V1') {
+      if (fv === fechaHoyNY && v.vela === velaObjetivo) {
         const visIdx = i - zoomStart;
         const x = xOf(visIdx);
         const y = yOf(v.h);
