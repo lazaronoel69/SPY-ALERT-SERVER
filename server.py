@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v8.82
+AXIS Breakout Sentinel v8.83
 Estrategias: 1VR | 1VR+ | RPG | GNA | GBA | RCB/CNF
 Multi-activo: SPY, AAPL, BA, GLD
 v8.43: Portfolio fix — ejecutar_orden_tradier en webhook exec/reto | Panic Button al bid |
@@ -2209,7 +2209,7 @@ def reporte_horario():
 # LOOP PRINCIPAL
 # ═══════════════════════════════════════════════════════════
 def monitor_loop():
-    print("AXIS Breakout Sentinel v8.82 iniciado...")
+    print("AXIS Breakout Sentinel v8.83 iniciado...")
     while True:
         ahora = datetime.now(EST)
         mins  = ahora.hour * 60 + ahora.minute
@@ -2332,7 +2332,7 @@ def home(path=""):
   <div class="canales-grid">
     {canales_html}
   </div>
-  <div class="footer">AXIS Breakout Sentinel v8.82 · {activos_str}</div>
+  <div class="footer">AXIS Breakout Sentinel v8.83 · {activos_str}</div>
 </body>
 </html>"""
     from flask import Response
@@ -2352,7 +2352,7 @@ def test():
         else:
             lineas_canal.append(f"  {a}: OFF")
     enviar_telegram(
-        f"✅ <b>AXIS Breakout Sentinel v8.82</b>\n"
+        f"✅ <b>AXIS Breakout Sentinel v8.83</b>\n"
         f"<b>Hora:</b> {ahora.strftime('%A %d/%m/%Y %H:%M EST')}\n"
         f"<b>Mercado:</b> {'Abierto' if es_dia_mercado(ahora) else 'Cerrado'}\n"
         f"<b>1VR:</b> {'ON' if VR1_ON else 'OFF'} | "
@@ -3472,7 +3472,7 @@ def system_status():
         except Exception as e:
             velas_db[a] = {"status": f"❌ ERROR: {e}"}
     return jsonify({
-        "sistema": "AXIS Breakout Sentinel v8.82",
+        "sistema": "AXIS Breakout Sentinel v8.83",
         "hora_est": ahora.strftime("%Y-%m-%d %H:%M:%S EST"),
         "mercado": "ABIERTO ✅" if mercado_abierto else "CERRADO ⏸",
         "threads": threads_vivos, "activos": ACTIVOS,
@@ -3756,8 +3756,7 @@ def loop_polling_posiciones():
 # ═══════════════════════════════════════════════════════════
 # V7 ANTICIPADA
 # ═══════════════════════════════════════════════════════════
-ACTIVOS_V7_ANTICIPADA     = ["AAPL", "BA", "GLD", "NVDA", "AMZN", "GOOG", "META"]
-ACTIVOS_V7_ANTICIPADA_SPY = ["SPY"]
+ACTIVOS_V7_ANTICIPADA = ["SPY", "AAPL", "BA", "GLD", "NVDA", "AMZN", "GOOG", "META"]
 
 def guardar_snapshot_precios(ahora):
     global _portfolio
@@ -3825,9 +3824,12 @@ def enviar_resumen_diario(ahora):
         print(f"Error enviar_resumen_diario: {e}")
 
 def loop_v7_anticipada():
+    """Todos los activos, incluyendo SPY, se tratan exactamente igual --
+    sin excepciones de horario. Evaluacion anticipada a las 3:58 PM con
+    vela V7 provisional (3x15min + barras 1min), cierre y resumen a las
+    4:01 PM con la V7 final real. v8.83"""
     print("Thread V7 anticipada iniciado...")
     ejecutado_358 = set(); ejecutado_400 = set()
-    ejecutado_414 = set(); ejecutado_416 = set()
     fecha_actual = None
     while True:
         try:
@@ -3836,28 +3838,18 @@ def loop_v7_anticipada():
             if fecha_hoy != fecha_actual:
                 fecha_actual = fecha_hoy
                 ejecutado_358 = set(); ejecutado_400 = set()
-                ejecutado_414 = set(); ejecutado_416 = set()
             if es_dia_mercado(ahora):
                 if ahora.hour == 15 and ahora.minute == 58:
                     for simbolo in ACTIVOS_V7_ANTICIPADA:
                         if simbolo not in ejecutado_358:
                             evaluar_v7_anticipada(simbolo); evaluar_hed(simbolo)
                             ejecutado_358.add(simbolo)
-                if ahora.hour == 16 and ahora.minute == 0:
+                if ahora.hour == 16 and ahora.minute == 1:
                     for simbolo in ACTIVOS_V7_ANTICIPADA:
                         if simbolo not in ejecutado_400:
                             corregir_cierre_v7(simbolo); ejecutado_400.add(simbolo)
-                if ahora.hour == 16 and ahora.minute == 14:
-                    for simbolo in ACTIVOS_V7_ANTICIPADA_SPY:
-                        if simbolo not in ejecutado_414:
-                            evaluar_v7_anticipada(simbolo); evaluar_hed(simbolo)
-                            ejecutado_414.add(simbolo)
-                if ahora.hour == 16 and ahora.minute == 16:
-                    for simbolo in ACTIVOS_V7_ANTICIPADA_SPY:
-                        if simbolo not in ejecutado_416:
-                            corregir_cierre_v7(simbolo); ejecutado_416.add(simbolo)
-                    if "resumen" not in ejecutado_416:
-                        ejecutado_416.add("resumen")
+                    if "resumen" not in ejecutado_400:
+                        ejecutado_400.add("resumen")
                         fecha_hoy_v7 = ahora.strftime("%Y-%m-%d")
                         for simbolo_daily in ACTIVOS:
                             try:
@@ -3872,7 +3864,91 @@ def loop_v7_anticipada():
             print(f"Error loop V7 anticipada: {e}")
             time.sleep(30)
 
+def construir_v7_provisional(simbolo, ahora):
+    """Construye una V7 PROVISIONAL para evaluacion anticipada a las 3:58 PM
+    (3:58 EST no-SPY / 4:14 EST SPY), usando datos REALES ya ocurridos en
+    el mercado: las 3 primeras barras de 15min de V7 (completas) + barras
+    de 1min desde la 4ta barra hasta el momento actual. Esto evita evaluar
+    con una barra de 15min a medio formar (que causo la alerta RPG falsa
+    en BA el 06/24), sin perder la ventana de oportunidad de ejecutar antes
+    del cierre del mercado.
+    Esta vela PROVISIONAL nunca se guarda en la base de datos -- solo vive
+    en memoria para esta evaluacion. La version FINAL y real de V7 se
+    construye normalmente a las 4:01/4:16 PM con las 4 barras de 15min
+    completas, como ya funciona hoy.
+    Retorna un dict con la vela V7 provisional, o None si no hay suficientes datos."""
+    hoy_str = ahora.strftime("%Y-%m-%d")
+
+    try:
+        r15 = requests.get(
+            f"{TRADIER_BASE_REAL}/markets/timesales",
+            headers=TRADIER_HEADERS_REAL,
+            params={
+                "symbol": simbolo, "interval": "15min",
+                "start": f"{hoy_str} 15:00", "end": f"{hoy_str} 15:45",
+                "session_filter": "open",
+            },
+            timeout=15
+        )
+        barras_15 = []
+        if r15.status_code == 200:
+            s15 = r15.json().get("series")
+            if s15 and s15 != "null":
+                b15 = s15.get("data", [])
+                if isinstance(b15, dict): b15 = [b15]
+                barras_15 = b15
+
+        r1 = requests.get(
+            f"{TRADIER_BASE_REAL}/markets/timesales",
+            headers=TRADIER_HEADERS_REAL,
+            params={
+                "symbol": simbolo, "interval": "1min",
+                "start": f"{hoy_str} 15:45", "end": ahora.strftime("%Y-%m-%d %H:%M"),
+                "session_filter": "open",
+            },
+            timeout=15
+        )
+        barras_1 = []
+        if r1.status_code == 200:
+            s1 = r1.json().get("series")
+            if s1 and s1 != "null":
+                b1 = s1.get("data", [])
+                if isinstance(b1, dict): b1 = [b1]
+                barras_1 = b1
+
+        todas = barras_15 + barras_1
+        if not todas:
+            return None
+
+        v7_open  = float(todas[0]["open"])
+        v7_high  = max(float(b["high"]) for b in todas)
+        v7_low   = min(float(b["low"])  for b in todas)
+        v7_close = float(todas[-1]["close"])
+
+        print(f"{simbolo} V7 PROVISIONAL ({len(barras_15)}x15min + {len(barras_1)}x1min) — O:{v7_open:.2f} H:{v7_high:.2f} L:{v7_low:.2f} C:{v7_close:.2f}")
+
+        return {
+            "datetime": f"{hoy_str} 15:00:00",
+            "open":  str(round(v7_open, 4)),
+            "high":  str(round(v7_high, 4)),
+            "low":   str(round(v7_low, 4)),
+            "close": str(round(v7_close, 4)),
+            "vela":  "V7",
+            "bars":  len(todas),
+            "bars_expected": 4,
+            "completa": False,
+        }
+    except Exception as e:
+        print(f"Error construyendo V7 provisional {simbolo}: {e}")
+        return None
+
 def evaluar_v7_anticipada(simbolo):
+    """Evalua estrategias a las 3:58 PM (4:14 PM SPY) usando una V7 PROVISIONAL
+    construida con datos reales (3 barras de 15min + barras de 1min hasta el
+    momento), en vez de depender de una 4ta barra de 15min incompleta.
+    Esta V7 provisional NUNCA se guarda en la base de datos -- solo se usa
+    en memoria para esta evaluacion puntual. La version final y real de V7
+    se construye y guarda normalmente a las 4:01/4:16 PM, sin cambios."""
     ahora = datetime.now(EST)
     print(f"V7 anticipada {simbolo} — {ahora.strftime('%H:%M EST')}")
     try:
@@ -3880,10 +3956,20 @@ def evaluar_v7_anticipada(simbolo):
         if not velas:
             time.sleep(60)
             velas = get_velas(simbolo, outputsize=50)
-        if velas:
-            evaluar_activo(simbolo, velas, ahora.replace(hour=16, minute=1))
-        else:
+        if not velas:
             enviar_telegram(f"⚠️ <b>AXIS — Sin datos Tradier</b>\n<b>Activo:</b> {simbolo}\nV7 anticipada omitida.")
+            return
+
+        v7_provisional = construir_v7_provisional(simbolo, ahora)
+        if not v7_provisional:
+            print(f"{simbolo}: no se pudo construir V7 provisional, omitiendo evaluacion anticipada")
+            return
+
+        fecha_hoy_str = ahora.strftime("%Y-%m-%d")
+        velas_con_provisional = [v for v in velas if not (v.get("vela") == "V7" and v["datetime"].startswith(fecha_hoy_str))]
+        velas_con_provisional.insert(0, v7_provisional)
+
+        evaluar_activo(simbolo, velas_con_provisional, ahora.replace(hour=16, minute=1))
     except Exception as e:
         print(f"Error V7 anticipada {simbolo}: {e}")
 
