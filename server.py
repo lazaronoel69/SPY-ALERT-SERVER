@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v8.80
+AXIS Breakout Sentinel v8.81
 Estrategias: 1VR | 1VR+ | RPG | GNA | GBA | RCB/CNF
 Multi-activo: SPY, AAPL, BA, GLD
 v8.43: Portfolio fix — ejecutar_orden_tradier en webhook exec/reto | Panic Button al bid |
@@ -2088,7 +2088,7 @@ def enviar_telegram_botones(mensaje, orden_id):
 # ═══════════════════════════════════════════════════════════
 # PREPARAR Y ENVIAR SEÑAL CON BOTONES
 # ═══════════════════════════════════════════════════════════
-def registrar_senal_disparada(simbolo, estrategia):
+def registrar_senal_disparada(simbolo, estrategia, hora_label=None):
     ed = estado_dia.get(simbolo)
     if ed is None:
         return
@@ -2096,20 +2096,31 @@ def registrar_senal_disparada(simbolo, estrategia):
         ed["señales_disparadas"] = []
     if estrategia not in ed["señales_disparadas"]:
         ed["señales_disparadas"].append(estrategia)
+    if "señales_detalle" not in ed:
+        ed["señales_detalle"] = []
     s = estrategia.upper()
-    if "1VR"    in s: ed["vr1_fired"]  = True
-    if "RPG"    in s: ed["rpg_fired"]  = True
-    if "GNA"    in s: ed["gna_fired"]  = True
-    if "GBA"    in s: ed["gba_fired"]  = True
-    if "PM40"   in s: ed["pm40_fired"] = True
-    if "4PS"    in s or "4PASOS" in s: ed["4ps_fired"] = True
-    if "HED"    in s: ed["hed_fired"]  = True
-    if "CNF"    in s: ed["cnf_fired"]  = True
-    if "RCB"    in s: ed["rcb_fired"]  = True
+    tipo_corto = None
+    if "1VR"    in s: ed["vr1_fired"]  = True; tipo_corto = "1VR"
+    if "RPG"    in s: ed["rpg_fired"]  = True; tipo_corto = "RPG"
+    if "GNA"    in s: ed["gna_fired"]  = True; tipo_corto = "GNA"
+    if "GBA"    in s: ed["gba_fired"]  = True; tipo_corto = "GBA"
+    if "PM40"   in s: ed["pm40_fired"] = True; tipo_corto = "PM40"
+    if "4PS"    in s or "4PASOS" in s: ed["4ps_fired"] = True; tipo_corto = "4PS"
+    if "HED"    in s: ed["hed_fired"]  = True; tipo_corto = "HED"
+    if "CNF"    in s: ed["cnf_fired"]  = True; tipo_corto = "CNF"
+    if "RCB"    in s: ed["rcb_fired"]  = True; tipo_corto = "RCB"
+    if tipo_corto and hora_label:
+        try:
+            hora_num = int(hora_label.split(":")[0])
+            mapa_vela = {10:"V1",11:"V2",12:"V3",13:"V4",14:"V5",15:"V6",16:"V7"}
+            vela_calc = mapa_vela.get(hora_num)
+        except Exception:
+            vela_calc = None
+        ed["señales_detalle"].append({"tipo": tipo_corto, "vela": vela_calc, "hora": hora_label})
     guardar_estado_dia()
 
 def enviar_senal_con_botones(simbolo, estrategia, hora_label, precio_vela, tipo_opcion, extra=""):
-    registrar_senal_disparada(simbolo, estrategia)
+    registrar_senal_disparada(simbolo, estrategia, hora_label=hora_label)
     try:
         precio = get_precio_tradier(simbolo)
         if not precio:
@@ -2198,7 +2209,7 @@ def reporte_horario():
 # LOOP PRINCIPAL
 # ═══════════════════════════════════════════════════════════
 def monitor_loop():
-    print("AXIS Breakout Sentinel v8.80 iniciado...")
+    print("AXIS Breakout Sentinel v8.81 iniciado...")
     while True:
         ahora = datetime.now(EST)
         mins  = ahora.hour * 60 + ahora.minute
@@ -2321,7 +2332,7 @@ def home(path=""):
   <div class="canales-grid">
     {canales_html}
   </div>
-  <div class="footer">AXIS Breakout Sentinel v8.80 · {activos_str}</div>
+  <div class="footer">AXIS Breakout Sentinel v8.81 · {activos_str}</div>
 </body>
 </html>"""
     from flask import Response
@@ -2341,7 +2352,7 @@ def test():
         else:
             lineas_canal.append(f"  {a}: OFF")
     enviar_telegram(
-        f"✅ <b>AXIS Breakout Sentinel v8.80</b>\n"
+        f"✅ <b>AXIS Breakout Sentinel v8.81</b>\n"
         f"<b>Hora:</b> {ahora.strftime('%A %d/%m/%Y %H:%M EST')}\n"
         f"<b>Mercado:</b> {'Abierto' if es_dia_mercado(ahora) else 'Cerrado'}\n"
         f"<b>1VR:</b> {'ON' if VR1_ON else 'OFF'} | "
@@ -3385,12 +3396,17 @@ def ruta_velas():
     senales_hoy = []
     fecha_hoy = datetime.now(EST).strftime("%Y-%m-%d")
     if ed.get("fecha") == fecha_hoy:
-        if ed.get("vr1_fired"):  senales_hoy.append({"tipo": "1VR",  "fecha": fecha_hoy})
-        if ed.get("rpg_fired"):  senales_hoy.append({"tipo": "RPG",  "fecha": fecha_hoy})
-        if ed.get("gna_fired"):  senales_hoy.append({"tipo": "GNA",  "fecha": fecha_hoy})
-        if ed.get("gba_fired"):  senales_hoy.append({"tipo": "GBA",  "fecha": fecha_hoy})
-        if ed.get("pm40_fired"): senales_hoy.append({"tipo": "PM40", "fecha": fecha_hoy})
-        if ed.get("4ps_fired"):  senales_hoy.append({"tipo": "4PS",  "fecha": fecha_hoy})
+        detalle = ed.get("señales_detalle", [])
+        if detalle:
+            for d in detalle:
+                senales_hoy.append({"tipo": d["tipo"], "fecha": fecha_hoy, "vela": d.get("vela"), "hora": d.get("hora")})
+        else:
+            if ed.get("vr1_fired"):  senales_hoy.append({"tipo": "1VR",  "fecha": fecha_hoy, "vela": "V1", "hora": None})
+            if ed.get("rpg_fired"):  senales_hoy.append({"tipo": "RPG",  "fecha": fecha_hoy, "vela": None, "hora": None})
+            if ed.get("gna_fired"):  senales_hoy.append({"tipo": "GNA",  "fecha": fecha_hoy, "vela": None, "hora": None})
+            if ed.get("gba_fired"):  senales_hoy.append({"tipo": "GBA",  "fecha": fecha_hoy, "vela": None, "hora": None})
+            if ed.get("pm40_fired"): senales_hoy.append({"tipo": "PM40", "fecha": fecha_hoy, "vela": None, "hora": None})
+            if ed.get("4ps_fired"):  senales_hoy.append({"tipo": "4PS",  "fecha": fecha_hoy, "vela": None, "hora": None})
     return jsonify({"simbolo": simbolo, "fuente": "Tradier 15min",
                     "total": len(velas), "velas": velas, "senales_hoy": senales_hoy}), 200
 
@@ -3456,7 +3472,7 @@ def system_status():
         except Exception as e:
             velas_db[a] = {"status": f"❌ ERROR: {e}"}
     return jsonify({
-        "sistema": "AXIS Breakout Sentinel v8.80",
+        "sistema": "AXIS Breakout Sentinel v8.81",
         "hora_est": ahora.strftime("%Y-%m-%d %H:%M:%S EST"),
         "mercado": "ABIERTO ✅" if mercado_abierto else "CERRADO ⏸",
         "threads": threads_vivos, "activos": ACTIVOS,
