@@ -1650,15 +1650,15 @@ function render() {
   }); // fin canalesPM40
   } // fin if !canal manual
 
-  // Dibujar etiquetas de señales recalculadas (históricas)
-  todasSeñales.forEach(s => {
-    const visIdx = s.idx - zoomStart;
-    if (visIdx < 0 || visIdx >= visible.length) return;
-    const v  = visible[visIdx];
-    const x  = xOf(visIdx);
-    const y  = s.arriba ? yOf(v.h) : yOf(v.l);
-    dibujarSeñal(ctx, x, y, s.tipo, s.color, s.textColor, s.arriba);
-  });
+  // v1.4.4: ELIMINADO el dibujo de señales recalculadas en JS (todasSeñales).
+  // Esa logica duplicaba y desincronizaba las etiquetas del backend real
+  // (causaba 1VR/GBA/RPG apareciendo en velas o dias equivocados, y
+  // estrategias disparando "2 veces" visualmente cuando el backend solo
+  // disparo una vez). Ahora el chart SOLO dibuja lo que Railway evaluo:
+  // - señalesHoy (dia actual, con vela real desde v8.81)
+  // - señalesHistoricas (dias pasados, con vela real desde v8.84)
+  // Los canales (PM40/4PASOS) siguen calculandose en JS por ahora --
+  // son lineas/zonas, no etiquetas de senal, y no tienen el mismo bug.
 
   // Dibujar señales que Railway disparó hoy — fuente de verdad
   // Estas sobreescriben cualquier recálculo del dashboard
@@ -1695,27 +1695,39 @@ function render() {
     'CNF': ['#58a6ff','#fff'], 'RCB': ['#f0b429','#000'],
     '4PS': ['#e74c3c','#fff'],
   };
-  Object.entries(señalesHistoricas).forEach(([fecha, estrategias]) => {
-    // Filtrar estrategias visibles según toggles
-    const visibles = estrategias.filter(e => stratState[e] !== false);
+  // v1.4.4: usa la VELA REAL guardada por el backend (desde v8.84) para
+  // cada senal historica, en vez de anclar siempre a V1. Tambien aplica
+  // deduplicacion: si el backend ya garantiza 1 senal por tipo por dia,
+  // el frontend nunca debe dibujar mas de 1 etiqueta del mismo tipo el
+  // mismo dia (evita el bug GBA en V2 + GBA+2 en V7 el mismo dia).
+  Object.entries(señalesHistoricas).forEach(([fecha, señales]) => {
+    // señales ahora es: [{tipo, vela, hora}, ...] desde v8.84.
+    // Compatibilidad: si vienen como strings simples (datos viejos pre-v8.84),
+    // se tratan igual que antes, ancladas a V1.
+    const lista = señales.map(s => (typeof s === 'string') ? { tipo: s, vela: 'V1', hora: null } : s);
+    const vistos = new Set();
+    const visibles = lista.filter(s => {
+      if (stratState[s.tipo] === false) return false;
+      if (vistos.has(s.tipo)) return false;  // solo 1 etiqueta por tipo por dia
+      vistos.add(s.tipo);
+      return true;
+    });
     if (!visibles.length) return;
-    // Buscar V1 de esa fecha en visible
-    for (let i = zoomStart; i <= zoomEnd; i++) {
-      const v  = allVelas[i];
-      const fv = (v.datetime||'').slice(0,10);
-      if (fv === fecha && v.vela === 'V1') {
-        const visIdx = i - zoomStart;
-        const x = xOf(visIdx);
-        let yOffset = 0;
-        visibles.forEach(strat => {
-          const [color, textColor] = STRAT_COLORS[strat] || ['#fff','#000'];
-          const y = yOf(v.h) - yOffset;
-          dibujarSeñal(ctx, x, y, strat, color, textColor, true);
-          yOffset += 18;
-        });
-        break;
+
+    visibles.forEach(s => {
+      const velaObjetivo = s.vela || 'V1';
+      for (let i = zoomStart; i <= zoomEnd; i++) {
+        const v  = allVelas[i];
+        const fv = (v.datetime||'').slice(0,10);
+        if (fv === fecha && v.vela === velaObjetivo) {
+          const visIdx = i - zoomStart;
+          const x = xOf(visIdx);
+          const [color, textColor] = STRAT_COLORS[s.tipo] || ['#fff','#000'];
+          dibujarSeñal(ctx, x, yOf(v.h), s.tipo, color, textColor, true);
+          break;
+        }
       }
-    }
+    });
   });
 
   // ── Canales RCB/CNF — misma lógica que PM40 ──

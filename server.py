@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v8.83
+AXIS Breakout Sentinel v8.84
 Estrategias: 1VR | 1VR+ | RPG | GNA | GBA | RCB/CNF
 Multi-activo: SPY, AAPL, BA, GLD
 v8.43: Portfolio fix — ejecutar_orden_tradier en webhook exec/reto | Panic Button al bid |
@@ -183,7 +183,11 @@ def loop_limpiar_ordenes():
             print(f"Error loop_limpiar_ordenes: {e}")
 
 ACTIVOS          = ["SPY", "AAPL", "BA", "GLD", "NVDA", "AMZN", "GOOG", "META"]
-HORAS_REPORTE    = [10, 11, 12, 13, 14, 15, 16]
+HORAS_REPORTE    = [10, 11, 12, 13, 14, 15]
+# v8.84: hora 16 (4:00 PM / V7) eliminada de aqui -- V7 se evalua
+# EXCLUSIVAMENTE a las 3:58 PM via loop_v7_anticipada() con la vela
+# provisional. monitor_loop ya NO vuelve a evaluar V7 a las 4:01 PM,
+# evitando alertas duplicadas/falsas (caso GOOG RPG falso 06/25).
 # SPY cierra 4:15 PM EST — excepción única
 ACTIVOS_SPY      = ["SPY"]
 SISTEMA_ACTIVO   = True
@@ -288,24 +292,35 @@ def guardar_señales_historicas(data):
         print(f"Error guardando señales históricas: {e}")
 
 def archivar_señales_dia(fecha):
+    """v8.84: ahora guarda tambien vela y hora exacta de cada senal (no solo
+    el tipo), usando señales_detalle que ya tiene esta info desde v8.81.
+    Mantiene compatibilidad: si una senal no tiene detalle (senales viejas
+    antes de v8.81), guarda solo el tipo sin vela/hora."""
     historial = cargar_señales_historicas()
     historial[fecha] = {}
     for simbolo in ACTIVOS:
         ed = estado_dia.get(simbolo, {})
         if ed.get("fecha") == fecha:
-            disparadas = ed.get("señales_disparadas", [])
-            cortos = []
-            for s in disparadas:
-                if "1VR"    in s: cortos.append("1VR")
-                elif "RPG"  in s: cortos.append("RPG")
-                elif "GNA"  in s: cortos.append("GNA")
-                elif "GBA"  in s: cortos.append("GBA")
-                elif "HED"  in s: cortos.append("HED")
-                elif "PM40" in s: cortos.append("PM40")
-                elif "CNF"  in s: cortos.append("CNF")
-                elif "RCB"  in s: cortos.append("RCB")
-                elif "4PS"  in s or "4PASOS" in s: cortos.append("4PS")
-            historial[fecha][simbolo] = cortos
+            detalle = ed.get("señales_detalle", [])
+            if detalle:
+                historial[fecha][simbolo] = [
+                    {"tipo": d["tipo"], "vela": d.get("vela"), "hora": d.get("hora")}
+                    for d in detalle
+                ]
+            else:
+                disparadas = ed.get("señales_disparadas", [])
+                cortos = []
+                for s in disparadas:
+                    if "1VR"    in s: cortos.append({"tipo": "1VR", "vela": None, "hora": None})
+                    elif "RPG"  in s: cortos.append({"tipo": "RPG", "vela": None, "hora": None})
+                    elif "GNA"  in s: cortos.append({"tipo": "GNA", "vela": None, "hora": None})
+                    elif "GBA"  in s: cortos.append({"tipo": "GBA", "vela": None, "hora": None})
+                    elif "HED"  in s: cortos.append({"tipo": "HED", "vela": None, "hora": None})
+                    elif "PM40" in s: cortos.append({"tipo": "PM40", "vela": None, "hora": None})
+                    elif "CNF"  in s: cortos.append({"tipo": "CNF", "vela": None, "hora": None})
+                    elif "RCB"  in s: cortos.append({"tipo": "RCB", "vela": None, "hora": None})
+                    elif "4PS"  in s or "4PASOS" in s: cortos.append({"tipo": "4PS", "vela": None, "hora": None})
+                historial[fecha][simbolo] = cortos
         else:
             historial[fecha][simbolo] = []
     guardar_señales_historicas(historial)
@@ -2209,7 +2224,7 @@ def reporte_horario():
 # LOOP PRINCIPAL
 # ═══════════════════════════════════════════════════════════
 def monitor_loop():
-    print("AXIS Breakout Sentinel v8.83 iniciado...")
+    print("AXIS Breakout Sentinel v8.84 iniciado...")
     while True:
         ahora = datetime.now(EST)
         mins  = ahora.hour * 60 + ahora.minute
@@ -2332,7 +2347,7 @@ def home(path=""):
   <div class="canales-grid">
     {canales_html}
   </div>
-  <div class="footer">AXIS Breakout Sentinel v8.83 · {activos_str}</div>
+  <div class="footer">AXIS Breakout Sentinel v8.84 · {activos_str}</div>
 </body>
 </html>"""
     from flask import Response
@@ -2352,7 +2367,7 @@ def test():
         else:
             lineas_canal.append(f"  {a}: OFF")
     enviar_telegram(
-        f"✅ <b>AXIS Breakout Sentinel v8.83</b>\n"
+        f"✅ <b>AXIS Breakout Sentinel v8.84</b>\n"
         f"<b>Hora:</b> {ahora.strftime('%A %d/%m/%Y %H:%M EST')}\n"
         f"<b>Mercado:</b> {'Abierto' if es_dia_mercado(ahora) else 'Cerrado'}\n"
         f"<b>1VR:</b> {'ON' if VR1_ON else 'OFF'} | "
@@ -3472,7 +3487,7 @@ def system_status():
         except Exception as e:
             velas_db[a] = {"status": f"❌ ERROR: {e}"}
     return jsonify({
-        "sistema": "AXIS Breakout Sentinel v8.83",
+        "sistema": "AXIS Breakout Sentinel v8.84",
         "hora_est": ahora.strftime("%Y-%m-%d %H:%M:%S EST"),
         "mercado": "ABIERTO ✅" if mercado_abierto else "CERRADO ⏸",
         "threads": threads_vivos, "activos": ACTIVOS,
