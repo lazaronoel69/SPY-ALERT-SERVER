@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v8.81
+AXIS Breakout Sentinel v8.82
 Estrategias: 1VR | 1VR+ | RPG | GNA | GBA | RCB/CNF
 Multi-activo: SPY, AAPL, BA, GLD
 v8.43: Portfolio fix — ejecutar_orden_tradier en webhook exec/reto | Panic Button al bid |
@@ -2209,7 +2209,7 @@ def reporte_horario():
 # LOOP PRINCIPAL
 # ═══════════════════════════════════════════════════════════
 def monitor_loop():
-    print("AXIS Breakout Sentinel v8.81 iniciado...")
+    print("AXIS Breakout Sentinel v8.82 iniciado...")
     while True:
         ahora = datetime.now(EST)
         mins  = ahora.hour * 60 + ahora.minute
@@ -2332,7 +2332,7 @@ def home(path=""):
   <div class="canales-grid">
     {canales_html}
   </div>
-  <div class="footer">AXIS Breakout Sentinel v8.81 · {activos_str}</div>
+  <div class="footer">AXIS Breakout Sentinel v8.82 · {activos_str}</div>
 </body>
 </html>"""
     from flask import Response
@@ -2352,7 +2352,7 @@ def test():
         else:
             lineas_canal.append(f"  {a}: OFF")
     enviar_telegram(
-        f"✅ <b>AXIS Breakout Sentinel v8.81</b>\n"
+        f"✅ <b>AXIS Breakout Sentinel v8.82</b>\n"
         f"<b>Hora:</b> {ahora.strftime('%A %d/%m/%Y %H:%M EST')}\n"
         f"<b>Mercado:</b> {'Abierto' if es_dia_mercado(ahora) else 'Cerrado'}\n"
         f"<b>1VR:</b> {'ON' if VR1_ON else 'OFF'} | "
@@ -3472,7 +3472,7 @@ def system_status():
         except Exception as e:
             velas_db[a] = {"status": f"❌ ERROR: {e}"}
     return jsonify({
-        "sistema": "AXIS Breakout Sentinel v8.81",
+        "sistema": "AXIS Breakout Sentinel v8.82",
         "hora_est": ahora.strftime("%Y-%m-%d %H:%M:%S EST"),
         "mercado": "ABIERTO ✅" if mercado_abierto else "CERRADO ⏸",
         "threads": threads_vivos, "activos": ACTIVOS,
@@ -3816,8 +3816,8 @@ def enviar_resumen_diario(ahora):
             + f"\n{emoji_pl} <b>P&L del día:</b> ${pl_dia:+.2f}\n"
             f"📈 <b>Posiciones abiertas:</b> {len(_portfolio['posiciones'])}\n\n"
             f"<b>Win Rate global:</b> {wr} ({hist_wins}/{hist_total})\n\n"
-            f"🏆 <b>Reto Millonario:</b> {'Activo' if reto['activo'] else 'Inactivo'}\n"
-            f"  Carriles vivos: {vivos}/10 | Capital total: ${cap_reto:,.2f}\n\n"
+            f"🏇 <b>Derby:</b> {'Activo' if reto['activo'] else 'Inactivo'}\n"
+            f"  Caballos vivos: {vivos}/4 | Capital total: ${cap_reto:,.2f}\n\n"
             f"<i>AXIS v8.63 | {ahora.strftime('%H:%M EST')}</i>"
         )
         enviar_telegram(msg)
