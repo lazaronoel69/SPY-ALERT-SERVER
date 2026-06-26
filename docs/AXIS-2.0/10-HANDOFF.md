@@ -2,27 +2,29 @@
 
 ## Estado actual
 
-Sistema en producción, estable, v8.84. AX-012E (Extract RPG Engine) ejecutado — `evaluar_rpg_activacion()` y `evaluar_rpg_disparo()` extraídas de `evaluar_activo()` como dos funciones independientes (siguiendo lo pedido explícitamente por el sprint, dado que RPG tiene campos adicionales `rpg_s20`/`rpg_s40` que GNA/GBA no tenían). Ubicadas inmediatamente después de `evaluar_gba()`. Sin tocar GNA, GBA, 1VR, PM40, 4PASOS, Canales, ni la reconstrucción RPG dentro del Reset Diario. Verificado con py_compile y prueba funcional mínima de ambos escenarios.
+Sistema en producción, estable, v8.84. AX-012F (Extract Reset Daily) ejecutado — `reset_diario_si_aplica()` extraída de `evaluar_activo()`, conteniendo exactamente el bloque de reset diario completo, incluyendo la reconstrucción 1VR/RPG/GNA/GBA sin reutilizar las funciones ya extraídas (según regla explícita del sprint). Ubicada después de `evaluar_rpg_disparo()`. Verificado con py_compile, AST, import real, y prueba funcional en ambos casos (misma fecha / nueva fecha).
 
 ## Cambio realizado en este sprint
 
-1. **`evaluar_rpg_activacion(simbolo, ed, velas, v_open, v_close, v_low, v7_ayer)`** — contiene exactamente el bloque de activación RPG en V1 (gap mínimo 0.5%, vela verde). Mismo print exacto, mismos campos guardados (`rpg_activo`, `rpg_piso`, `rpg_s20`, `rpg_s40`).
-2. **`evaluar_rpg_disparo(simbolo, ed, vela_actual, v_close, hora_vela)`** — contiene exactamente el bloque de disparo RPG en V2-V7 (ruptura del piso, label RPG vs RPG+ según condición adicional). Mismo flujo de `guardar_estado_dia()` + `enviar_senal_con_botones()` con el mismo texto exacto.
+`reset_diario_si_aplica(simbolo, velas, fecha_hoy, ed, c, hora)` — nueva función. Contiene exactamente el bloque original:
+- Detecta si `ed["fecha"] != fecha_hoy`
+- Si aplica: busca V7 de ayer, llama a `reset_diario_activo()`, guarda P2 al inicio del día, y reconstruye 1VR/RPG/GNA/GBA desde el histórico **tal cual existía inline** (código duplicado respecto a las funciones ya extraídas en AX-012C/D/E — intencional, sin tocar, según regla del sprint)
+- Devuelve `(ed, c)` actualizados
 
-Dentro de `evaluar_activo()`:
-- En V1: `evaluar_rpg_activacion(simbolo, ed, velas, v_open, v_close, v_low, v7_ayer)`
-- En V2-V7: `evaluar_rpg_disparo(simbolo, ed, vela_actual, v_close, hora_vela)`
+Dentro de `evaluar_activo()`: `ed, c = reset_diario_si_aplica(simbolo, velas, fecha_hoy, ed, c, hora)`. Ningún otro bloque fue modificado.
 
-**No se tocó la reconstrucción RPG dentro del Reset Diario** (bloque que re-activa RPG si el sistema detecta que V1 ya existe en el histórico tras un reinicio) — queda exactamente igual, según regla explícita del sprint. **Ningún otro bloque fue modificado** — GNA, GBA, 1VR, PM40, 4PASOS y Canales permanecen exactamente igual, en el mismo orden.
+## Incidente durante este sprint (documentado con transparencia)
+
+El primer intento de script de migración (`aplicar_ax012f.py` v1) tenía un bug de diseño: al insertar la función nueva usando `content.replace(MARKER, FUNC_DEF + MARKER, 1)` después de ya haber aplicado el primer reemplazo, el texto se insertó en una posición incorrecta, generando una definición de función anidada corrupta (`return ed, cdef reset_diario_si_aplica(...)`) que rompía la sintaxis. **Se detectó inmediatamente vía `python3 -m py_compile` (SyntaxError explícito), nunca llegó a comitearse ni a desplegarse.** Se revirtió con `git checkout server.py` y se reconstruyó el script (v2) agregando una verificación con `ast.parse()` **antes** de escribir el archivo — si el resultado no parsea como Python válido, el script no escribe nada y termina con error, dejando el archivo original intacto. Esta verificación adicional se usará en todos los scripts de migración futuros de este proyecto.
 
 ## Archivos modificados en este sprint
 
-- **Modificado:** `server.py` — ambas funciones RPG agregadas, ambos bloques inline reemplazados por llamadas.
+- **Modificado:** `server.py` — `reset_diario_si_aplica()` agregada, bloque inline reemplazado por la llamada.
 - **Modificado:** `docs/AXIS-2.0/10-HANDOFF.md` (este archivo).
 
 ## Último commit antes de este sprint
 
-69bcffb — AX-INF-001 Tools Automation
+(commit de AX-012E, ver historial de git)
 
 ## Rama
 
@@ -30,18 +32,18 @@ main
 
 ## Sprint activo
 
-AX-012E — Extract RPG Engine (este sprint)
+AX-012F — Extract Reset Daily (este sprint)
 
 ## Próximo sprint sugerido
 
-Según el orden documentado en `05-STRATEGY-ENGINE-DESIGN.md` sección 5: **AX-012F — unificar y extraer `evaluar_1vr()`**, consolidando el camino normal (V1) y el de reconstrucción (dentro del Reset Diario) en una sola función reutilizable, con pruebas exhaustivas comparando ambos caminos antes/después — este es el sprint de mayor cuidado hasta ahora, dado que requiere tocar por primera vez el bloque de Reset Diario.
+Según el orden documentado en `05-STRATEGY-ENGINE-DESIGN.md` sección 5: **AX-012G — unificar `evaluar_1vr()`**, ahora que el Reset Diario ya está extraído como función propia. Este sprint puede reutilizar `evaluar_1vr()` (una vez creada) tanto desde el flujo normal de V1 como desde dentro de `reset_diario_si_aplica()`, eliminando finalmente la duplicación de código que se ha documentado desde AX-012A.
 
 ## Riesgos abiertos
 
 (Ver lista completa en `04-ARCHITECTURE-AUDIT.md` sección 6 y `05-STRATEGY-ENGINE-DESIGN.md` sección 4. Nota específica de este sprint:)
 
-1. **NUEVO AX-012E:** RPG quedó dividida en 2 funciones (no 1 con flag `es_v1` como GNA/GBA) porque sus 2 caminos comparten muy poca estructura real — la activación guarda 4 campos distintos (`rpg_activo`, `rpg_piso`, `rpg_s20`, `rpg_s40`) y el disparo lee/calcula 6+ variables propias (`techo_rpg`, `zona_30_rpg`, `en_rcb_30_rpg`, etc.) que no existen en la activación. Forzar un flag `es_v1` aquí habría resultado en una función con una rama mucho más compleja que la otra — el patrón de 2 funciones es más legible y más seguro para RPG específicamente.
-2. **NUEVO AX-012E:** la reconstrucción RPG en el Reset Diario sigue siendo código DUPLICADO respecto a `evaluar_rpg_activacion()` (misma lógica, distintos nombres de variable con sufijo `_r`) — exactamente la misma situación que ya se documentó para 1VR en AX-012A/C. Este sprint NO la tocó por regla explícita; queda pendiente para cuando se aborde el Reset Diario (AX-012F en adelante, o un sprint dedicado).
+1. **NUEVO AX-012F:** se confirma que los scripts de migración deben verificar `ast.parse()` del resultado completo ANTES de escribir el archivo, no solo `py_compile` después — esto hubiera prevenido el incidente de este sprint con cero impacto en producción (el bug nunca llegó a comitearse), pero agrega una capa de seguridad adicional para sprints futuros con bloques grandes y complejos.
+2. **NUEVO AX-012F:** la reconstrucción 1VR/RPG/GNA/GBA dentro de `reset_diario_si_aplica()` sigue siendo código duplicado respecto a las funciones ya extraídas — explícitamente no resuelto en este sprint, queda para AX-012G en adelante.
 3. Los riesgos generales de la descomposición (variables compartidas, flags fired, interacción P2 dinámico/4PASOS, orden de evaluación inmutable) documentados en AX-012A siguen aplicando.
 
 ## Notas para quien continúe
@@ -49,8 +51,7 @@ Según el orden documentado en `05-STRATEGY-ENGINE-DESIGN.md` sección 5: **AX-0
 - Leer siempre el AXIS_MASTER más reciente antes de cualquier cambio
 - Leer `05-STRATEGY-ENGINE-DESIGN.md` antes de cualquier sub-sprint de extracción
 - Nunca codificar sin autorización explícita de Noel
-- Cuando una estrategia tiene 2 caminos (V1/V2-V7) con poca estructura compartida real (como RPG), preferir 2 funciones separadas en vez de 1 función con flag — más legible y más seguro
-- Reemplazar PRIMERO los bloques inline por llamadas, y SOLO DESPUÉS insertar la definición de la función nueva, para evitar texto duplicado durante la búsqueda exacta
-- Verificar sintaxis Y prueba funcional con datos sintéticos (revisando a mano todas las condiciones booleanas, no solo los umbrales numéricos) después de cualquier extracción
+- **Extraer bloques de código directamente del archivo real con Python** (`content.find()` + slicing) en vez de transcribirlos manualmente desde vistas parciales — esto evitó 2 errores de formato en AX-012E y se mantuvo en AX-012F
+- **Verificar `ast.parse()` del resultado ANTES de escribir el archivo**, no solo `py_compile` después — patrón adoptado a partir de este sprint tras el incidente documentado arriba
+- Si un script de migración aplica 2+ pasos secuenciales, aplicarlos sobre una copia en memoria y validar el resultado completo antes de tocar el archivo en disco
 - Validar cada sub-sprint en producción durante al menos un día de mercado completo antes de proceder al siguiente
-- Usar `tools/pre_sprint.sh` y `tools/chatgpt_report.sh` para acelerar las verificaciones de cada sub-sprint
