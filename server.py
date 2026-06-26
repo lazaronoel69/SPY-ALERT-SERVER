@@ -791,6 +791,36 @@ def preparar_contexto_vela(simbolo, velas, ahora):
         "fecha_hoy":   fecha_hoy,
     }
 
+def evaluar_gna(simbolo, ed, velas, v_open, v_close, v_alcista, v7_ayer, v1_close, hora_vela, es_v1):
+    """AX-012C: extraida de evaluar_activo() sin cambiar comportamiento.
+    Contiene EXACTAMENTE los 2 bloques de GNA que existian inline:
+    activacion en V1 (es_v1=True) y disparo en V2-V7 (es_v1=False).
+    Recibe explicitamente todas las variables necesarias -- no lee nada
+    implicito de un scope compartido."""
+    if es_v1:
+        # GNA
+        if GNA_ON and v7_ayer and v_close > v_open and not ed["gna_fired"]:
+            gap_alza = (v_open - v7_ayer) / v7_ayer * 100
+            if gap_alza >= 0.1:
+                sma20 = calcular_sma(velas, 20)
+                sma40 = calcular_sma(velas, 40)
+                if sma20 and sma40 and sma20 > sma40:
+                    ed["gna_activo"] = True
+                    print(f"{simbolo} GNA activado — techo: ${v_close:.2f}")
+    else:
+        # GNA
+        if GNA_ON and ed["gna_activo"] and not ed["gna_fired"] and v1_close:
+            if v_alcista and v_close > v1_close:
+                ed["gna_fired"]  = True
+                ed["gna_activo"] = False
+                guardar_estado_dia()
+                tipo = "GNA" if hora_vela == 10 else "GNA+2"
+                enviar_senal_con_botones(
+                    simbolo, f"{tipo} — GAP NORMAL ALZA",
+                    f"{hora_vela+1}:00 EST", v_close, "CALL",
+                    f"<b>Techo V1:</b> ${v1_close:.2f} | <b>Cierre:</b> ${v_close:.2f}\n"
+                )
+
 def evaluar_activo(simbolo, velas, ahora):
     ed = estado_dia[simbolo]
     c  = canal[simbolo]
@@ -965,14 +995,7 @@ def evaluar_activo(simbolo, velas, ahora):
                 print(f"{simbolo} RPG activado — gap {gap:.2f}% piso: ${v_low:.2f}")
 
         # GNA
-        if GNA_ON and v7_ayer and v_close > v_open and not ed["gna_fired"]:
-            gap_alza = (v_open - v7_ayer) / v7_ayer * 100
-            if gap_alza >= 0.1:
-                sma20 = calcular_sma(velas, 20)
-                sma40 = calcular_sma(velas, 40)
-                if sma20 and sma40 and sma20 > sma40:
-                    ed["gna_activo"] = True
-                    print(f"{simbolo} GNA activado — techo: ${v_close:.2f}")
+        evaluar_gna(simbolo, ed, velas, v_open, v_close, v_alcista, v7_ayer, None, hora_vela, True)
 
         # GBA
         if GBA_ON and v7_ayer and v_close > v_open and not ed["gba_fired"]:
@@ -1128,17 +1151,7 @@ def evaluar_activo(simbolo, velas, ahora):
             )
 
     # GNA
-    if GNA_ON and ed["gna_activo"] and not ed["gna_fired"] and v1_close:
-        if v_alcista and v_close > v1_close:
-            ed["gna_fired"]  = True
-            ed["gna_activo"] = False
-            guardar_estado_dia()
-            tipo = "GNA" if hora_vela == 10 else "GNA+2"
-            enviar_senal_con_botones(
-                simbolo, f"{tipo} — GAP NORMAL ALZA",
-                f"{hora_vela+1}:00 EST", v_close, "CALL",
-                f"<b>Techo V1:</b> ${v1_close:.2f} | <b>Cierre:</b> ${v_close:.2f}\n"
-            )
+    evaluar_gna(simbolo, ed, velas, v_open, v_close, v_alcista, v7_ayer, v1_close, hora_vela, False)
 
     # GBA
     if GBA_ON and ed["gba_activo"] and not ed["gba_fired"] and v1_close:
