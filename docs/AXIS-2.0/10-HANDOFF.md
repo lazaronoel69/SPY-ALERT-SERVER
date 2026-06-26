@@ -2,32 +2,26 @@
 
 ## Estado actual
 
-Sistema en producción, estable, v8.84. AX-005 (Storage Baseline) ejecutado — funciones de persistencia JSON de bajo riesgo movidas a `axis_storage.py`, sin cambiar formato JSON, rutas, ni comportamiento. Verificado con py_compile y simulación de import real.
+Sistema en producción, estable, v8.84. AX-006 (Telegram Baseline) ejecutado — solo `enviar_telegram` movida a `axis_telegram.py`, sin cambiar texto de alertas, botones, parse_mode, timeout, ni comportamiento. Verificado con py_compile y simulación de import real.
 
-## Funciones movidas a axis_storage.py (AX-005)
+## Funciones movidas a axis_telegram.py (AX-006)
 
-1. `cargar_señales_historicas()`
-2. `guardar_señales_historicas(data)`
-3. `guardar_estado_dia(estado_dia)` — **cambio de firma controlado:** ahora recibe `estado_dia` como parámetro en vez de leerlo como variable global, porque axis_storage.py no debe depender de globals de server.py. server.py mantiene un wrapper `guardar_estado_dia()` sin argumentos (mismo nombre, misma firma pública) que llama internamente a la versión movida pasándole su propio global. Ninguna llamada existente en el resto de server.py se modificó.
-4. `cargar_velas_local(simbolo)`
-5. `guardar_velas_local(simbolo, data)`
-6. `ruta_velas_local(simbolo)`
+1. `enviar_telegram(mensaje)` — mismo parse_mode HTML, mismo timeout (10s), mismo formato de payload.
 
-## Funciones NO movidas y razón (según regla explícita del sprint)
+## Funciones NO movidas y razón
 
-- **`guardar_ordenes()` / `cargar_ordenes()`** — dependen de la variable global `ordenes_pendientes` (dict en memoria con timestamps y reconstrucción de objetos datetime). Mover esto requeriría el mismo patrón de wrapper que `guardar_estado_dia`, pero el sprint las excluyó explícitamente para este paso.
-- **`guardar_portfolio()` / `cargar_portfolio()`** — dependen de `_portfolio`, una variable global más compleja (posiciones, historial, derby con 4 caballos). Excluidas explícitamente.
-- **`guardar_canales()` / `cargar_canales()`** — dependen de `canal[]` (dict por activo) y de `CANALES_DEFAULT`. Excluidas explícitamente.
-- **`archivar_señales_dia(fecha)`** — depende de `estado_dia[]` (todos los activos) y de `ACTIVOS`. Excluida explícitamente. Es la función más reciente (v8.84) que guarda vela/hora exacta en el histórico — alto valor pero también mayor riesgo si se mueve sin cuidado.
+- **`enviar_telegram_botones(mensaje, orden_id)`** — depende fuertemente de `_portfolio` y de la lógica del Derby: lee `derby["activo"]`, `derby["turno_actual"]`, `derby["caballos"]` para decidir si mostrar el botón 🏇 DERBY y a cuál caballo asignarlo. Moverla a axis_telegram.py obligaría a ese módulo a depender de Portfolio/Derby, justo lo que el sprint prohíbe explícitamente. Queda en server.py.
+- **`telegram_webhook()`** (ruta Flask) — excluida explícitamente por el sprint. Contiene lógica de órdenes, ejecución Tradier, Portfolio y Derby.
+- **`enviar_senal_con_botones()`** — excluida explícitamente por el sprint. Orquesta `registrar_senal_disparada`, precio Tradier, opción Tradier, y `enviar_telegram_botones`.
 
 ## Archivos modificados en este sprint
 
-- **Creado:** `axis_storage.py` — 6 funciones de persistencia JSON (5 puras + 1 con parámetro explícito).
-- **Modificado:** `server.py` — las 6 funciones ahora se importan desde `axis_storage.py`. `guardar_estado_dia()` queda como wrapper de 2 líneas para preservar la firma pública original.
+- **Creado:** `axis_telegram.py` — 1 función (`enviar_telegram`), leyendo `TELEGRAM_TOKEN`/`TELEGRAM_CHAT_ID` vía `os.environ` igual que antes.
+- **Modificado:** `server.py` — `enviar_telegram` ahora se importa desde `axis_telegram.py`. `enviar_telegram_botones` permanece sin cambios.
 
 ## Último commit antes de este sprint
 
-52e2b01 — AX-004 Tradier Access Baseline
+0c355b8 — AX-005 Storage Baseline
 
 ## Rama
 
@@ -35,11 +29,11 @@ main
 
 ## Sprint activo
 
-AX-005 — Storage Baseline (este sprint)
+AX-006 — Telegram Baseline (este sprint)
 
 ## Próximo sprint sugerido
 
-AX-006 — mover `guardar_ordenes`/`cargar_ordenes` usando el mismo patrón de wrapper que `guardar_estado_dia` (dependencia de `ordenes_pendientes`), como paso intermedio antes de abordar Portfolio/Derby y Canales, que son más complejos y de mayor riesgo.
+AX-007 — considerar mover `enviar_telegram_botones` usando el mismo patrón de wrapper de AX-005 (la función movida recibe el estado del Derby como parámetro en vez de leer `_portfolio` global), si se decide seguir modularizando Telegram antes de abordar Portfolio/Derby como módulo propio. Alternativamente, AX-007 podría enfocarse directamente en Channel Engine (canales bajistas), según el backlog original.
 
 ## Riesgos abiertos
 
@@ -49,14 +43,15 @@ AX-006 — mover `guardar_ordenes`/`cargar_ordenes` usando el mismo patrón de w
 4. Tradier limita historial de 15min a ~40 días
 5. Bug cosmético: chart marca "EN FORMACIÓN" en la última vela ya cerrada
 6. Frontend aún calcula canales PM40/4PASOS en JavaScript
-7. TWELVEDATA_KEY y FINNHUB_KEY siguen hardcodeados en server.py (riesgo de seguridad menor — ver AX-003)
-8. `TRADIER_TOKEN`/`TRADIER_ACCOUNT`/`TRADIER_HEADERS` duplicados en server.py y axis_tradier.py (ver AX-004)
-9. **NUEVO AX-005:** el patrón de wrapper usado en `guardar_estado_dia()` (función movida acepta parámetro, server.py mantiene wrapper sin argumentos) es ahora el patrón a seguir para `guardar_ordenes`/`guardar_portfolio`/`guardar_canales` en sprints futuros — documentado aquí para consistencia.
-10. **NUEVO AX-005:** axis_storage.py no maneja la recuperación de tipos especiales (datetime, etc.) — las funciones movidas son JSON puro. Las funciones NO movidas (ordenes, portfolio, canales) sí tienen esa complejidad adicional, razón adicional por la que se excluyeron de este sprint.
+7. TWELVEDATA_KEY y FINNHUB_KEY siguen hardcodeados en server.py (ver AX-003)
+8. TRADIER_TOKEN/TRADIER_ACCOUNT/TRADIER_HEADERS duplicados en server.py y axis_tradier.py (ver AX-004)
+9. guardar_ordenes/cargar_ordenes, guardar_portfolio/cargar_portfolio, guardar_canales/cargar_canales, archivar_señales_dia aún sin mover (ver AX-005)
+10. **NUEVO AX-006:** `TELEGRAM_TOKEN`/`TELEGRAM_CHAT_ID` ahora existen duplicados en server.py y axis_telegram.py, ambos leyendo el mismo `os.environ` — mismo patrón de duplicación controlada que TRADIER_TOKEN en AX-004, documentado por consistencia.
+11. **NUEVO AX-006:** `enviar_telegram_botones` sigue siendo la función con más responsabilidad mezclada en server.py respecto a Telegram (mensajería + decisión de Derby) — candidata principal para el patrón de wrapper en un futuro sprint.
 
 ## Notas para quien continúe
 
 - Leer siempre el AXIS_MASTER más reciente antes de cualquier cambio
 - Nunca codificar sin autorización explícita de Noel
 - Verificar sintaxis y simular orden de ejecución real después de cualquier fix (lección del crash de import os, 06/25)
-- axis_storage.py es JSON puro — cualquier función que dependa de tipos complejos (datetime, objetos anidados con lógica) debe seguir el patrón de wrapper, no moverse directamente
+- axis_telegram.py debe seguir conteniendo solo mensajería pura — cualquier función que decida lógica de negocio (Derby, Portfolio, órdenes) debe usar el patrón de wrapper visto en AX-005, no moverse directamente
