@@ -2,13 +2,17 @@
 
 ## Estado actual
 
-Sistema en producción, estable, v8.84. AX-012G (Extract 1VR Normal) ejecutado — `evaluar_1vr_normal()` extraída de `evaluar_activo()`, conteniendo exactamente el bloque de 1VR en la rama V1 normal. La reconstrucción 1VR dentro de `reset_diario_si_aplica()` permanece intacta y sin tocar, según regla explícita del sprint. Verificado con py_compile, AST, import real, y prueba funcional en ambos casos (V1 roja / V1 no roja).
+Sistema en producción, estable, v8.84. AX-012G (Extract 1VR Normal) ejecutado — `evaluar_1vr_normal()` extraída de `evaluar_activo()`, conteniendo exactamente el bloque de 1VR en la rama V1 normal, sin tocar la reconstrucción 1VR dentro de `reset_diario_si_aplica()` (que permanece duplicada e intacta, según regla explícita del sprint). Ubicada inmediatamente después de `reset_diario_si_aplica()`. Verificado con py_compile, AST, import real, y prueba funcional en ambos casos (V1 roja / V1 no roja).
 
 ## Cambio realizado en este sprint
 
-`evaluar_1vr_normal(simbolo, ed, velas, vela_actual, v_open, v_close, v_roja)` — nueva función, ubicada inmediatamente después de `reset_diario_si_aplica()`. Contiene exactamente el bloque original: cálculo de techo/zona 30%/SMA, decisión del label (1VR vs 1VR+), y envío de la señal con el mismo texto exacto.
+`evaluar_1vr_normal(simbolo, ed, velas, vela_actual, v_open, v_close, v_roja)` — nueva función. Contiene exactamente el bloque original de 1VR en V1: calcula techo/mitad del canal, zona 30% RCB, SMA20 vs SMA40, decide label (1VR vs 1VR+), marca `vr1_fired`, llama a `guardar_estado_dia()` y `enviar_senal_con_botones()` con el mismo texto exacto.
 
-Dentro de `evaluar_activo()`: `evaluar_1vr_normal(simbolo, ed, velas, vela_actual, v_open, v_close, v_roja)` reemplaza el bloque inline. **No se tocó la reconstrucción 1VR dentro de `reset_diario_si_aplica()`** — sigue siendo código duplicado, sin cambios, según regla explícita del sprint (la unificación queda para un sprint futuro). Ningún otro bloque (RPG, GNA, GBA, PM40, 4PASOS, Canales) fue modificado.
+Dentro de `evaluar_activo()`: `evaluar_1vr_normal(simbolo, ed, velas, vela_actual, v_open, v_close, v_roja)`. Ningún otro bloque fue modificado — la reconstrucción 1VR dentro del Reset Diario sigue siendo código duplicado, sin tocar.
+
+## Proceso de extracción (aplicando lecciones de AX-012E/F)
+
+El bloque se extrajo directamente del archivo real con Python (`content.find()` + slicing), no transcrito manualmente — confirmado byte por byte contra el original antes de construir el script. El script de migración usa el patrón de verificación con `ast.parse()` sobre una copia en memoria antes de escribir, adoptado en AX-012F. La inserción de la función se ancló a `def evaluar_activo(...)` (en vez de a la firma de `reset_diario_si_aplica`), evitando el riesgo de insertar contenido dentro de una función existente como ocurrió en el incidente de AX-012F.
 
 ## Archivos modificados en este sprint
 
@@ -17,7 +21,7 @@ Dentro de `evaluar_activo()`: `evaluar_1vr_normal(simbolo, ed, velas, vela_actua
 
 ## Último commit antes de este sprint
 
-b84e87b (commit previo a este sprint, ver historial de git)
+(commit de AX-012F, ver historial de git)
 
 ## Rama
 
@@ -29,22 +33,23 @@ AX-012G — Extract 1VR Normal (este sprint)
 
 ## Próximo sprint sugerido
 
-Según el orden documentado en `05-STRATEGY-ENGINE-DESIGN.md` sección 5: **AX-012H — unificar 1VR**, ahora que tanto `evaluar_1vr_normal()` como `reset_diario_si_aplica()` existen como funciones propias. Este sprint modificaría `reset_diario_si_aplica()` para llamar a `evaluar_1vr_normal()` en vez de duplicar su lógica internamente — el primer sprint que toca el contenido de `reset_diario_si_aplica()` desde que se creó en AX-012F, por lo que requiere especial cuidado y pruebas exhaustivas comparando el comportamiento antes/después.
+Según `05-STRATEGY-ENGINE-DESIGN.md` y la nota explícita de AX-012F: considerar un sprint dedicado a **unificar 1VR normal con 1VR reconstrucción** — ahora que ambas existen como bloques identificables (`evaluar_1vr_normal()` y el bloque inline dentro de `reset_diario_si_aplica()`), se podría hacer que la reconstrucción llame a `evaluar_1vr_normal()` en vez de duplicar la lógica, eliminando finalmente esa redundancia documentada desde AX-012A. Este sprint fue explícitamente excluido de AX-012G ("Este sprint NO intenta unificar...").
+
+Alternativamente, continuar con el patrón de extracción para PM40 y 4PASOS (sección 2.6/2.7 de `05-STRATEGY-ENGINE-DESIGN.md`), ambas marcadas como riesgo alto y candidatas a sub-división — el sprint siguiente debería primero diseñar esa sub-división antes de codificar, dado el mayor estado interno de ambas estrategias.
 
 ## Riesgos abiertos
 
 (Ver lista completa en `04-ARCHITECTURE-AUDIT.md` sección 6 y `05-STRATEGY-ENGINE-DESIGN.md` sección 4. Nota específica de este sprint:)
 
-1. **NUEVO AX-012G:** la reconstrucción 1VR dentro de `reset_diario_si_aplica()` sigue siendo código duplicado respecto a `evaluar_1vr_normal()` — con nombres de variable distintos (`v1_close_r` vs `v_close`, `ahora_dt_r` vs `ahora_dt_vr`, etc.) pero lógica idéntica. Documentado para AX-012H.
-2. **NUEVO AX-012G:** el patrón de verificación con `ast.parse()` antes de escribir (adoptado en AX-012F tras el incidente de esa sesión) se aplicó nuevamente en este sprint sin problemas — confirmado como práctica estándar efectiva para todos los sprints de extracción de aquí en adelante.
-3. Los riesgos generales de la descomposición (variables compartidas, flags fired, interacción P2 dinámico/4PASOS, orden de evaluación inmutable) documentados en AX-012A siguen aplicando.
+1. **NUEVO AX-012G:** 1VR ahora existe en 2 lugares: `evaluar_1vr_normal()` (función propia) y el bloque de reconstrucción dentro de `reset_diario_si_aplica()` (inline, duplicado). Ambos deben mantenerse sincronizados manualmente si la lógica de 1VR cambia en el futuro, hasta que se unifiquen en un sprint dedicado.
+2. Los riesgos generales de la descomposición (variables compartidas, flags fired, interacción P2 dinámico/4PASOS, orden de evaluación inmutable) documentados en AX-012A siguen aplicando.
 
 ## Notas para quien continúe
 
 - Leer siempre el AXIS_MASTER más reciente antes de cualquier cambio
 - Leer `05-STRATEGY-ENGINE-DESIGN.md` antes de cualquier sub-sprint de extracción
 - Nunca codificar sin autorización explícita de Noel
-- Extraer bloques de código directamente del archivo real con Python (`content.find()` + slicing) en vez de transcribirlos manualmente — confirmado como el método más confiable tras los incidentes de AX-012E y AX-012F
-- Verificar `ast.parse()` del resultado ANTES de escribir el archivo, no solo `py_compile` después
-- Al verificar resultados de comandos en terminal, usar agrupación `{ comando; } > archivo 2>&1; cat archivo; pbcopy < archivo` en vez de pipes con `tee` — más confiable para capturar la salida completa sin truncar
+- Extraer bloques directamente del archivo real con Python, nunca transcribir a mano
+- Verificar `ast.parse()` del resultado completo antes de escribir el archivo
+- Anclar inserciones de funciones nuevas a marcadores estables que no estén dentro de otra función (como `def evaluar_activo(...)`), nunca a la firma de una función recién creada en el mismo sprint
 - Validar cada sub-sprint en producción durante al menos un día de mercado completo antes de proceder al siguiente
