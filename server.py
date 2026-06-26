@@ -263,22 +263,8 @@ from axis_config import (
     SEÑALES_FILE, BITACORA_FILE, DATA_DIR,
 )
 
-def cargar_señales_historicas():
-    if not os.path.exists(SEÑALES_FILE):
-        return {}
-    try:
-        with open(SEÑALES_FILE, "r") as f:
-            return json.load(f)
-    except Exception as e:
-        print(f"Error cargando señales históricas: {e}")
-        return {}
-
-def guardar_señales_historicas(data):
-    try:
-        with open(SEÑALES_FILE, "w") as f:
-            json.dump(data, f, indent=2)
-    except Exception as e:
-        print(f"Error guardando señales históricas: {e}")
+# AX-005: cargar_señales_historicas, guardar_señales_historicas movidas a axis_storage.py
+from axis_storage import cargar_señales_historicas, guardar_señales_historicas
 
 def archivar_señales_dia(fecha):
     """v8.84: ahora guarda tambien vela y hora exacta de cada senal (no solo
@@ -315,12 +301,13 @@ def archivar_señales_dia(fecha):
     guardar_señales_historicas(historial)
     print(f"Señales archivadas para {fecha}: {historial[fecha]}")
 
+# AX-005: logica movida a axis_storage.py (acepta estado_dia como parametro
+# en vez de leerlo como global). Wrapper mantiene el nombre y firma original
+# sin argumentos para no romper ninguna llamada existente en server.py.
+from axis_storage import guardar_estado_dia as _guardar_estado_dia_storage
+
 def guardar_estado_dia():
-    try:
-        with open(ESTADO_FILE, "w") as f:
-            json.dump(estado_dia, f, indent=2)
-    except Exception as e:
-        print(f"Error guardando estado_dia: {e}")
+    _guardar_estado_dia_storage(estado_dia)
 
 def cargar_estado_dia():
     global estado_dia
@@ -810,26 +797,9 @@ def restar_dias_habiles(fecha, dias):
 # ═══════════════════════════════════════════════════════════
 # BASE DE DATOS LOCAL DE VELAS
 # ═══════════════════════════════════════════════════════════
-def ruta_velas_local(simbolo):
-    return f"{DATA_DIR}/axis_velas_{simbolo}.json"
-
-def cargar_velas_local(simbolo):
-    ruta = ruta_velas_local(simbolo)
-    if not os.path.exists(ruta):
-        return {"simbolo": simbolo, "ultima_barra": None, "barras": []}
-    try:
-        with open(ruta) as f:
-            return json.load(f)
-    except Exception as e:
-        print(f"Error cargando velas locales {simbolo}: {e}")
-        return {"simbolo": simbolo, "ultima_barra": None, "barras": []}
-
-def guardar_velas_local(simbolo, data):
-    try:
-        with open(ruta_velas_local(simbolo), "w") as f:
-            json.dump(data, f)
-    except Exception as e:
-        print(f"Error guardando velas locales {simbolo}: {e}")
+# AX-005: ruta_velas_local, cargar_velas_local, guardar_velas_local movidas
+# a axis_storage.py. Mismos nombres, mismo comportamiento, mismo formato JSON.
+from axis_storage import ruta_velas_local, cargar_velas_local, guardar_velas_local
 
 def agregar_barra_diaria(simbolo, fecha_str=None):
     """Obtiene el OHLC diario OFICIAL directo de Tradier history (no lo
