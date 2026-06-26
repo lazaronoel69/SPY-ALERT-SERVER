@@ -773,14 +773,9 @@ def es_dia_mercado(dt=None):
 # ═══════════════════════════════════════════════════════════
 # TELEGRAM
 # ═══════════════════════════════════════════════════════════
-def enviar_telegram(mensaje):
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": mensaje, "parse_mode": "HTML"}
-    try:
-        r = requests.post(url, json=payload, timeout=10)
-        print(f"Telegram: {r.status_code} — {mensaje[:60]}")
-    except Exception as e:
-        print(f"Error Telegram: {e}")
+# AX-006: enviar_telegram movida a axis_telegram.py. Mismo nombre,
+# mismo comportamiento, mismo parse_mode HTML, mismo timeout.
+from axis_telegram import enviar_telegram
 
 # ═══════════════════════════════════════════════════════════
 # UTILIDAD — Dias habiles
