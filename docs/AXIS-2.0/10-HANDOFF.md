@@ -2,27 +2,30 @@
 
 ## Estado actual
 
-Sistema en producción, estable, v8.84. AX-012B (Prepare Candle Context) ejecutado — primer paso real de código en la descomposición de `evaluar_activo()`. `preparar_contexto_vela(simbolo, velas, ahora)` extraída como función pura, sin cambiar ninguna lógica de trading, flags, P2 dinámico, ni 4PASOS. Verificado con py_compile y prueba funcional completa (3 escenarios: contexto válido, evaluar_activo end-to-end, y caso sin vela encontrada).
+Sistema en producción, estable, v8.84. AX-012C (Extract GNA Engine) ejecutado — `evaluar_gna()` extraída de `evaluar_activo()` con ambos bloques (activación V1 + disparo V2-V7) exactos, sin cambiar GBA, RPG, 1VR, PM40, 4PASOS, Canales, ni Reset Diario. Verificado con py_compile y prueba funcional en ambos escenarios (V1 y V2-V7) con datos sintéticos.
 
 ## Cambio realizado en este sprint
 
-`preparar_contexto_vela(simbolo, velas, ahora)` — nueva función, ubicada justo antes de `evaluar_activo()`. Hace exactamente lo que antes hacía el inicio inline de `evaluar_activo()`:
-- Calcula `hora = ahora.hour`
-- Busca `vela_actual` cuyo `dt_v.hour == hora - 1`
-- Si no existe, imprime el mismo mensaje exacto (`"{simbolo}: no se encontro vela para hora {hora-1}"`) y devuelve `None`
-- Extrae `v_open, v_close, v_high, v_low, fecha_hoy`
-- Devuelve un dict con `hora, vela_actual, v_open, v_close, v_high, v_low, fecha_hoy`
+`evaluar_gna(simbolo, ed, velas, v_open, v_close, v_alcista, v7_ayer, v1_close, hora_vela, es_v1)` — nueva función, ubicada justo antes de `evaluar_activo()`. Contiene **exactamente** los 2 bloques de GNA que existían inline:
+- `es_v1=True`: bloque de activación (gap_alza >= 0.1%, SMA20>SMA40) — idéntico al original, mismo print exacto.
+- `es_v1=False`: bloque de disparo (v_alcista y v_close > v1_close) — idéntico al original, mismo flujo de `guardar_estado_dia()` + `enviar_senal_con_botones()` con el mismo texto exacto.
 
-`evaluar_activo()` ahora llama a `ctx = preparar_contexto_vela(simbolo, velas, ahora)`, verifica `if ctx is None: return`, y desempaqueta las mismas 7 variables desde `ctx`. **Ningún otro código dentro de `evaluar_activo()` fue modificado** — el reset diario, la vela alcista, la bifurcación V1/V2-7, y todas las estrategias (1VR, RPG, GNA, GBA, PM40, 4PASOS, canales) permanecen exactamente igual, en el mismo orden.
+Recibe explícitamente todas las variables necesarias — no lee nada implícito de un scope compartido.
+
+Dentro de `evaluar_activo()`, ambos bloques GNA fueron reemplazados por una sola línea de llamada cada uno:
+- En V1: `evaluar_gna(simbolo, ed, velas, v_open, v_close, v_alcista, v7_ayer, None, hora_vela, True)`
+- En V2-V7: `evaluar_gna(simbolo, ed, velas, v_open, v_close, v_alcista, v7_ayer, v1_close, hora_vela, False)`
+
+**Ningún otro bloque dentro de `evaluar_activo()` fue tocado** — GBA, RPG, 1VR, PM40, 4PASOS, Canales y Reset Diario permanecen exactamente igual, en el mismo orden.
 
 ## Archivos modificados en este sprint
 
-- **Modificado:** `server.py` — `preparar_contexto_vela()` agregada, `evaluar_activo()` usa `ctx` en sus primeras líneas.
+- **Modificado:** `server.py` — `evaluar_gna()` agregada, ambos bloques GNA reemplazados por llamadas.
 - **Modificado:** `docs/AXIS-2.0/10-HANDOFF.md` (este archivo).
 
 ## Último commit antes de este sprint
 
-e10e7bc — Update 10-HANDOFF.md (AX-012A)
+5e04f61 — AX-012B Prepare Candle Context
 
 ## Rama
 
@@ -30,24 +33,25 @@ main
 
 ## Sprint activo
 
-AX-012B — Prepare Candle Context (este sprint)
+AX-012C — Extract GNA Engine (este sprint)
 
 ## Próximo sprint sugerido
 
-Según el orden documentado en `05-STRATEGY-ENGINE-DESIGN.md` sección 5: **AX-012C — extraer `evaluar_gna()` y `evaluar_gba()`** por separado, las dos estrategias más simples y simétricas del sistema (sección 2.5 del diseño).
+Según el orden documentado en `05-STRATEGY-ENGINE-DESIGN.md` sección 5: **AX-012D — extraer `evaluar_gba()`** (la estrategia hermana de GNA, misma estructura, mismo patrón de extracción ya validado en este sprint).
 
 ## Riesgos abiertos
 
 (Ver lista completa en `04-ARCHITECTURE-AUDIT.md` sección 6 y `05-STRATEGY-ENGINE-DESIGN.md` sección 4. Nota específica de este sprint:)
 
-1. **NUEVO AX-012B:** existe un archivo `axis_report.sh` sin rastrear (untracked) en el repositorio local de Noel, detectado en el chequeo inicial de este sprint. No forma parte de ningún sprint conocido de AXIS 2.0 — no se tocó, queda documentado para que Noel confirme su propósito o lo elimine si es un archivo de prueba olvidado.
-2. **NUEVO AX-012B:** este es el primer sprint que modifica código real dentro de `evaluar_activo()` (los sprints AX-003 a AX-010 modularizaron funciones *fuera* de ella). A partir de aquí, cada sub-sprint de extracción debe seguir el mismo nivel de rigor: bloque exacto verificado contra el código real, prueba funcional con datos sintéticos, y verificación de producción — nunca solo sintaxis.
-3. Los riesgos generales de la descomposición (variables compartidas, flags fired, interacción P2 dinámico/4PASOS, orden de evaluación inmutable) documentados en AX-012A siguen aplicando para todos los sub-sprints siguientes (C en adelante).
+1. **NUEVO AX-012C:** durante la verificación funcional de este sprint, se detectó que un mock simplificado de `calcular_sma()` (devolviendo el mismo valor para SMA20 y SMA40) hacía fallar la prueba del caso V1 — esto era un error en la simulación de prueba, no en el código real. Queda documentado como recordatorio: al probar funciones extraídas que dependen de comparaciones entre 2+ valores calculados, los mocks deben producir valores genuinamente distintos para cada uno, o la prueba no detecta nada real.
+2. **NUEVO AX-012C:** `evaluar_gna()` recibe `v1_close=None` cuando se llama desde la rama V1 (donde esa variable aún no existe en ese punto del flujo original) — esto es intencional y preserva el comportamiento exacto, ya que el bloque original de V1 nunca leía `v1_close`. Documentado para que sprints futuros (GBA, RPG) sigan el mismo patrón si aplica.
+3. Los riesgos generales de la descomposición (variables compartidas, flags fired, interacción P2 dinámico/4PASOS, orden de evaluación inmutable) documentados en AX-012A siguen aplicando para todos los sub-sprints siguientes (D en adelante).
 
 ## Notas para quien continúe
 
 - Leer siempre el AXIS_MASTER más reciente antes de cualquier cambio
-- Leer `05-STRATEGY-ENGINE-DESIGN.md` antes de cualquier sub-sprint de extracción (B en adelante) — contiene el análisis función por función y el orden obligatorio
+- Leer `05-STRATEGY-ENGINE-DESIGN.md` antes de cualquier sub-sprint de extracción — contiene el análisis función por función y el orden obligatorio
 - Nunca codificar sin autorización explícita de Noel
-- Verificar sintaxis Y prueba funcional con datos sintéticos después de cualquier extracción dentro de evaluar_activo() — la sintaxis sola no detecta cambios de comportamiento sutiles
+- Al extraer una función con 2 caminos (V1/V2-V7), reemplazar PRIMERO los bloques inline por llamadas, y SOLO DESPUÉS insertar la definición de la función nueva — si se hace al revés, el texto del bloque original puede aparecer duplicado (una vez en el código original, otra dentro de la función recién insertada) y romper la búsqueda exacta de reemplazo
+- Verificar sintaxis Y prueba funcional con datos sintéticos (con mocks que produzcan valores genuinamente distintos cuando se comparan) después de cualquier extracción dentro de evaluar_activo()
 - Validar cada sub-sprint en producción durante al menos un día de mercado completo antes de proceder al siguiente
