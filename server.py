@@ -848,6 +848,60 @@ def evaluar_gba(simbolo, ed, v_open, v_close, v_alcista, v7_ayer, v1_close, hora
                     f"<b>Techo V1:</b> ${v1_close:.2f} | <b>Cierre:</b> ${v_close:.2f}\n"
                 )
 
+def evaluar_rpg_activacion(simbolo, ed, velas, v_open, v_close, v_low, v7_ayer):
+    """AX-012E: extraida de evaluar_activo() sin cambiar comportamiento.
+    Contiene EXACTAMENTE el bloque de activacion RPG en V1.
+    Recibe explicitamente todas las variables necesarias."""
+    # RPG — gap mínimo 0.5%, V1 verde
+    if RPG_ON and v7_ayer and v_close > v_open and not ed["rpg_fired"]:
+        gap = abs(v_open - v7_ayer) / v7_ayer * 100
+        if gap >= 0.5:
+            ed["rpg_activo"] = True
+            ed["rpg_piso"]   = v_low
+            ed["rpg_s20"]    = calcular_sma(velas, 20)
+            ed["rpg_s40"]    = calcular_sma(velas, 40)
+            print(f"{simbolo} RPG activado — gap {gap:.2f}% piso: ${v_low:.2f}")
+
+def evaluar_rpg_disparo(simbolo, ed, vela_actual, v_close, hora_vela):
+    """AX-012E: extraida de evaluar_activo() sin cambiar comportamiento.
+    Contiene EXACTAMENTE el bloque de disparo RPG en V2-V7.
+    Recibe explicitamente todas las variables necesarias."""
+    # RPG — dispara siempre con ruptura del piso (v8.77).
+    # Condicion adicional (RCB 30% o SMA20>SMA40) solo decide el label RPG vs RPG+,
+    # nunca bloquea el disparo. Mismo patron que el fix de 1VR en v8.63.
+    if RPG_ON and ed["rpg_activo"] and not ed["rpg_fired"] and ed["rpg_piso"]:
+        if v_close < ed["rpg_piso"]:
+            ahora_dt_rpg = EST.localize(datetime.strptime(vela_actual["datetime"], "%Y-%m-%d %H:%M:%S"))
+            techo_rpg    = calcular_techo_canal(simbolo, ahora_dt_rpg)
+            _, mitad_rpg = calcular_piso_mitad_canal(simbolo, ahora_dt_rpg)
+            c_rpg        = canal[simbolo]
+            zona_30_rpg = None
+            if techo_rpg and mitad_rpg:
+                zona_30_rpg = techo_rpg - (techo_rpg - mitad_rpg) * 0.30
+            en_rcb_30_rpg = (
+                c_rpg["on"] and not c_rpg["apagado"] and c_rpg["p3"] is not None
+                and techo_rpg is not None and zona_30_rpg is not None
+                and zona_30_rpg <= v_close <= techo_rpg
+            )
+            s20_rpg = ed.get("rpg_s20")
+            s40_rpg = ed.get("rpg_s40")
+            sma20_gt_sma40 = s20_rpg and s40_rpg and s20_rpg > s40_rpg
+            ed["rpg_fired"]  = True
+            ed["rpg_activo"] = False
+            guardar_estado_dia()
+            label_rpg = "RPG+" if (en_rcb_30_rpg or sma20_gt_sma40) else "RPG"
+            if en_rcb_30_rpg:
+                extra_rpg = f"<b>Canal RCB:</b> Techo ${techo_rpg:.2f} | Zona 30%: ${zona_30_rpg:.2f}\n"
+            elif sma20_gt_sma40:
+                extra_rpg = f"<b>SMA20:</b> ${s20_rpg:.2f} > <b>SMA40:</b> ${s40_rpg:.2f}\n"
+            else:
+                extra_rpg = ""
+            enviar_senal_con_botones(
+                simbolo, f"{label_rpg} — RUPTURA PISO GAP",
+                f"{hora_vela+1}:00 EST", v_close, "PUT",
+                f"<b>Piso V1:</b> ${ed['rpg_piso']:.2f} | <b>Cierre:</b> ${v_close:.2f}\n{extra_rpg}"
+            )
+
 def evaluar_activo(simbolo, velas, ahora):
     ed = estado_dia[simbolo]
     c  = canal[simbolo]
@@ -1011,15 +1065,8 @@ def evaluar_activo(simbolo, velas, ahora):
                 f"<b>Open:</b> ${v_open:.2f} | <b>Close:</b> ${v_close:.2f}\n{extra_vr}"
             )
 
-        # RPG — gap mínimo 0.5%, V1 verde
-        if RPG_ON and v7_ayer and v_close > v_open and not ed["rpg_fired"]:
-            gap = abs(v_open - v7_ayer) / v7_ayer * 100
-            if gap >= 0.5:
-                ed["rpg_activo"] = True
-                ed["rpg_piso"]   = v_low
-                ed["rpg_s20"]    = calcular_sma(velas, 20)
-                ed["rpg_s40"]    = calcular_sma(velas, 40)
-                print(f"{simbolo} RPG activado — gap {gap:.2f}% piso: ${v_low:.2f}")
+        # RPG
+        evaluar_rpg_activacion(simbolo, ed, velas, v_open, v_close, v_low, v7_ayer)
 
         # GNA
         evaluar_gna(simbolo, ed, velas, v_open, v_close, v_alcista, v7_ayer, None, hora_vela, True)
@@ -1134,44 +1181,8 @@ def evaluar_activo(simbolo, velas, ahora):
     # ── VELAS 2-7 ──
     v1_close = ed["v1_close"]
 
-    # RPG — dispara siempre con ruptura del piso (v8.77).
-    # Condicion adicional (RCB 30% o SMA20>SMA40) solo decide el label RPG vs RPG+,
-    # nunca bloquea el disparo. Mismo patron que el fix de 1VR en v8.63.
-    if RPG_ON and ed["rpg_activo"] and not ed["rpg_fired"] and ed["rpg_piso"]:
-        if v_close < ed["rpg_piso"]:
-            ahora_dt_rpg = EST.localize(datetime.strptime(vela_actual["datetime"], "%Y-%m-%d %H:%M:%S"))
-            techo_rpg    = calcular_techo_canal(simbolo, ahora_dt_rpg)
-            _, mitad_rpg = calcular_piso_mitad_canal(simbolo, ahora_dt_rpg)
-            c_rpg        = canal[simbolo]
-
-            zona_30_rpg = None
-            if techo_rpg and mitad_rpg:
-                zona_30_rpg = techo_rpg - (techo_rpg - mitad_rpg) * 0.30
-            en_rcb_30_rpg = (
-                c_rpg["on"] and not c_rpg["apagado"] and c_rpg["p3"] is not None
-                and techo_rpg is not None and zona_30_rpg is not None
-                and zona_30_rpg <= v_close <= techo_rpg
-            )
-
-            s20_rpg = ed.get("rpg_s20")
-            s40_rpg = ed.get("rpg_s40")
-            sma20_gt_sma40 = s20_rpg and s40_rpg and s20_rpg > s40_rpg
-
-            ed["rpg_fired"]  = True
-            ed["rpg_activo"] = False
-            guardar_estado_dia()
-            label_rpg = "RPG+" if (en_rcb_30_rpg or sma20_gt_sma40) else "RPG"
-            if en_rcb_30_rpg:
-                extra_rpg = f"<b>Canal RCB:</b> Techo ${techo_rpg:.2f} | Zona 30%: ${zona_30_rpg:.2f}\n"
-            elif sma20_gt_sma40:
-                extra_rpg = f"<b>SMA20:</b> ${s20_rpg:.2f} > <b>SMA40:</b> ${s40_rpg:.2f}\n"
-            else:
-                extra_rpg = ""
-            enviar_senal_con_botones(
-                simbolo, f"{label_rpg} — RUPTURA PISO GAP",
-                f"{hora_vela+1}:00 EST", v_close, "PUT",
-                f"<b>Piso V1:</b> ${ed['rpg_piso']:.2f} | <b>Cierre:</b> ${v_close:.2f}\n{extra_rpg}"
-            )
+        # RPG
+    evaluar_rpg_disparo(simbolo, ed, vela_actual, v_close, hora_vela)
 
     # GNA
     evaluar_gna(simbolo, ed, velas, v_open, v_close, v_alcista, v7_ayer, v1_close, hora_vela, False)
