@@ -1005,6 +1005,49 @@ def reset_diario_si_aplica(simbolo, velas, fecha_hoy, ed, c, hora):
 
     return ed, c
 
+def evaluar_1vr_normal(simbolo, ed, velas, vela_actual, v_open, v_close, v_roja):
+    """AX-012G: extraida de evaluar_activo() sin cambiar comportamiento.
+    Contiene EXACTAMENTE el bloque de 1VR en la rama V1 normal (no la
+    reconstruccion del reset diario, que permanece intacta dentro de
+    reset_diario_si_aplica() segun regla explicita de este sprint).
+    Recibe explicitamente todas las variables necesarias."""
+    # ── 1VR — Primera Vela Roja ──
+    if VR1_ON and v_roja and not ed["vr1_fired"]:
+        ahora_dt_vr = EST.localize(datetime.strptime(vela_actual["datetime"], "%Y-%m-%d %H:%M:%S"))
+        techo_vr    = calcular_techo_canal(simbolo, ahora_dt_vr)
+        _, mitad_vr = calcular_piso_mitad_canal(simbolo, ahora_dt_vr)
+        c_vr        = canal[simbolo]
+        sma20_vr    = calcular_sma(velas, 20)
+        sma40_vr    = calcular_sma(velas, 40)
+
+        zona_30 = None
+        if techo_vr and mitad_vr:
+            zona_30 = techo_vr - (techo_vr - mitad_vr) * 0.30
+        en_rcb_30 = (
+            c_vr["on"] and not c_vr["apagado"] and c_vr["p3"] is not None
+            and techo_vr is not None and zona_30 is not None
+            and zona_30 <= v_close <= techo_vr
+        )
+
+        sma40_gt_sma20 = sma40_vr and sma20_vr and sma40_vr > sma20_vr
+
+        # 1VR dispara siempre que V1 cierre roja
+        # Condición adicional solo cambia el label (1VR vs 1VR+)
+        ed["vr1_fired"] = True
+        guardar_estado_dia()
+        label_vr = "1VR+" if en_rcb_30 else "1VR"
+        if en_rcb_30:
+            extra_vr = f"<b>Canal RCB:</b> Techo ${techo_vr:.2f} | Zona 30%: ${zona_30:.2f}\n"
+        elif sma40_gt_sma20:
+            extra_vr = f"<b>SMA40:</b> ${sma40_vr:.2f} > <b>SMA20:</b> ${sma20_vr:.2f}\n"
+        else:
+            extra_vr = ""
+        enviar_senal_con_botones(
+            simbolo, f"{label_vr} — PRIMERA VELA ROJA",
+            "10:00 EST", v_close, "PUT",
+            f"<b>Open:</b> ${v_open:.2f} | <b>Close:</b> ${v_close:.2f}\n{extra_vr}"
+        )
+
 def evaluar_activo(simbolo, velas, ahora):
     ed = estado_dia[simbolo]
     c  = canal[simbolo]
@@ -1043,42 +1086,8 @@ def evaluar_activo(simbolo, velas, ahora):
         ed["v1_open"]  = v_open
         ed["v1_low"]   = v_low
 
-        # ── 1VR — Primera Vela Roja ──
-        if VR1_ON and v_roja and not ed["vr1_fired"]:
-            ahora_dt_vr = EST.localize(datetime.strptime(vela_actual["datetime"], "%Y-%m-%d %H:%M:%S"))
-            techo_vr    = calcular_techo_canal(simbolo, ahora_dt_vr)
-            _, mitad_vr = calcular_piso_mitad_canal(simbolo, ahora_dt_vr)
-            c_vr        = canal[simbolo]
-            sma20_vr    = calcular_sma(velas, 20)
-            sma40_vr    = calcular_sma(velas, 40)
-
-            zona_30 = None
-            if techo_vr and mitad_vr:
-                zona_30 = techo_vr - (techo_vr - mitad_vr) * 0.30
-            en_rcb_30 = (
-                c_vr["on"] and not c_vr["apagado"] and c_vr["p3"] is not None
-                and techo_vr is not None and zona_30 is not None
-                and zona_30 <= v_close <= techo_vr
-            )
-
-            sma40_gt_sma20 = sma40_vr and sma20_vr and sma40_vr > sma20_vr
-
-            # 1VR dispara siempre que V1 cierre roja
-            # Condición adicional solo cambia el label (1VR vs 1VR+)
-            ed["vr1_fired"] = True
-            guardar_estado_dia()
-            label_vr = "1VR+" if en_rcb_30 else "1VR"
-            if en_rcb_30:
-                extra_vr = f"<b>Canal RCB:</b> Techo ${techo_vr:.2f} | Zona 30%: ${zona_30:.2f}\n"
-            elif sma40_gt_sma20:
-                extra_vr = f"<b>SMA40:</b> ${sma40_vr:.2f} > <b>SMA20:</b> ${sma20_vr:.2f}\n"
-            else:
-                extra_vr = ""
-            enviar_senal_con_botones(
-                simbolo, f"{label_vr} — PRIMERA VELA ROJA",
-                "10:00 EST", v_close, "PUT",
-                f"<b>Open:</b> ${v_open:.2f} | <b>Close:</b> ${v_close:.2f}\n{extra_vr}"
-            )
+        # 1VR
+        evaluar_1vr_normal(simbolo, ed, velas, vela_actual, v_open, v_close, v_roja)
 
         # RPG
         evaluar_rpg_activacion(simbolo, ed, velas, v_open, v_close, v_low, v7_ayer)
