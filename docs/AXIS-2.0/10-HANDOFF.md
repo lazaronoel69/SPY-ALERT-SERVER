@@ -2,32 +2,27 @@
 
 ## Estado actual
 
-Sistema en producción, estable, v8.84. AX-INF-001 (Tools Automation) ejecutado — 3 scripts de automatización creados en `tools/`, sin tocar server.py, lógica, ni producción. Probados en un repositorio git de prueba aislado (con git real y mocks de `pbcopy`/`curl`) antes de entregarse.
+Sistema en producción, estable, v8.84. AX-012E (Extract RPG Engine) ejecutado — `evaluar_rpg_activacion()` y `evaluar_rpg_disparo()` extraídas de `evaluar_activo()` como dos funciones independientes (siguiendo lo pedido explícitamente por el sprint, dado que RPG tiene campos adicionales `rpg_s20`/`rpg_s40` que GNA/GBA no tenían). Ubicadas inmediatamente después de `evaluar_gba()`. Sin tocar GNA, GBA, 1VR, PM40, 4PASOS, Canales, ni la reconstrucción RPG dentro del Reset Diario. Verificado con py_compile y prueba funcional mínima de ambos escenarios.
 
-## Scripts creados en este sprint
+## Cambio realizado en este sprint
 
-1. **`tools/pre_sprint.sh`** — `git pull` + `git status` + `git log -3` + `py_compile` de `server.py` y todos los `axis_*.py` presentes (detecta automáticamente cuáles existen, sin fallar si no hay ninguno). Copia todo a clipboard con `pbcopy`.
-2. **`tools/doc_summary.sh <ruta>`** — recibe la ruta de un documento como argumento. Si no se pasa argumento o el archivo no existe, imprime un mensaje claro y termina sin error silencioso. Ejecuta `git status` + `git log -1` + `head -80` + `tail -80` del documento. Copia todo a clipboard.
-3. **`tools/chatgpt_report.sh`** — reporte completo: `git status`, `git log -3`, `py_compile` de `server.py` y todos los `axis_*.py`, `curl` a `/status` de Railway, `git show --stat --oneline HEAD`, y el diff del último commit específicamente para `server.py` y `docs/AXIS-2.0/10-HANDOFF.md`. Copia todo a clipboard.
+1. **`evaluar_rpg_activacion(simbolo, ed, velas, v_open, v_close, v_low, v7_ayer)`** — contiene exactamente el bloque de activación RPG en V1 (gap mínimo 0.5%, vela verde). Mismo print exacto, mismos campos guardados (`rpg_activo`, `rpg_piso`, `rpg_s20`, `rpg_s40`).
+2. **`evaluar_rpg_disparo(simbolo, ed, vela_actual, v_close, hora_vela)`** — contiene exactamente el bloque de disparo RPG en V2-V7 (ruptura del piso, label RPG vs RPG+ según condición adicional). Mismo flujo de `guardar_estado_dia()` + `enviar_senal_con_botones()` con el mismo texto exacto.
 
-Los 3 scripts terminan con `REPORT COPIED TO CLIPBOARD — paste with ⌘+V` y usan un archivo temporal (`mktemp`) para construir la salida antes de copiarla, evitando truncar la salida o tener problemas con `pbcopy` en pipes.
+Dentro de `evaluar_activo()`:
+- En V1: `evaluar_rpg_activacion(simbolo, ed, velas, v_open, v_close, v_low, v7_ayer)`
+- En V2-V7: `evaluar_rpg_disparo(simbolo, ed, vela_actual, v_close, hora_vela)`
 
-## Verificación realizada
-
-Probados en un repositorio git real (aislado, en `/tmp`), no solo simulación de texto:
-- `pre_sprint.sh`: detectó correctamente `server.py` + 2 archivos `axis_*.py` de prueba, los compiló, generó el reporte.
-- `doc_summary.sh`: probado con documento real (100 líneas, confirma head/tail correctos), archivo inexistente (mensaje de error claro), y sin argumento (mensaje de uso).
-- `chatgpt_report.sh`: probado con `curl` y `pbcopy` mockeados (sin red real ni clipboard real disponible en el entorno de prueba), confirmando que las 7 secciones aparecen en el orden correcto y con el contenido esperado.
+**No se tocó la reconstrucción RPG dentro del Reset Diario** (bloque que re-activa RPG si el sistema detecta que V1 ya existe en el histórico tras un reinicio) — queda exactamente igual, según regla explícita del sprint. **Ningún otro bloque fue modificado** — GNA, GBA, 1VR, PM40, 4PASOS y Canales permanecen exactamente igual, en el mismo orden.
 
 ## Archivos modificados en este sprint
 
-- **Creados:** `tools/pre_sprint.sh`, `tools/doc_summary.sh`, `tools/chatgpt_report.sh` (los 3 con permisos de ejecución `+x`).
+- **Modificado:** `server.py` — ambas funciones RPG agregadas, ambos bloques inline reemplazados por llamadas.
 - **Modificado:** `docs/AXIS-2.0/10-HANDOFF.md` (este archivo).
-- **Sin cambios en código de producción** (server.py ni ningún axis_*.py).
 
 ## Último commit antes de este sprint
 
-(commit de AX-012D, ver historial de git)
+69bcffb — AX-INF-001 Tools Automation
 
 ## Rama
 
@@ -35,21 +30,27 @@ main
 
 ## Sprint activo
 
-AX-INF-001 — Tools Automation (este sprint)
+AX-012E — Extract RPG Engine (este sprint)
 
 ## Próximo sprint sugerido
 
-Continuar con **AX-012E** (según el orden de `05-STRATEGY-ENGINE-DESIGN.md`): extraer `evaluar_rpg_activacion()` y `evaluar_rpg_disparo()` por separado. Los nuevos scripts de `tools/` pueden usarse desde aquí en adelante para acelerar la verificación inicial y los reportes de cada sub-sprint.
+Según el orden documentado en `05-STRATEGY-ENGINE-DESIGN.md` sección 5: **AX-012F — unificar y extraer `evaluar_1vr()`**, consolidando el camino normal (V1) y el de reconstrucción (dentro del Reset Diario) en una sola función reutilizable, con pruebas exhaustivas comparando ambos caminos antes/después — este es el sprint de mayor cuidado hasta ahora, dado que requiere tocar por primera vez el bloque de Reset Diario.
 
 ## Riesgos abiertos
 
-(Ver lista completa en `04-ARCHITECTURE-AUDIT.md` sección 6 y `05-STRATEGY-ENGINE-DESIGN.md` sección 4. Sin riesgos nuevos de este sprint — es infraestructura de tooling, no afecta el comportamiento del sistema.)
+(Ver lista completa en `04-ARCHITECTURE-AUDIT.md` sección 6 y `05-STRATEGY-ENGINE-DESIGN.md` sección 4. Nota específica de este sprint:)
+
+1. **NUEVO AX-012E:** RPG quedó dividida en 2 funciones (no 1 con flag `es_v1` como GNA/GBA) porque sus 2 caminos comparten muy poca estructura real — la activación guarda 4 campos distintos (`rpg_activo`, `rpg_piso`, `rpg_s20`, `rpg_s40`) y el disparo lee/calcula 6+ variables propias (`techo_rpg`, `zona_30_rpg`, `en_rcb_30_rpg`, etc.) que no existen en la activación. Forzar un flag `es_v1` aquí habría resultado en una función con una rama mucho más compleja que la otra — el patrón de 2 funciones es más legible y más seguro para RPG específicamente.
+2. **NUEVO AX-012E:** la reconstrucción RPG en el Reset Diario sigue siendo código DUPLICADO respecto a `evaluar_rpg_activacion()` (misma lógica, distintos nombres de variable con sufijo `_r`) — exactamente la misma situación que ya se documentó para 1VR en AX-012A/C. Este sprint NO la tocó por regla explícita; queda pendiente para cuando se aborde el Reset Diario (AX-012F en adelante, o un sprint dedicado).
+3. Los riesgos generales de la descomposición (variables compartidas, flags fired, interacción P2 dinámico/4PASOS, orden de evaluación inmutable) documentados en AX-012A siguen aplicando.
 
 ## Notas para quien continúe
 
 - Leer siempre el AXIS_MASTER más reciente antes de cualquier cambio
-- Leer `05-STRATEGY-ENGINE-DESIGN.md` antes de cualquier sub-sprint de extracción de evaluar_activo()
+- Leer `05-STRATEGY-ENGINE-DESIGN.md` antes de cualquier sub-sprint de extracción
 - Nunca codificar sin autorización explícita de Noel
-- Usar `tools/pre_sprint.sh` al inicio de cada sprint nuevo en vez de escribir el comando de verificación a mano cada vez
-- Usar `tools/chatgpt_report.sh` cuando se necesite compartir el estado completo del sistema con un asistente de IA externo (ChatGPT u otro)
-- `tools/doc_summary.sh` es útil para revisar rápidamente cualquier documento largo de `docs/AXIS-2.0/` sin tener que abrirlo completo
+- Cuando una estrategia tiene 2 caminos (V1/V2-V7) con poca estructura compartida real (como RPG), preferir 2 funciones separadas en vez de 1 función con flag — más legible y más seguro
+- Reemplazar PRIMERO los bloques inline por llamadas, y SOLO DESPUÉS insertar la definición de la función nueva, para evitar texto duplicado durante la búsqueda exacta
+- Verificar sintaxis Y prueba funcional con datos sintéticos (revisando a mano todas las condiciones booleanas, no solo los umbrales numéricos) después de cualquier extracción
+- Validar cada sub-sprint en producción durante al menos un día de mercado completo antes de proceder al siguiente
+- Usar `tools/pre_sprint.sh` y `tools/chatgpt_report.sh` para acelerar las verificaciones de cada sub-sprint
