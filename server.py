@@ -902,22 +902,16 @@ def evaluar_rpg_disparo(simbolo, ed, vela_actual, v_close, hora_vela):
                 f"<b>Piso V1:</b> ${ed['rpg_piso']:.2f} | <b>Cierre:</b> ${v_close:.2f}\n{extra_rpg}"
             )
 
-def evaluar_activo(simbolo, velas, ahora):
-    ed = estado_dia[simbolo]
-    c  = canal[simbolo]
-
-    ctx = preparar_contexto_vela(simbolo, velas, ahora)
-    if ctx is None:
-        return
-
-    hora        = ctx["hora"]
-    vela_actual = ctx["vela_actual"]
-    v_open      = ctx["v_open"]
-    v_close     = ctx["v_close"]
-    v_high      = ctx["v_high"]
-    v_low       = ctx["v_low"]
-    fecha_hoy   = ctx["fecha_hoy"]
-
+def reset_diario_si_aplica(simbolo, velas, fecha_hoy, ed, c, hora):
+    """AX-012F: extraida de evaluar_activo() sin cambiar comportamiento.
+    Contiene EXACTAMENTE el bloque de reset diario, incluyendo la
+    reconstruccion completa de 1VR/RPG/GNA/GBA tal cual existia inline.
+    NO reutiliza evaluar_1vr/evaluar_rpg_activacion/evaluar_gna/evaluar_gba
+    -- la logica de reconstruccion permanece duplicada, sin cambios,
+    segun regla explicita de este sprint.
+    Recibe `hora` porque la reconstruccion 1VR la necesita para decidir
+    si enviar la alerta (solo si hora == 10).
+    Devuelve (ed, c) actualizados."""
     # Reset diario si es nueva fecha
     if ed["fecha"] != fecha_hoy:
         v7_ayer = None
@@ -1008,6 +1002,27 @@ def evaluar_activo(simbolo, velas, ahora):
 
                 print(f"{simbolo} estado reconstruido — V1 O:{v1_open_r:.2f} C:{v1_close_r:.2f}")
                 break
+
+    return ed, c
+
+def evaluar_activo(simbolo, velas, ahora):
+    ed = estado_dia[simbolo]
+    c  = canal[simbolo]
+
+    ctx = preparar_contexto_vela(simbolo, velas, ahora)
+    if ctx is None:
+        return
+
+    hora        = ctx["hora"]
+    vela_actual = ctx["vela_actual"]
+    v_open      = ctx["v_open"]
+    v_close     = ctx["v_close"]
+    v_high      = ctx["v_high"]
+    v_low       = ctx["v_low"]
+    fecha_hoy   = ctx["fecha_hoy"]
+
+    # Reset diario si es nueva fecha
+    ed, c = reset_diario_si_aplica(simbolo, velas, fecha_hoy, ed, c, hora)
 
     # Vela alcista estricta AXIS
     cuerpo    = v_close - v_open
