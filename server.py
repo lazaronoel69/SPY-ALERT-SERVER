@@ -94,59 +94,17 @@ TRADIER_HEADERS_REAL = {
 ordenes_pendientes = {}
 from axis_config import ORDEN_TIMEOUT_MIN  # AX-003: mismo valor (15)
 
+# AX-007: logica movida a axis_orders.py (recibe ordenes_pendientes como
+# parametro en vez de leerlo/escribirlo como global propio del modulo).
+# Wrappers mantienen los nombres y firmas originales sin argumentos para
+# no romper ninguna llamada existente en server.py.
+import axis_orders as _axis_orders
+
 def guardar_ordenes():
-    """Persiste ordenes_pendientes en /data para sobrevivir reinicios."""
-    try:
-        data = {}
-        for oid, d in ordenes_pendientes.items():
-            data[oid] = {
-                "opcion":         d["opcion"],
-                "estrategia":     d.get("estrategia", "AXIS"),
-                "ts":             d["ts"].isoformat() if hasattr(d["ts"], "isoformat") else str(d["ts"]),
-                "message_id":     d["message_id"],
-                "chat_id":        d["chat_id"],
-                "texto_original": d.get("texto_original", ""),
-            }
-        with open(ORDENES_FILE, "w") as f:
-            json.dump(data, f, indent=2)
-    except Exception as e:
-        print(f"Error guardando ordenes: {e}")
+    _axis_orders.guardar_ordenes(ordenes_pendientes)
 
 def cargar_ordenes():
-    """Carga ordenes_pendientes desde /data al arrancar."""
-    global ordenes_pendientes
-    try:
-        if not os.path.exists(ORDENES_FILE):
-            return
-        with open(ORDENES_FILE, "r") as f:
-            data = json.load(f)
-        ahora = datetime.now(pytz.utc)
-        recuperadas = 0
-        for oid, d in data.items():
-            try:
-                ts = datetime.fromisoformat(d["ts"])
-                if ts.tzinfo is None:
-                    ts = pytz.utc.localize(ts)
-                # Descartar órdenes ya expiradas
-                if (ahora - ts).total_seconds() > ORDEN_TIMEOUT_MIN * 60:
-                    continue
-                ordenes_pendientes[oid] = {
-                    "opcion":         d["opcion"],
-                    "estrategia":     d.get("estrategia", "AXIS"),
-                    "ts":             ts,
-                    "message_id":     d["message_id"],
-                    "chat_id":        d["chat_id"],
-                    "texto_original": d.get("texto_original", ""),
-                }
-                recuperadas += 1
-            except Exception as e:
-                print(f"Error recuperando orden {oid}: {e}")
-        if recuperadas:
-            print(f"Ordenes pendientes recuperadas: {recuperadas}")
-        # Limpiar archivo dejando solo las vigentes
-        guardar_ordenes()
-    except Exception as e:
-        print(f"Error cargando ordenes: {e}")
+    _axis_orders.cargar_ordenes(ordenes_pendientes)
 
 def loop_limpiar_ordenes():
     """Thread que cada 60s revisa ordenes expiradas y las cancela con aviso a Telegram"""
