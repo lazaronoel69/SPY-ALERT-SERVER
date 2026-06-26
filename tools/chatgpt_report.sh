@@ -1,13 +1,10 @@
 #!/bin/bash
-# AX-INF-001 — pre_sprint.sh
-# Verificacion inicial antes de empezar un sprint. Copia todo al clipboard.
+# AX-INF-001 — chatgpt_report.sh
+# Reporte completo de estado para pegar en ChatGPT/Claude. Copia todo al clipboard.
 
 OUT=$(mktemp)
 
 {
-  echo "=== git pull ==="
-  git pull
-  echo ""
   echo "=== git status ==="
   git status
   echo ""
@@ -25,7 +22,20 @@ OUT=$(mktemp)
     done
   else
     echo "(sin archivos axis_*.py en este directorio)"
+    echo ""
   fi
+  echo "=== curl /status Railway ==="
+  curl -s "https://web-production-bf9d0.up.railway.app/status?t=$(date +%s)"
+  echo ""
+  echo ""
+  echo "=== git show --stat --oneline HEAD ==="
+  GIT_PAGER=cat git show --stat --oneline HEAD
+  echo ""
+  echo "=== git show del ultimo commit (server.py) ==="
+  GIT_PAGER=cat git show HEAD -- server.py
+  echo ""
+  echo "=== git show del ultimo commit (docs/AXIS-2.0/10-HANDOFF.md) ==="
+  GIT_PAGER=cat git show HEAD -- docs/AXIS-2.0/10-HANDOFF.md
 } > "$OUT" 2>&1
 
 cat "$OUT"
