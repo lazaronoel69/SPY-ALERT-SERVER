@@ -758,10 +758,11 @@ def verificar_slope_4ps(p1_low, p1_idx, p2_low_cand, p2_idx_cand, historial_lows
 # ═══════════════════════════════════════════════════════════
 # EVALUAR VELA POR ACTIVO
 # ═══════════════════════════════════════════════════════════
-def evaluar_activo(simbolo, velas, ahora):
+def preparar_contexto_vela(simbolo, velas, ahora):
+    """AX-012B: extraida de evaluar_activo() sin cambiar comportamiento.
+    Localiza la vela correspondiente a la hora actual y extrae sus datos
+    basicos. Funcion pura -- no lee ni modifica estado_dia ni canal."""
     hora = ahora.hour
-    ed   = estado_dia[simbolo]
-    c    = canal[simbolo]
 
     vela_actual = None
     for v in velas:
@@ -772,13 +773,39 @@ def evaluar_activo(simbolo, velas, ahora):
 
     if not vela_actual:
         print(f"{simbolo}: no se encontro vela para hora {hora-1}")
-        return
+        return None
 
     v_open  = float(vela_actual["open"])
     v_close = float(vela_actual["close"])
     v_high  = float(vela_actual["high"])
     v_low   = float(vela_actual["low"])
     fecha_hoy = datetime.strptime(vela_actual["datetime"], "%Y-%m-%d %H:%M:%S").strftime("%Y-%m-%d")
+
+    return {
+        "hora":        hora,
+        "vela_actual": vela_actual,
+        "v_open":      v_open,
+        "v_close":     v_close,
+        "v_high":      v_high,
+        "v_low":       v_low,
+        "fecha_hoy":   fecha_hoy,
+    }
+
+def evaluar_activo(simbolo, velas, ahora):
+    ed = estado_dia[simbolo]
+    c  = canal[simbolo]
+
+    ctx = preparar_contexto_vela(simbolo, velas, ahora)
+    if ctx is None:
+        return
+
+    hora        = ctx["hora"]
+    vela_actual = ctx["vela_actual"]
+    v_open      = ctx["v_open"]
+    v_close     = ctx["v_close"]
+    v_high      = ctx["v_high"]
+    v_low       = ctx["v_low"]
+    fecha_hoy   = ctx["fecha_hoy"]
 
     # Reset diario si es nueva fecha
     if ed["fecha"] != fecha_hoy:
