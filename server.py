@@ -517,60 +517,13 @@ def registrar_posicion(opcion, estrategia, simbolo, precio_entrada, es_reto=Fals
     guardar_portfolio()
     return pos
 
-def cancelar_orden_tradier(orden_id):
-    try:
-        r = requests.delete(
-            f"{TRADIER_BASE}/accounts/{TRADIER_ACCOUNT}/orders/{orden_id}",
-            headers=TRADIER_HEADERS,
-            timeout=10
-        )
-        print(f"Cancelar orden Tradier {orden_id}: HTTP {r.status_code}")
-        return r.status_code == 200
-    except Exception as e:
-        print(f"Error cancelar orden Tradier {orden_id}: {e}")
-        return False
-
-def get_bid_opcion_tradier(option_symbol):
-    try:
-        r = requests.get(
-            f"{TRADIER_BASE}/markets/quotes",
-            headers=TRADIER_HEADERS,
-            params={"symbols": option_symbol, "greeks": "false"},
-            timeout=10
-        )
-        data  = r.json()
-        quote = data.get("quotes", {}).get("quote", {})
-        bid   = float(quote.get("bid", 0))
-        return bid if bid > 0 else None
-    except Exception as e:
-        print(f"Error bid opcion {option_symbol}: {e}")
-        return None
-
-def vender_opcion_tradier(option_symbol, simbolo, contratos, precio_limit):
-    try:
-        payload = {
-            "class":         "option",
-            "symbol":        simbolo,
-            "option_symbol": option_symbol,
-            "side":          "sell_to_close",
-            "quantity":      str(contratos),
-            "type":          "limit",
-            "price":         str(round(precio_limit, 2)),
-            "duration":      "day",
-        }
-        r = requests.post(
-            f"{TRADIER_BASE}/accounts/{TRADIER_ACCOUNT}/orders",
-            headers=TRADIER_HEADERS,
-            data=payload,
-            timeout=10
-        )
-        data     = r.json()
-        orden_id = data.get("order", {}).get("id")
-        status   = data.get("order", {}).get("status", "unknown")
-        return {"ok": True, "id": orden_id, "status": status}
-    except Exception as e:
-        print(f"Error vender opcion Tradier: {e}")
-        return {"ok": False, "error": str(e)}
+# AX-004: cancelar_orden_tradier, get_bid_opcion_tradier, vender_opcion_tradier
+# movidas a axis_tradier.py. Mismos nombres, mismo comportamiento.
+from axis_tradier import (
+    cancelar_orden_tradier,
+    get_bid_opcion_tradier,
+    vender_opcion_tradier,
+)
 
 def cerrar_posicion(pos_id, precio_cierre, motivo="panic"):
     global _portfolio
@@ -1898,152 +1851,16 @@ def evaluar_activo(simbolo, velas, ahora):
 
 
 # ═══════════════════════════════════════════════════════════
-# TRADIER — PRECIO ACTUAL
+# TRADIER — AX-004: get_precio_tradier, get_pct_otm, get_opcion_tradier
+# y ejecutar_orden_tradier movidas a axis_tradier.py.
+# Mismos nombres, mismo comportamiento, mismas URLs/payloads.
 # ═══════════════════════════════════════════════════════════
-def get_precio_tradier(simbolo):
-    try:
-        r = requests.get(
-            f"{TRADIER_BASE}/markets/quotes",
-            headers=TRADIER_HEADERS,
-            params={"symbols": simbolo},
-            timeout=10
-        )
-        data = r.json()
-        return float(data["quotes"]["quote"]["last"])
-    except Exception as e:
-        print(f"Error precio Tradier {simbolo}: {e}")
-        return None
-
-# ═══════════════════════════════════════════════════════════
-# TRADIER — BUSCAR OPCION
-# ═══════════════════════════════════════════════════════════
-def get_pct_otm(precio):
-    if precio < 150:  return 1.50
-    if precio < 300:  return 1.25
-    if precio < 500:  return 0.85
-    if precio < 700:  return 0.65
-    return 0.50
-
-def get_opcion_tradier(simbolo, tipo, precio_actual):
-    try:
-        from datetime import date, timedelta
-        hoy = date.today()
-
-        r = requests.get(
-            f"{TRADIER_BASE}/markets/options/expirations",
-            headers=TRADIER_HEADERS,
-            params={"symbol": simbolo, "includeAllRoots": "true"},
-            timeout=10
-        )
-        data  = r.json()
-        fechas = data.get("expirations", {}).get("date", [])
-        if isinstance(fechas, str):
-            fechas = [fechas]
-
-        vencimiento = None
-        for f in sorted(fechas):
-            fd = date.fromisoformat(f)
-            if (fd - hoy).days >= 7:
-                vencimiento = f
-                break
-
-        if not vencimiento:
-            print(f"Sin vencimiento ≥7 días para {simbolo}")
-            return None
-
-        pct  = get_pct_otm(precio_actual)
-        dist = precio_actual * pct / 100
-        if tipo == 'call':
-            strike_obj = round(precio_actual + dist)
-        else:
-            strike_obj = round(precio_actual - dist)
-
-        print(f"  {simbolo} {tipo.upper()} — precio ${precio_actual:.2f} | {pct}% OTM | strike obj ${strike_obj} | venc {vencimiento}")
-
-        r2 = requests.get(
-            f"{TRADIER_BASE}/markets/options/chains",
-            headers=TRADIER_HEADERS,
-            params={"symbol": simbolo, "expiration": vencimiento, "greeks": "false"},
-            timeout=10
-        )
-        data2   = r2.json()
-        opciones = data2.get("options", {}).get("option", [])
-        if not opciones:
-            return None
-
-        filtradas = [o for o in opciones if o.get("option_type") == tipo and float(o.get("ask", 0)) > 0]
-        if not filtradas:
-            return None
-
-        mejor = min(filtradas, key=lambda o: abs(float(o.get("strike", 0)) - strike_obj))
-        return {
-            "symbol":      mejor.get("symbol"),
-            "strike":      float(mejor.get("strike", 0)),
-            "expiration":  vencimiento,
-            "tipo":        tipo.upper(),
-            "ask":         float(mejor.get("ask", 0)),
-            "bid":         float(mejor.get("bid", 0)),
-            "subyacente":  simbolo,
-            "pct_otm":     pct,
-        }
-    except Exception as e:
-        print(f"Error opcion Tradier {simbolo}: {e}")
-        return None
-
-# ═══════════════════════════════════════════════════════════
-# TRADIER — EJECUTAR ORDEN
-# ═══════════════════════════════════════════════════════════
-def ejecutar_orden_tradier(opcion):
-    try:
-        payload_compra = {
-            "class":         "option",
-            "symbol":        opcion["subyacente"],
-            "option_symbol": opcion["symbol"],
-            "side":          "buy_to_open",
-            "quantity":      "1",
-            "type":          "market",
-            "duration":      "day",
-        }
-        r = requests.post(
-            f"{TRADIER_BASE}/accounts/{TRADIER_ACCOUNT}/orders",
-            headers=TRADIER_HEADERS,
-            data=payload_compra,
-            timeout=10
-        )
-        data     = r.json()
-        orden_id = data.get("order", {}).get("id")
-        status   = data.get("order", {}).get("status", "unknown")
-
-        precio_venta = round(opcion["ask"] * 2, 2)
-        payload_venta = {
-            "class":         "option",
-            "symbol":        opcion["subyacente"],
-            "option_symbol": opcion["symbol"],
-            "side":          "sell_to_close",
-            "quantity":      "1",
-            "type":          "limit",
-            "price":         str(precio_venta),
-            "duration":      "gtc",
-        }
-        r2 = requests.post(
-            f"{TRADIER_BASE}/accounts/{TRADIER_ACCOUNT}/orders",
-            headers=TRADIER_HEADERS,
-            data=payload_venta,
-            timeout=10
-        )
-        data2     = r2.json()
-        orden_venta_id = data2.get("order", {}).get("id")
-
-        return {
-            "ok":            True,
-            "id":            orden_id,
-            "status":        status,
-            "venta_id":      orden_venta_id,
-            "precio_venta":  precio_venta,
-        }
-    except Exception as e:
-        print(f"Error ejecutar orden Tradier: {e}")
-        return {"ok": False, "error": str(e)}
+from axis_tradier import (
+    get_precio_tradier,
+    get_pct_otm,
+    get_opcion_tradier,
+    ejecutar_orden_tradier,
+)
 
 # ═══════════════════════════════════════════════════════════
 # TELEGRAM — ENVIAR MENSAJE CON BOTONES
@@ -2594,33 +2411,8 @@ def buscar_opcion_reto(opcion_original, presupuesto):
         print(f"Error buscar_opcion_reto: {e}")
         return None
 
-def ejecutar_orden_tradier_contratos(opcion, contratos):
-    try:
-        payload_compra = {
-            "class": "option", "symbol": opcion["subyacente"],
-            "option_symbol": opcion["symbol"], "side": "buy_to_open",
-            "quantity": str(contratos), "type": "market", "duration": "day",
-        }
-        r = requests.post(f"{TRADIER_BASE}/accounts/{TRADIER_ACCOUNT}/orders",
-                          headers=TRADIER_HEADERS, data=payload_compra, timeout=10)
-        data = r.json()
-        orden_id = data.get("order", {}).get("id")
-        status   = data.get("order", {}).get("status", "unknown")
-        precio_venta = round(opcion["ask"] * 2, 2)
-        payload_venta = {
-            "class": "option", "symbol": opcion["subyacente"],
-            "option_symbol": opcion["symbol"], "side": "sell_to_close",
-            "quantity": str(contratos), "type": "limit",
-            "price": str(precio_venta), "duration": "gtc",
-        }
-        r2 = requests.post(f"{TRADIER_BASE}/accounts/{TRADIER_ACCOUNT}/orders",
-                           headers=TRADIER_HEADERS, data=payload_venta, timeout=10)
-        data2 = r2.json()
-        orden_venta_id = data2.get("order", {}).get("id")
-        return {"ok": True, "id": orden_id, "status": status, "venta_id": orden_venta_id, "precio_venta": precio_venta}
-    except Exception as e:
-        print(f"Error ejecutar_orden_tradier_contratos: {e}")
-        return {"ok": False, "error": str(e)}
+# AX-004: ejecutar_orden_tradier_contratos movida a axis_tradier.py.
+from axis_tradier import ejecutar_orden_tradier_contratos
 
 def recomendar_opcion_claude(opcion_original, capital_carril, presupuesto):
     if not ANTHROPIC_API_KEY:
