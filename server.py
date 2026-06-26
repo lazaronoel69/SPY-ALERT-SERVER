@@ -349,72 +349,25 @@ def analizar_portfolio_claude(posiciones, reto):
 # ═══════════════════════════════════════════════════════════
 # PORTFOLIO — ESTRUCTURA Y PERSISTENCIA
 # ═══════════════════════════════════════════════════════════
-DERBY_CABALLOS = [
-    {"id": 1, "nombre": "Noel"},
-    {"id": 2, "nombre": "Paula"},
-    {"id": 3, "nombre": "Noel Andres"},
-    {"id": 4, "nombre": "Emilia"},
-]
-
-def portfolio_vacio():
-    return {
-        "posiciones":  [],
-        "historial":   [],
-        "derby": {
-            "nombre":          "REAL LAZARO-PALMA",
-            "activo":          False,
-            "turno_actual":    1,
-            "ganador":         None,
-            "esperando_cierre": False,
-            "caballos": [
-                {
-                    "id":              c["id"],
-                    "nombre":          c["nombre"],
-                    "capital":         0,
-                    "capital_inicial": 0,
-                    "ronda":           0,
-                    "posicion":        None,
-                    "eliminado":       False,
-                    "historial":       []
-                }
-                for c in DERBY_CABALLOS
-            ]
-        }
-    }
+# AX-008: DERBY_CABALLOS, portfolio_vacio, cargar_portfolio y
+# guardar_portfolio movidas a axis_portfolio.py. cargar_portfolio/
+# guardar_portfolio ahora reciben/devuelven datos en vez de depender
+# del global _portfolio. Wrappers mantienen los nombres y firmas
+# originales sin argumentos, preservando el mismo efecto observable
+# (incluyendo el guardado automatico en los 3 casos de migracion).
+from axis_portfolio import DERBY_CABALLOS, portfolio_vacio
+import axis_portfolio as _axis_portfolio
 
 _portfolio = None
 
 def cargar_portfolio():
     global _portfolio
-    try:
-        if os.path.exists(PORTFOLIO_FILE):
-            with open(PORTFOLIO_FILE, 'r') as f:
-                _portfolio = json.load(f)
-            # Migrar reto→derby si viene de versión anterior
-            if "reto" in _portfolio and "derby" not in _portfolio:
-                vacio = portfolio_vacio()
-                _portfolio["derby"] = vacio["derby"]
-                print("Migración: reto→derby completada")
-                guardar_portfolio()
-            elif "derby" not in _portfolio:
-                vacio = portfolio_vacio()
-                _portfolio["derby"] = vacio["derby"]
-                guardar_portfolio()
-            print(f"Portfolio cargado — {len(_portfolio['posiciones'])} posiciones abiertas")
-        else:
-            _portfolio = portfolio_vacio()
-            guardar_portfolio()
-            print("Portfolio nuevo creado")
-    except Exception as e:
-        print(f"Error cargando portfolio: {e}")
-        _portfolio = portfolio_vacio()
+    _portfolio, _debe_guardar = _axis_portfolio.cargar_portfolio()
+    if _debe_guardar:
+        guardar_portfolio()
 
 def guardar_portfolio():
-    try:
-        with open(PORTFOLIO_FILE, 'w') as f:
-            json.dump(_portfolio, f, indent=2, default=str)
-    except Exception as e:
-        print(f"Error guardando portfolio: {e}")
+    _axis_portfolio.guardar_portfolio(_portfolio)
 
 def registrar_posicion(opcion, estrategia, simbolo, precio_entrada, es_reto=False, carril_id=None,
                        contratos=1, tradier_orden_id=None, tradier_gtc_id=None):
