@@ -2,28 +2,32 @@
 
 ## Estado actual
 
-Sistema en producción, estable, v8.84. AX-012D (Extract GBA Engine) ejecutado — `evaluar_gba()` extraída de `evaluar_activo()` con ambos bloques (activación V1 + disparo V2-V7) exactos, ubicada inmediatamente después de `evaluar_gna()` como pedía el sprint. Sin cambiar GNA, RPG, 1VR, PM40, 4PASOS, Canales, ni Reset Diario. Verificado con py_compile y prueba funcional en ambos escenarios con datos sintéticos.
+Sistema en producción, estable, v8.84. AX-INF-001 (Tools Automation) ejecutado — 3 scripts de automatización creados en `tools/`, sin tocar server.py, lógica, ni producción. Probados en un repositorio git de prueba aislado (con git real y mocks de `pbcopy`/`curl`) antes de entregarse.
 
-## Cambio realizado en este sprint
+## Scripts creados en este sprint
 
-`evaluar_gba(simbolo, ed, v_open, v_close, v_alcista, v7_ayer, v1_close, hora_vela, es_v1)` — nueva función, ubicada justo después de `evaluar_gna()` y antes de `evaluar_activo()`. Contiene **exactamente** los 2 bloques de GBA que existían inline:
-- `es_v1=True`: bloque de activación (gap_baja >= 0.1%, requiere vela verde) — idéntico al original, mismo print exacto.
-- `es_v1=False`: bloque de disparo (v_alcista y v_close > v1_close) — idéntico al original, mismo flujo de `guardar_estado_dia()` + `enviar_senal_con_botones()` con el mismo texto exacto ("GAP BAJISTA ALZA").
+1. **`tools/pre_sprint.sh`** — `git pull` + `git status` + `git log -3` + `py_compile` de `server.py` y todos los `axis_*.py` presentes (detecta automáticamente cuáles existen, sin fallar si no hay ninguno). Copia todo a clipboard con `pbcopy`.
+2. **`tools/doc_summary.sh <ruta>`** — recibe la ruta de un documento como argumento. Si no se pasa argumento o el archivo no existe, imprime un mensaje claro y termina sin error silencioso. Ejecuta `git status` + `git log -1` + `head -80` + `tail -80` del documento. Copia todo a clipboard.
+3. **`tools/chatgpt_report.sh`** — reporte completo: `git status`, `git log -3`, `py_compile` de `server.py` y todos los `axis_*.py`, `curl` a `/status` de Railway, `git show --stat --oneline HEAD`, y el diff del último commit específicamente para `server.py` y `docs/AXIS-2.0/10-HANDOFF.md`. Copia todo a clipboard.
 
-Dentro de `evaluar_activo()`, ambos bloques GBA fueron reemplazados por una llamada cada uno:
-- En V1: `evaluar_gba(simbolo, ed, v_open, v_close, v_alcista, v7_ayer, None, hora_vela, True)`
-- En V2-V7: `evaluar_gba(simbolo, ed, v_open, v_close, v_alcista, v7_ayer, v1_close, hora_vela, False)`
+Los 3 scripts terminan con `REPORT COPIED TO CLIPBOARD — paste with ⌘+V` y usan un archivo temporal (`mktemp`) para construir la salida antes de copiarla, evitando truncar la salida o tener problemas con `pbcopy` en pipes.
 
-**Ningún otro bloque dentro de `evaluar_activo()` fue tocado** — GNA, RPG, 1VR, PM40, 4PASOS, Canales y Reset Diario permanecen exactamente igual, en el mismo orden.
+## Verificación realizada
+
+Probados en un repositorio git real (aislado, en `/tmp`), no solo simulación de texto:
+- `pre_sprint.sh`: detectó correctamente `server.py` + 2 archivos `axis_*.py` de prueba, los compiló, generó el reporte.
+- `doc_summary.sh`: probado con documento real (100 líneas, confirma head/tail correctos), archivo inexistente (mensaje de error claro), y sin argumento (mensaje de uso).
+- `chatgpt_report.sh`: probado con `curl` y `pbcopy` mockeados (sin red real ni clipboard real disponible en el entorno de prueba), confirmando que las 7 secciones aparecen en el orden correcto y con el contenido esperado.
 
 ## Archivos modificados en este sprint
 
-- **Modificado:** `server.py` — `evaluar_gba()` agregada, ambos bloques GBA reemplazados por llamadas.
+- **Creados:** `tools/pre_sprint.sh`, `tools/doc_summary.sh`, `tools/chatgpt_report.sh` (los 3 con permisos de ejecución `+x`).
 - **Modificado:** `docs/AXIS-2.0/10-HANDOFF.md` (este archivo).
+- **Sin cambios en código de producción** (server.py ni ningún axis_*.py).
 
 ## Último commit antes de este sprint
 
-(commit de AX-012C, ver historial de git)
+(commit de AX-012D, ver historial de git)
 
 ## Rama
 
@@ -31,26 +35,21 @@ main
 
 ## Sprint activo
 
-AX-012D — Extract GBA Engine (este sprint)
+AX-INF-001 — Tools Automation (este sprint)
 
 ## Próximo sprint sugerido
 
-Según el orden documentado en `05-STRATEGY-ENGINE-DESIGN.md` sección 5: **AX-012E (renombrado a AX-012E en la planificación original) — extraer `evaluar_rpg_activacion()` y `evaluar_rpg_disparo()`** por separado (RPG, a diferencia de GNA/GBA, tiene umbrales y campos adicionales — `rpg_s20`/`rpg_s40` en la activación — por lo que conviene mantenerlas como dos funciones distintas en vez de una con flag `es_v1`).
+Continuar con **AX-012E** (según el orden de `05-STRATEGY-ENGINE-DESIGN.md`): extraer `evaluar_rpg_activacion()` y `evaluar_rpg_disparo()` por separado. Los nuevos scripts de `tools/` pueden usarse desde aquí en adelante para acelerar la verificación inicial y los reportes de cada sub-sprint.
 
 ## Riesgos abiertos
 
-(Ver lista completa en `04-ARCHITECTURE-AUDIT.md` sección 6 y `05-STRATEGY-ENGINE-DESIGN.md` sección 4. Nota específica de este sprint:)
-
-1. **NUEVO AX-012D:** durante la verificación funcional se cometieron 2 errores de cálculo manual en los datos de prueba (usar `v_close < v_open` cuando el bloque de activación de GBA requiere vela verde `v_close > v_open`) — ambos fueron corregidos y la prueba final confirmó comportamiento correcto. Queda como recordatorio reforzado: verificar a mano las condiciones booleanas de cada bloque (no solo los umbrales numéricos) antes de diseñar los datos de prueba.
-2. **NUEVO AX-012D:** se confirma el patrón de AX-012C como repetible y estable — extracción con 2 bloques (V1/V2-V7), reemplazo de bloques inline ANTES de insertar la función nueva, y prueba funcional directa de la función extraída (no solo de `evaluar_activo()` completa) para aislar mejor cualquier fallo.
-3. Los riesgos generales de la descomposición (variables compartidas, flags fired, interacción P2 dinámico/4PASOS, orden de evaluación inmutable) documentados en AX-012A siguen aplicando para todos los sub-sprints siguientes.
+(Ver lista completa en `04-ARCHITECTURE-AUDIT.md` sección 6 y `05-STRATEGY-ENGINE-DESIGN.md` sección 4. Sin riesgos nuevos de este sprint — es infraestructura de tooling, no afecta el comportamiento del sistema.)
 
 ## Notas para quien continúe
 
 - Leer siempre el AXIS_MASTER más reciente antes de cualquier cambio
-- Leer `05-STRATEGY-ENGINE-DESIGN.md` antes de cualquier sub-sprint de extracción — contiene el análisis función por función y el orden obligatorio
+- Leer `05-STRATEGY-ENGINE-DESIGN.md` antes de cualquier sub-sprint de extracción de evaluar_activo()
 - Nunca codificar sin autorización explícita de Noel
-- Al extraer una función con 2 caminos (V1/V2-V7), reemplazar PRIMERO los bloques inline por llamadas, y SOLO DESPUÉS insertar la definición de la función nueva (lección de AX-012C, confirmada de nuevo en AX-012D)
-- Al diseñar datos de prueba sintéticos, verificar a mano TODAS las condiciones booleanas del bloque (no solo los umbrales numéricos) — un error de signo en vela verde/roja puede hacer fallar una prueba válida y generar una falsa alarma
-- Verificar sintaxis Y prueba funcional con datos sintéticos después de cualquier extracción dentro de evaluar_activo()
-- Validar cada sub-sprint en producción durante al menos un día de mercado completo antes de proceder al siguiente
+- Usar `tools/pre_sprint.sh` al inicio de cada sprint nuevo en vez de escribir el comando de verificación a mano cada vez
+- Usar `tools/chatgpt_report.sh` cuando se necesite compartir el estado completo del sistema con un asistente de IA externo (ChatGPT u otro)
+- `tools/doc_summary.sh` es útil para revisar rápidamente cualquier documento largo de `docs/AXIS-2.0/` sin tener que abrirlo completo
