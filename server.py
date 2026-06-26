@@ -68,14 +68,14 @@ TELEGRAM_TOKEN   = os.environ.get("TELEGRAM_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "-5010153427")
 TWELVEDATA_KEY   = "66dd71373a884f7bb7da8e6e5e469571"
 FINNHUB_KEY      = "d71aocpr01qot5jcnohgd71aocpr01qot5jcnoi0"
-EST              = pytz.timezone("America/New_York")
+from axis_config import EST  # AX-003: movido a axis_config.py, mismo valor
 
 # ── TRADIER SANDBOX (ordenes paper trading) ──
 import json
 
 TRADIER_TOKEN   = os.environ.get("TRADIER_TOKEN", "")
 TRADIER_ACCOUNT = os.environ.get("TRADIER_ACCOUNT", "")
-TRADIER_BASE    = "https://sandbox.tradier.com/v1"
+from axis_config import TRADIER_BASE  # AX-003: mismo valor
 TRADIER_HEADERS = {
     "Authorization": f"Bearer {TRADIER_TOKEN}",
     "Accept":        "application/json",
@@ -83,7 +83,7 @@ TRADIER_HEADERS = {
 
 # ── TRADIER PRODUCCION (datos historicos de mercado) ──
 TRADIER_TOKEN_REAL   = os.environ.get("TRADIER_TOKEN_REAL", "")
-TRADIER_BASE_REAL    = "https://api.tradier.com/v1"
+from axis_config import TRADIER_BASE_REAL  # AX-003: mismo valor
 TRADIER_HEADERS_REAL = {
     "Authorization": f"Bearer {TRADIER_TOKEN_REAL}",
     "Accept":        "application/json",
@@ -92,7 +92,7 @@ TRADIER_HEADERS_REAL = {
 # Ordenes pendientes de confirmacion — clave: orden_id
 # Valor: { "opcion": {...}, "ts": datetime, "chat_id": int, "message_id": int }
 ordenes_pendientes = {}
-ORDEN_TIMEOUT_MIN = 15  # minutos antes de expirar
+from axis_config import ORDEN_TIMEOUT_MIN  # AX-003: mismo valor (15)
 
 def guardar_ordenes():
     """Persiste ordenes_pendientes en /data para sobrevivir reinicios."""
@@ -182,21 +182,12 @@ def loop_limpiar_ordenes():
         except Exception as e:
             print(f"Error loop_limpiar_ordenes: {e}")
 
-ACTIVOS          = ["SPY", "AAPL", "BA", "GLD", "NVDA", "AMZN", "GOOG", "META"]
-HORAS_REPORTE    = [10, 11, 12, 13, 14, 15]
-# v8.84: hora 16 (4:00 PM / V7) eliminada de aqui -- V7 se evalua
-# EXCLUSIVAMENTE a las 3:58 PM via loop_v7_anticipada() con la vela
-# provisional. monitor_loop ya NO vuelve a evaluar V7 a las 4:01 PM,
-# evitando alertas duplicadas/falsas (caso GOOG RPG falso 06/25).
-# SPY cierra 4:15 PM EST — excepción única
-ACTIVOS_SPY      = ["SPY"]
-SISTEMA_ACTIVO   = True
-
-# Switches estrategias globales
-VR1_ON  = True
-RPG_ON  = True
-GNA_ON  = True
-GBA_ON  = True
+# AX-003: ACTIVOS, HORAS_REPORTE, ACTIVOS_SPY, SISTEMA_ACTIVO y switches
+# de estrategia movidos a axis_config.py, mismos valores y nombres.
+from axis_config import (
+    ACTIVOS, HORAS_REPORTE, ACTIVOS_SPY, SISTEMA_ACTIVO,
+    VR1_ON, RPG_ON, GNA_ON, GBA_ON,
+)
 
 # ═══════════════════════════════════════════════════════════
 # ESTADO POR ACTIVO
@@ -266,13 +257,11 @@ canal      = {a: canal_vacio()         for a in ACTIVOS}
 # ═══════════════════════════════════════════════════════════
 # PERSISTENCIA
 # ═══════════════════════════════════════════════════════════
-CANALES_FILE    = "/data/axis_canales.json"
-PORTFOLIO_FILE  = "/data/axis_portfolio.json"
-ORDENES_FILE    = "/data/axis_ordenes.json"
-ESTADO_FILE     = "/data/axis_estado_dia.json"
-SEÑALES_FILE    = "/data/axis_señales_historicas.json"
-BITACORA_FILE   = "/data/axis_bitacora.json"
-DATA_DIR        = "/data"
+# AX-003: rutas de persistencia movidas a axis_config.py, mismos valores.
+from axis_config import (
+    CANALES_FILE, PORTFOLIO_FILE, ORDENES_FILE, ESTADO_FILE,
+    SEÑALES_FILE, BITACORA_FILE, DATA_DIR,
+)
 
 def cargar_señales_historicas():
     if not os.path.exists(SEÑALES_FILE):
