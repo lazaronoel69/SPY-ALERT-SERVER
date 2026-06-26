@@ -2,36 +2,32 @@
 
 ## Estado actual
 
-Sistema en producción, estable, v8.84. AX-004 (Tradier Access Baseline) ejecutado — funciones puras de acceso a Tradier movidas a `axis_tradier.py`, sin cambiar comportamiento, URLs, headers ni payloads. Verificado con py_compile y simulación de import real.
+Sistema en producción, estable, v8.84. AX-005 (Storage Baseline) ejecutado — funciones de persistencia JSON de bajo riesgo movidas a `axis_storage.py`, sin cambiar formato JSON, rutas, ni comportamiento. Verificado con py_compile y simulación de import real.
 
-## Funciones movidas a axis_tradier.py (AX-004)
+## Funciones movidas a axis_storage.py (AX-005)
 
-1. `cancelar_orden_tradier(orden_id)`
-2. `get_bid_opcion_tradier(option_symbol)`
-3. `vender_opcion_tradier(option_symbol, simbolo, contratos, precio_limit)`
-4. `get_precio_tradier(simbolo)`
-5. `get_opcion_tradier(simbolo, tipo, precio_actual)`
-6. `ejecutar_orden_tradier(opcion)`
-7. `ejecutar_orden_tradier_contratos(opcion, contratos)`
-8. `get_pct_otm(precio)` — auxiliar pura, dependencia directa de `get_opcion_tradier`, no estaba en la lista original pero se movió junto por ser usada exclusivamente por una función que sí se movía.
+1. `cargar_señales_historicas()`
+2. `guardar_señales_historicas(data)`
+3. `guardar_estado_dia(estado_dia)` — **cambio de firma controlado:** ahora recibe `estado_dia` como parámetro en vez de leerlo como variable global, porque axis_storage.py no debe depender de globals de server.py. server.py mantiene un wrapper `guardar_estado_dia()` sin argumentos (mismo nombre, misma firma pública) que llama internamente a la versión movida pasándole su propio global. Ninguna llamada existente en el resto de server.py se modificó.
+4. `cargar_velas_local(simbolo)`
+5. `guardar_velas_local(simbolo, data)`
+6. `ruta_velas_local(simbolo)`
 
-Todas mantienen exactamente el mismo nombre, firma, comportamiento, URLs y payloads. `server.py` ahora las importa: `from axis_tradier import (...)`.
+## Funciones NO movidas y razón (según regla explícita del sprint)
 
-## Funciones NO movidas y razón
-
-- **`get_estado_orden_tradier(orden_id)`** — no estaba en la lista pedida. Usa `TRADIER_BASE`, `TRADIER_ACCOUNT`, `TRADIER_HEADERS` igual que las demás, pero queda fuera del alcance explícito de este sprint. Candidata natural para un futuro AX-00X de "Tradier Polling".
-- **`tradier_test()` (ruta Flask `/tradier_test`)** — no es una función pura de acceso, es un endpoint que además llama a `enviar_telegram()`. Mezclar rutas Flask con el módulo de acceso puro violaría la regla de "no tocar Telegram" del sprint.
-- **`buscar_opcion_reto(opcion_original, presupuesto)`** y **`recomendar_opcion_claude(...)`** — no estaban en la lista pedida. La primera depende de lógica de negocio del Derby (busca opciones alternativas dentro de presupuesto), la segunda depende de Anthropic/Claude. Ninguna es "acceso puro a Tradier" en el sentido del sprint.
-- **`TRADIER_TOKEN`, `TRADIER_ACCOUNT`, `TRADIER_HEADERS` permanecen también en `server.py`** (no solo en `axis_tradier.py`) porque `tradier_test()` y `get_estado_orden_tradier()` —que no se movieron— siguen necesitándolas ahí. axis_tradier.py tiene su propia copia idéntica de estas variables, leyendo el mismo `os.environ`, para no crear una dependencia cruzada innecesaria del módulo nuevo hacia variables internas de server.py.
+- **`guardar_ordenes()` / `cargar_ordenes()`** — dependen de la variable global `ordenes_pendientes` (dict en memoria con timestamps y reconstrucción de objetos datetime). Mover esto requeriría el mismo patrón de wrapper que `guardar_estado_dia`, pero el sprint las excluyó explícitamente para este paso.
+- **`guardar_portfolio()` / `cargar_portfolio()`** — dependen de `_portfolio`, una variable global más compleja (posiciones, historial, derby con 4 caballos). Excluidas explícitamente.
+- **`guardar_canales()` / `cargar_canales()`** — dependen de `canal[]` (dict por activo) y de `CANALES_DEFAULT`. Excluidas explícitamente.
+- **`archivar_señales_dia(fecha)`** — depende de `estado_dia[]` (todos los activos) y de `ACTIVOS`. Excluida explícitamente. Es la función más reciente (v8.84) que guarda vela/hora exacta en el histórico — alto valor pero también mayor riesgo si se mueve sin cuidado.
 
 ## Archivos modificados en este sprint
 
-- **Creado:** `axis_tradier.py` — 8 funciones de acceso Tradier (las 7 pedidas + `get_pct_otm`).
-- **Modificado:** `server.py` — las 7 funciones pedidas ahora se importan desde `axis_tradier.py`. Ningún payload, URL, header, ni nombre público cambió.
+- **Creado:** `axis_storage.py` — 6 funciones de persistencia JSON (5 puras + 1 con parámetro explícito).
+- **Modificado:** `server.py` — las 6 funciones ahora se importan desde `axis_storage.py`. `guardar_estado_dia()` queda como wrapper de 2 líneas para preservar la firma pública original.
 
 ## Último commit antes de este sprint
 
-4299664 — AX-003 Configuration Baseline
+52e2b01 — AX-004 Tradier Access Baseline
 
 ## Rama
 
@@ -39,11 +35,11 @@ main
 
 ## Sprint activo
 
-AX-004 — Tradier Access Baseline (este sprint)
+AX-005 — Storage Baseline (este sprint)
 
 ## Próximo sprint sugerido
 
-AX-005 — Channel Engine (documentar/extraer la lógica de canales bajistas CNF/RCB/PM40 y 4PASOS, según backlog original) — o alternativamente un AX-004b más pequeño para mover `get_estado_orden_tradier()` junto con el polling de posiciones, si se decide continuar profundizando en el módulo Tradier antes de pasar a canales.
+AX-006 — mover `guardar_ordenes`/`cargar_ordenes` usando el mismo patrón de wrapper que `guardar_estado_dia` (dependencia de `ordenes_pendientes`), como paso intermedio antes de abordar Portfolio/Derby y Canales, que son más complejos y de mayor riesgo.
 
 ## Riesgos abiertos
 
@@ -53,13 +49,14 @@ AX-005 — Channel Engine (documentar/extraer la lógica de canales bajistas CNF
 4. Tradier limita historial de 15min a ~40 días
 5. Bug cosmético: chart marca "EN FORMACIÓN" en la última vela ya cerrada
 6. Frontend aún calcula canales PM40/4PASOS en JavaScript
-7. TWELVEDATA_KEY y FINNHUB_KEY siguen hardcodeados como strings literales en server.py (riesgo de seguridad menor, servicios externos no esenciales — ver AX-003)
-8. **NUEVO AX-004:** `TRADIER_TOKEN`/`TRADIER_ACCOUNT`/`TRADIER_HEADERS` ahora existen DUPLICADOS en dos archivos (server.py y axis_tradier.py), ambos leyendo el mismo `os.environ`. Funcionalmente correcto y seguro (mismo valor siempre), pero es deuda técnica: si en el futuro se decide centralizar esto en axis_config.py, hay que actualizar ambos archivos a la vez.
-9. **NUEVO AX-004:** `get_estado_orden_tradier()` quedó en server.py, acoplada a `loop_polling_posiciones()` — no se tocó por estar fuera del alcance pedido, pero es funcionalmente idéntica en estilo a las funciones que sí se movieron.
+7. TWELVEDATA_KEY y FINNHUB_KEY siguen hardcodeados en server.py (riesgo de seguridad menor — ver AX-003)
+8. `TRADIER_TOKEN`/`TRADIER_ACCOUNT`/`TRADIER_HEADERS` duplicados en server.py y axis_tradier.py (ver AX-004)
+9. **NUEVO AX-005:** el patrón de wrapper usado en `guardar_estado_dia()` (función movida acepta parámetro, server.py mantiene wrapper sin argumentos) es ahora el patrón a seguir para `guardar_ordenes`/`guardar_portfolio`/`guardar_canales` en sprints futuros — documentado aquí para consistencia.
+10. **NUEVO AX-005:** axis_storage.py no maneja la recuperación de tipos especiales (datetime, etc.) — las funciones movidas son JSON puro. Las funciones NO movidas (ordenes, portfolio, canales) sí tienen esa complejidad adicional, razón adicional por la que se excluyeron de este sprint.
 
 ## Notas para quien continúe
 
 - Leer siempre el AXIS_MASTER más reciente antes de cualquier cambio
 - Nunca codificar sin autorización explícita de Noel
 - Verificar sintaxis y simular orden de ejecución real después de cualquier fix (lección del crash de import os, 06/25)
-- axis_tradier.py no depende de Telegram, Portfolio, Derby, ni estado_dia/canal — mantenerlo así en futuros sprints para que siga siendo un módulo puro y testeable de forma aislada
+- axis_storage.py es JSON puro — cualquier función que dependa de tipos complejos (datetime, objetos anidados con lógica) debe seguir el patrón de wrapper, no moverse directamente
