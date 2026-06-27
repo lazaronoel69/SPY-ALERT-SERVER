@@ -1,0 +1,38 @@
+import sys
+import ast
+
+with open("server.py", "r", encoding="utf-8") as f:
+    content = f.read()
+
+errors = []
+
+OLD1 = '    # RCB/CNF — P2 dinámico + ruptura\n    if c["on"] and not c["apagado"] and c.get("p1") and c.get("p2_actual_high") is not None:\n        ahora_dt_c = EST.localize(datetime.strptime(vela_actual["datetime"], "%Y-%m-%d %H:%M:%S"))\n        techo      = calcular_techo_canal(simbolo, ahora_dt_c)\n        tipo_canal = "RCB" if c["p3"] else "CNF"\n        flag_fired = "rcb_fired" if c["p3"] else "cnf_fired"\n\n        if techo:\n            # Caso A — vela NO alcista: HIGH supera techo → P2 dinámico silencioso\n            if not v_alcista and v_high > techo and v_high < c["p1"]["high"]:\n                p2_ant = c["p2_actual_high"]\n                c["p2_actual_high"] = v_high\n                c["p2"]["high"]     = v_high\n                c["p2"]["fecha"]    = ahora_dt_c.strftime("%Y-%m-%d")\n                c["p2"]["hora_est"] = ahora_dt_c.hour\n                c["p2_actual_ts"]   = ahora_dt_c\n                guardar_canales()\n                print(f"{simbolo} P2 dinámico: ${p2_ant:.2f} → ${v_high:.2f} ({ahora_dt_c.strftime(\'%Y-%m-%d\')} hora {ahora_dt_c.hour}) silencioso")\n\n            # Caso B — vela alcista estricta: CLOSE supera techo → alerta + canal apagado\n            elif v_alcista and v_close > techo and not ed[flag_fired]:\n                if v_high < c["p1"]["high"]:\n                    enviar_senal_con_botones(\n                        simbolo,\n                        f"{tipo_canal} — RUPTURA CANAL",\n                        f"{hora_vela+1}:00 EST",\n                        v_close,\n                        "CALL",\n                        f"<b>Techo:</b> ${techo:.2f} | <b>Cierre:</b> ${v_close:.2f}\\n"\n                        f"<b>P1:</b> ${c[\'p1\'][\'high\']:.2f} | <b>P2:</b> ${c[\'p2_actual_high\']:.2f}\\n"\n                    )\n                    c["roto"]          = True\n                    c["fecha_ruptura"] = ahora_dt_c.strftime("%Y-%m-%d")\n                    c["apagado"]       = True\n                    ed[flag_fired]     = True\n                    guardar_canales()\n                    guardar_estado_dia()\n                    print(f"{simbolo} {tipo_canal} ROTO — canal desactivado, queda en chart hasta {ahora_dt_c.strftime(\'%Y-%m-%d\')}")\n                else:\n                    c["apagado"] = True\n                    guardar_canales()\n                    enviar_telegram(\n                        f"🔕 <b>Canal APAGADO — {simbolo}</b>\\n"\n                        f"High ${v_high:.2f} >= P1 ${c[\'p1\'][\'high\']:.2f}"\n                    )\n\n            # Caso C — HIGH >= P1 en cualquier vela → canal apagado\n            elif v_high >= c["p1"]["high"]:\n                c["apagado"] = True\n                guardar_canales()\n                enviar_telegram(\n                    f"🔕 <b>Canal APAGADO — {simbolo}</b>\\n"\n                    f"High ${v_high:.2f} >= P1 ${c[\'p1\'][\'high\']:.2f}"\n                )\n'
+
+NEW1 = '    # RCB/CNF\n    evaluar_canal_v2_v7(simbolo, ed, c, vela_actual, v_high, v_close, v_alcista, hora_vela)\n'
+
+if content.count(OLD1) != 1:
+    errors.append(f'BLOQUE CANAL V2-V7: se esperaba 1 coincidencia, se encontraron {content.count(OLD1)}')
+    print('ERRORES:'); [print('  - ' + e) for e in errors]; sys.exit(1)
+
+MARKER = 'def evaluar_activo(simbolo, velas, ahora):'
+
+if content.count(MARKER) != 1:
+    errors.append(f'MARKER: se esperaba 1 coincidencia, se encontraron {content.count(MARKER)}')
+    print('ERRORES:'); [print('  - ' + e) for e in errors]; sys.exit(1)
+
+FUNC_DEF = 'def evaluar_canal_v2_v7(simbolo, ed, c, vela_actual, v_high, v_close, v_alcista, hora_vela):\n    """AX-014: extraida de evaluar_activo() sin cambiar comportamiento.\n    Contiene EXACTAMENTE el bloque RCB/CNF -- P2 dinamico + ruptura de V2-V7,\n    con los 3 casos intactos como bloque if/elif/elif:\n    Caso A: P2 dinamico silencioso (vela no alcista, rompe techo)\n    Caso B: ruptura con alerta (vela alcista estricta, close > techo)\n    Caso C: apagado automatico (high >= P1)\n    NO toca Canal V1, PM40, 4PASOS, 1VR/RPG/GNA/GBA, ni Reset Diario.\n    Recibe explicitamente todas las variables necesarias."""\n    # RCB/CNF — P2 dinámico + ruptura\n    if c["on"] and not c["apagado"] and c.get("p1") and c.get("p2_actual_high") is not None:\n        ahora_dt_c = EST.localize(datetime.strptime(vela_actual["datetime"], "%Y-%m-%d %H:%M:%S"))\n        techo      = calcular_techo_canal(simbolo, ahora_dt_c)\n        tipo_canal = "RCB" if c["p3"] else "CNF"\n        flag_fired = "rcb_fired" if c["p3"] else "cnf_fired"\n\n        if techo:\n            # Caso A — vela NO alcista: HIGH supera techo → P2 dinámico silencioso\n            if not v_alcista and v_high > techo and v_high < c["p1"]["high"]:\n                p2_ant = c["p2_actual_high"]\n                c["p2_actual_high"] = v_high\n                c["p2"]["high"]     = v_high\n                c["p2"]["fecha"]    = ahora_dt_c.strftime("%Y-%m-%d")\n                c["p2"]["hora_est"] = ahora_dt_c.hour\n                c["p2_actual_ts"]   = ahora_dt_c\n                guardar_canales()\n                print(f"{simbolo} P2 dinámico: ${p2_ant:.2f} → ${v_high:.2f} ({ahora_dt_c.strftime(\'%Y-%m-%d\')} hora {ahora_dt_c.hour}) silencioso")\n\n            # Caso B — vela alcista estricta: CLOSE supera techo → alerta + canal apagado\n            elif v_alcista and v_close > techo and not ed[flag_fired]:\n                if v_high < c["p1"]["high"]:\n                    enviar_senal_con_botones(\n                        simbolo,\n                        f"{tipo_canal} — RUPTURA CANAL",\n                        f"{hora_vela+1}:00 EST",\n                        v_close,\n                        "CALL",\n                        f"<b>Techo:</b> ${techo:.2f} | <b>Cierre:</b> ${v_close:.2f}\\n"\n                        f"<b>P1:</b> ${c[\'p1\'][\'high\']:.2f} | <b>P2:</b> ${c[\'p2_actual_high\']:.2f}\\n"\n                    )\n                    c["roto"]          = True\n                    c["fecha_ruptura"] = ahora_dt_c.strftime("%Y-%m-%d")\n                    c["apagado"]       = True\n                    ed[flag_fired]     = True\n                    guardar_canales()\n                    guardar_estado_dia()\n                    print(f"{simbolo} {tipo_canal} ROTO — canal desactivado, queda en chart hasta {ahora_dt_c.strftime(\'%Y-%m-%d\')}")\n                else:\n                    c["apagado"] = True\n                    guardar_canales()\n                    enviar_telegram(\n                        f"🔕 <b>Canal APAGADO — {simbolo}</b>\\n"\n                        f"High ${v_high:.2f} >= P1 ${c[\'p1\'][\'high\']:.2f}"\n                    )\n\n            # Caso C — HIGH >= P1 en cualquier vela → canal apagado\n            elif v_high >= c["p1"]["high"]:\n                c["apagado"] = True\n                guardar_canales()\n                enviar_telegram(\n                    f"🔕 <b>Canal APAGADO — {simbolo}</b>\\n"\n                    f"High ${v_high:.2f} >= P1 ${c[\'p1\'][\'high\']:.2f}"\n                )\n\n'
+
+nuevo_contenido = content.replace(OLD1, NEW1, 1)
+nuevo_contenido = nuevo_contenido.replace(MARKER, FUNC_DEF + MARKER, 1)
+
+try:
+    ast.parse(nuevo_contenido)
+    print('AST valido -- el resultado parsea correctamente')
+except SyntaxError as e:
+    print(f'ERROR: el resultado NO parsea -- {e}')
+    print('NO SE ESCRIBIO NADA -- server.py permanece sin cambios')
+    sys.exit(1)
+
+with open('server.py', 'w', encoding='utf-8') as f:
+    f.write(nuevo_contenido)
+print('server.py actualizado -- evaluar_canal_v2_v7() extraida correctamente')
