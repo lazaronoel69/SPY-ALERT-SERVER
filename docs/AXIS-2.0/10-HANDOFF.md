@@ -2,28 +2,30 @@
 
 ## Estado actual
 
-Sistema en producción, estable, v8.84. AX-015 (Extract PM40 V1) ejecutado — `evaluar_pm40_v1()` extraída de `evaluar_activo()`, conteniendo exactamente el bloque de PM40 en la rama V1 (P1 dinámico: inicialización, actualización de P1 si rompe, maduración tras 3 velas bajo P1, fijación/actualización de P2 con invalidación si P2≥P1). Sin tocar PM40 V2-V7, 4PASOS, Canal V2-V7 (AX-014 sigue revertido), 1VR/RPG/GNA/GBA, ni Reset Diario. Verificado con py_compile, AST, import real, prueba funcional (3 casos), **y verificación sostenida de producción siguiendo la lección de AX-014.**
+Sistema en producción, estable, v8.84. AX-016 (Extract PM40 V2-V7) ejecutado — `evaluar_pm40_v2_v7()` extraída de `evaluar_activo()`, conteniendo exactamente el bloque PM40 en V2-V7 (actualización de P1 si rompe, maduración tras 3 velas, fijación de P2, comparación contra techo proyectado vía slope, ruptura con alerta CALL, o actualización/invalidación de P2 si no rompe). Sin tocar PM40 V1, 4PASOS, Canal V2-V7 (aún revertido desde AX-014), 1VR/RPG/GNA/GBA, ni Reset Diario. Verificado con py_compile, AST, import real, prueba funcional (3 escenarios), logs de Railway, y 2 chequeos de `/status` espaciados 2 minutos.
 
 ## Cambio realizado en este sprint
 
-`evaluar_pm40_v1(simbolo, ed, c, velas, v_high)` — nueva función. Contiene exactamente el bloque original: si el canal manual está apagado y PM40 no ha disparado, calcula las 4 SMAs (20/40/100/200), verifica el orden bajista requerido, inicializa o actualiza P1 según corresponda, incrementa el conteo de velas bajo P1 hacia la maduración (3+), y fija/actualiza P2 escribiendo directamente sobre `canal[simbolo]` cuando aplica (incluyendo la invalidación si P2≥P1).
+`evaluar_pm40_v2_v7(simbolo, ed, c, v_high, v_close, v_alcista, hora_vela)` — nueva función. Contiene exactamente el bloque original: incrementa el índice de vela, actualiza P1 si el high lo supera (reiniciando todo el estado), suma velas bajo P1 hacia la maduración, fija P2 cuando hay distancia≥4 desde P1, calcula el techo proyectado (slope) una vez hay P2, dispara alerta CALL si rompe con vela alcista y `hora_vela > 9`, o actualiza/invalida P2 según corresponda si no rompe.
 
-Dentro de `evaluar_activo()`: `evaluar_pm40_v1(simbolo, ed, c, velas, v_high)`. Ningún otro bloque fue modificado.
+Dentro de `evaluar_activo()`: `evaluar_pm40_v2_v7(simbolo, ed, c, v_high, v_close, v_alcista, hora_vela)`. Ningún otro bloque fue modificado.
 
-## Verificación reforzada (lección de AX-014 aplicada)
+## Nota de testing (error propio detectado y corregido)
 
-Tras el incidente de AX-014, este sprint se verificó con rigor adicional:
-1. Logs de Railway capturados con `railway logs --tail 200` tras el deploy — confirmaron arranque completamente limpio (gunicorn, 8 canales cargados, 8 posiciones, base de datos de velas verificada, threads arrancados), sin ningún traceback, y **más de 3 horas de operación estable** antes del siguiente reinicio normal.
-2. `/status` verificado **dos veces, espaciadas 2 minutos entre sí** (no solo segundos) — ambas devolvieron `HTTP 200` con `"sistema":"AXIS Breakout Sentinel v8.84"` consistente.
+Durante la prueba funcional del "Caso 2" (ruptura con alerta), el primer intento usó un `v_high` mayor al propio P1, lo cual activa la rama de reinicio de P1 (comportamiento correcto y esperado), no la rama de comparación contra el techo proyectado — esto no fue un bug de la extracción, sino un valor de prueba mal elegido. Se corrigió usando un `v_high` entre P1 y el techo calculado, confirmando el disparo correcto. Documentado como recordatorio: al diseñar casos de prueba para PM40, verificar primero contra cuál rama (`v_high >= P1` vs. comparación con techo) caerá el valor elegido.
+
+## Incidente menor de terminal (sin relación con el código)
+
+Durante la verificación de este sprint, un comando con comillas simples anidadas dentro de comillas dobles (un comentario tipo `'CASO...'`) causó que la terminal de Noel entrara en modo `dquote>` (esperando cierre de comillas). Se resolvió con Ctrl+C y reformulando el comando con heredoc (`python3 << 'EOF' ... EOF'`), que evita el problema de anidación de comillas. Recomendación para sprints futuros: preferir heredocs sobre `python3 -c "..."` cuando el código de prueba contenga comillas simples dentro de strings con apóstrofes o comentarios complejos.
 
 ## Archivos modificados en este sprint
 
-- **Modificado:** `server.py` — `evaluar_pm40_v1()` agregada, bloque inline reemplazado por la llamada.
+- **Modificado:** `server.py` — `evaluar_pm40_v2_v7()` agregada, bloque inline reemplazado por la llamada.
 - **Modificado:** `docs/AXIS-2.0/10-HANDOFF.md` (este archivo).
 
 ## Último commit antes de este sprint
 
-a13c56a — AX-014A Post Rollback Diagnosis
+1370134 — AX-015 Extract PM40 V1
 
 ## Rama
 
@@ -31,15 +33,15 @@ main
 
 ## Sprint activo
 
-AX-015 — Extract PM40 V1 (este sprint)
+AX-016 — Extract PM40 V2-V7 (este sprint)
 
 ## Próximo sprint sugerido
 
-Según `05-STRATEGY-ENGINE-DESIGN.md`: **AX-016 — extraer PM40 V2-V7** (maduración, fijación/actualización de P2 con slope proyectado, ruptura con alerta CALL, o actualización si no rompe) — mayor riesgo que este sprint por la cantidad de estado y la lógica de comparación contra el techo proyectado. Alternativamente, **reintentar AX-014** (Canal V2-V7) ahora que se confirmó que no había ninguna causa real de código en el intento anterior, aplicando la misma verificación reforzada usada en este sprint.
+Con PM40 V1 y V2-V7 ya extraídas, el motor PM40 está completo. Según `05-STRATEGY-ENGINE-DESIGN.md`: considerar **reintentar AX-014** (Canal V2-V7) con la verificación reforzada ya validada en AX-015 y AX-016, o avanzar con 4PASOS (sección 2.7 del diseño) — el componente de mayor estado interno y riesgo restante en la lista original.
 
 ## Riesgos abiertos
 
-(Ver lista completa en `04-ARCHITECTURE-AUDIT.md` sección 6, `05-STRATEGY-ENGINE-DESIGN.md` sección 4, y `06-AX014-POSTMORTEM.md`. Sin riesgos nuevos críticos de este sprint — la verificación reforzada confirmó estabilidad sostenida.)
+(Ver lista completa en `04-ARCHITECTURE-AUDIT.md` sección 6, `05-STRATEGY-ENGINE-DESIGN.md` sección 4, y `06-AX014-POSTMORTEM.md`. Sin riesgos nuevos críticos de este sprint.)
 
 ## Notas para quien continúe
 
@@ -48,5 +50,6 @@ Según `05-STRATEGY-ENGINE-DESIGN.md`: **AX-016 — extraer PM40 V2-V7** (madura
 - Nunca codificar sin autorización explícita de Noel
 - Extraer bloques directamente del archivo real con Python, nunca transcribir a mano
 - Verificar `ast.parse()` del resultado completo antes de escribir el archivo
-- **Tras cada deploy: revisar logs de Railway con `railway logs --tail 200`, y verificar `/status` al menos 2 veces espaciadas varios minutos** — patrón confirmado como efectivo en este sprint tras la lección de AX-014
-- Validar cada sub-sprint en producción durante al menos un día de mercado completo antes de proceder al siguiente
+- **Preferir heredocs (`python3 << 'EOF' ... EOF`) sobre `python3 -c "..."` para pruebas con comillas anidadas** — evita el modo `dquote>` que congela la terminal
+- Al probar PM40, verificar contra cuál rama caerá el valor de `v_high` elegido (reinicio de P1 vs. comparación con techo) antes de asumir el resultado esperado
+- Tras cada deploy: revisar logs de Railway con `railway logs --tail 200`, y verificar `/status` al menos 2 veces espaciadas varios minutos
