@@ -1120,6 +1120,77 @@ def evaluar_pm40_v1(simbolo, ed, c, velas, v_high):
                     else:
                         guardar_canales()
 
+def evaluar_pm40_v2_v7(simbolo, ed, c, v_high, v_close, v_alcista, hora_vela):
+    """AX-016: extraida de evaluar_activo() sin cambiar comportamiento.
+    Contiene EXACTAMENTE el bloque de PM40 en V2-V7: actualizacion de P1
+    si rompe, maduracion tras 3 velas bajo P1, fijacion de P2 (distancia>=4),
+    comparacion contra techo proyectado (slope), ruptura con alerta CALL
+    (vela alcista y hora_vela>9), o actualizacion/invalidacion de P2 si no
+    rompe. NO toca PM40 V1, 4PASOS, Canal V2-V7, 1VR/RPG/GNA/GBA, ni Reset Diario.
+    Recibe explicitamente todas las variables necesarias."""
+    # PM40 — V2-V7
+    if not c["on"] and ed["pm40_activo"] and not ed["pm40_fired"] and ed["pm40_p1_high"]:
+        ed["pm40_vela_idx"] += 1
+        idx_actual = ed["pm40_vela_idx"]
+
+        if v_high >= ed["pm40_p1_high"]:
+            ed["pm40_p1_high"]       = v_high
+            ed["pm40_p1_idx"]        = idx_actual
+            ed["pm40_p2_high"]       = None
+            ed["pm40_p2_idx"]        = None
+            ed["pm40_velas_bajo_p1"] = 0
+            ed["pm40_p1_maduro"]     = False
+        else:
+            ed["pm40_velas_bajo_p1"] += 1
+            if ed["pm40_velas_bajo_p1"] >= 3:
+                ed["pm40_p1_maduro"] = True
+
+            if ed["pm40_p1_maduro"]:
+                distancia = idx_actual - ed["pm40_p1_idx"]
+
+                if ed["pm40_p2_idx"] is None and distancia >= 4:
+                    ed["pm40_p2_high"] = v_high
+                    ed["pm40_p2_idx"]  = idx_actual
+                    print(f"{simbolo} PM40 P2 fijado: ${v_high:.2f} idx={idx_actual}")
+
+                elif ed["pm40_p2_idx"] is not None:
+                    slope      = (ed["pm40_p2_high"] - ed["pm40_p1_high"]) / (ed["pm40_p2_idx"] - ed["pm40_p1_idx"])
+                    techo_pm40 = ed["pm40_p1_high"] + slope * (idx_actual - ed["pm40_p1_idx"])
+
+                    if v_high > techo_pm40:
+                        if v_alcista and hora_vela > 9:
+                            ed["pm40_fired"]  = True
+                            guardar_estado_dia()
+                            ed["pm40_activo"] = False
+                            enviar_senal_con_botones(
+                                simbolo, "PM40 — RUPTURA CANAL BAJISTA",
+                                f"{hora_vela+1}:00 EST", v_close, "CALL",
+                                f"<b>P1:</b> ${ed['pm40_p1_high']:.2f} | <b>P2:</b> ${ed['pm40_p2_high']:.2f}\n"
+                                f"<b>Techo:</b> ${techo_pm40:.2f} | <b>High:</b> ${v_high:.2f}\n"
+                            )
+                        elif v_high < ed["pm40_p1_high"]:
+                            ed["pm40_p2_high"] = v_high
+                            ed["pm40_p2_idx"]  = idx_actual
+                            canal[simbolo]["p2"]["high"]     = v_high
+                            canal[simbolo]["p2_actual_high"] = v_high
+                            if ed["pm40_p2_high"] >= ed["pm40_p1_high"]:
+                                ed["pm40_activo"] = False; ed["pm40_p1_high"] = None
+                                canal[simbolo]["on"] = False
+                                guardar_canales()
+                            else:
+                                guardar_canales()
+                    elif v_high > ed["pm40_p2_high"]:
+                        ed["pm40_p2_high"] = v_high
+                        ed["pm40_p2_idx"]  = idx_actual
+                        canal[simbolo]["p2"]["high"]     = v_high
+                        canal[simbolo]["p2_actual_high"] = v_high
+                        if ed["pm40_p2_high"] >= ed["pm40_p1_high"]:
+                            ed["pm40_activo"] = False; ed["pm40_p1_high"] = None
+                            canal[simbolo]["on"] = False
+                            guardar_canales()
+                        else:
+                            guardar_canales()
+
 def evaluar_activo(simbolo, velas, ahora):
     ed = estado_dia[simbolo]
     c  = canal[simbolo]
@@ -1288,68 +1359,8 @@ def evaluar_activo(simbolo, velas, ahora):
                     f"High ${v_high:.2f} >= P1 ${c['p1']['high']:.2f}"
                 )
 
-    # PM40 — V2-V7
-    if not c["on"] and ed["pm40_activo"] and not ed["pm40_fired"] and ed["pm40_p1_high"]:
-        ed["pm40_vela_idx"] += 1
-        idx_actual = ed["pm40_vela_idx"]
-
-        if v_high >= ed["pm40_p1_high"]:
-            ed["pm40_p1_high"]       = v_high
-            ed["pm40_p1_idx"]        = idx_actual
-            ed["pm40_p2_high"]       = None
-            ed["pm40_p2_idx"]        = None
-            ed["pm40_velas_bajo_p1"] = 0
-            ed["pm40_p1_maduro"]     = False
-        else:
-            ed["pm40_velas_bajo_p1"] += 1
-            if ed["pm40_velas_bajo_p1"] >= 3:
-                ed["pm40_p1_maduro"] = True
-
-            if ed["pm40_p1_maduro"]:
-                distancia = idx_actual - ed["pm40_p1_idx"]
-
-                if ed["pm40_p2_idx"] is None and distancia >= 4:
-                    ed["pm40_p2_high"] = v_high
-                    ed["pm40_p2_idx"]  = idx_actual
-                    print(f"{simbolo} PM40 P2 fijado: ${v_high:.2f} idx={idx_actual}")
-
-                elif ed["pm40_p2_idx"] is not None:
-                    slope      = (ed["pm40_p2_high"] - ed["pm40_p1_high"]) / (ed["pm40_p2_idx"] - ed["pm40_p1_idx"])
-                    techo_pm40 = ed["pm40_p1_high"] + slope * (idx_actual - ed["pm40_p1_idx"])
-
-                    if v_high > techo_pm40:
-                        if v_alcista and hora_vela > 9:
-                            ed["pm40_fired"]  = True
-                            guardar_estado_dia()
-                            ed["pm40_activo"] = False
-                            enviar_senal_con_botones(
-                                simbolo, "PM40 — RUPTURA CANAL BAJISTA",
-                                f"{hora_vela+1}:00 EST", v_close, "CALL",
-                                f"<b>P1:</b> ${ed['pm40_p1_high']:.2f} | <b>P2:</b> ${ed['pm40_p2_high']:.2f}\n"
-                                f"<b>Techo:</b> ${techo_pm40:.2f} | <b>High:</b> ${v_high:.2f}\n"
-                            )
-                        elif v_high < ed["pm40_p1_high"]:
-                            ed["pm40_p2_high"] = v_high
-                            ed["pm40_p2_idx"]  = idx_actual
-                            canal[simbolo]["p2"]["high"]     = v_high
-                            canal[simbolo]["p2_actual_high"] = v_high
-                            if ed["pm40_p2_high"] >= ed["pm40_p1_high"]:
-                                ed["pm40_activo"] = False; ed["pm40_p1_high"] = None
-                                canal[simbolo]["on"] = False
-                                guardar_canales()
-                            else:
-                                guardar_canales()
-                    elif v_high > ed["pm40_p2_high"]:
-                        ed["pm40_p2_high"] = v_high
-                        ed["pm40_p2_idx"]  = idx_actual
-                        canal[simbolo]["p2"]["high"]     = v_high
-                        canal[simbolo]["p2_actual_high"] = v_high
-                        if ed["pm40_p2_high"] >= ed["pm40_p1_high"]:
-                            ed["pm40_activo"] = False; ed["pm40_p1_high"] = None
-                            canal[simbolo]["on"] = False
-                            guardar_canales()
-                        else:
-                            guardar_canales()
+    # PM40
+    evaluar_pm40_v2_v7(simbolo, ed, c, v_high, v_close, v_alcista, hora_vela)
 
     # 4PASOS — V2-V7
     if c["on"] and not c["apagado"] and c["p3"] is not None and ed["4ps_activo"] and not ed["4ps_fired"]:
