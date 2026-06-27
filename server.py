@@ -1071,6 +1071,55 @@ def evaluar_canal_v1(simbolo, c, vela_actual, v_high):
             guardar_canales()
             print(f"{simbolo} P2 dinamico (V1): ${p2_ant_v1c:.2f} -> ${v_high:.2f} ({ahora_dt_v1c.strftime('%Y-%m-%d')}) silencioso")
 
+def evaluar_pm40_v1(simbolo, ed, c, velas, v_high):
+    """AX-015: extraida de evaluar_activo() sin cambiar comportamiento.
+    Contiene EXACTAMENTE el bloque de PM40 en la rama V1 (P1 dinamico:
+    inicializacion, actualizacion de P1 si rompe, maduracion tras 3 velas
+    bajo P1, y fijacion/actualizacion de P2 con invalidacion si P2>=P1).
+    NO toca PM40 V2-V7, 4PASOS, Canal V2-V7, 1VR/RPG/GNA/GBA, ni Reset Diario.
+    Recibe explicitamente todas las variables necesarias."""
+    # PM40 — P1 dinámico en V1
+    if not c["on"] and not ed["pm40_fired"]:
+        sma20  = calcular_sma(velas, 20)
+        sma40  = calcular_sma(velas, 40)
+        sma100 = calcular_sma(velas, 100)
+        sma200 = calcular_sma(velas, 200)
+        smas_ok = sma20 and sma40 and sma100 and sma200 and sma20 > sma40 > sma100 > sma200
+        ed["pm40_vela_idx"] = 1
+        if smas_ok:
+            if not ed["pm40_activo"]:
+                ed["pm40_activo"]         = True
+                ed["pm40_p1_high"]        = v_high
+                ed["pm40_p1_idx"]         = 1
+                ed["pm40_p2_high"]        = None
+                ed["pm40_p2_idx"]         = None
+                ed["pm40_velas_bajo_p1"]  = 0
+                ed["pm40_p1_maduro"]      = False
+            elif v_high >= ed["pm40_p1_high"]:
+                ed["pm40_p1_high"]        = v_high
+                ed["pm40_p1_idx"]         = 1
+                ed["pm40_p2_high"]        = None
+                ed["pm40_p2_idx"]         = None
+                ed["pm40_velas_bajo_p1"]  = 0
+                ed["pm40_p1_maduro"]      = False
+            else:
+                ed["pm40_velas_bajo_p1"] += 1
+                if ed["pm40_velas_bajo_p1"] >= 3:
+                    ed["pm40_p1_maduro"] = True
+                if ed["pm40_p2_high"] is not None and v_high > ed["pm40_p2_high"]:
+                    ed["pm40_p2_high"] = v_high
+                    ed["pm40_p2_idx"]  = ed["pm40_vela_idx"]
+                    canal[simbolo]["p2"]["high"]      = v_high
+                    canal[simbolo]["p2_actual_high"]  = v_high
+                    if ed["pm40_p2_high"] >= ed["pm40_p1_high"]:
+                        ed["pm40_activo"] = False; ed["pm40_p1_high"] = None
+                        ed["pm40_p1_idx"] = None; ed["pm40_p2_high"] = None
+                        ed["pm40_p2_idx"] = None; ed["pm40_velas_bajo_p1"] = 0
+                        ed["pm40_p1_maduro"] = False; canal[simbolo]["on"] = False
+                        guardar_canales()
+                    else:
+                        guardar_canales()
+
 def evaluar_activo(simbolo, velas, ahora):
     ed = estado_dia[simbolo]
     c  = canal[simbolo]
@@ -1124,47 +1173,8 @@ def evaluar_activo(simbolo, velas, ahora):
         # Canal V1
         evaluar_canal_v1(simbolo, c, vela_actual, v_high)
 
-        # PM40 — P1 dinámico en V1
-        if not c["on"] and not ed["pm40_fired"]:
-            sma20  = calcular_sma(velas, 20)
-            sma40  = calcular_sma(velas, 40)
-            sma100 = calcular_sma(velas, 100)
-            sma200 = calcular_sma(velas, 200)
-            smas_ok = sma20 and sma40 and sma100 and sma200 and sma20 > sma40 > sma100 > sma200
-            ed["pm40_vela_idx"] = 1
-            if smas_ok:
-                if not ed["pm40_activo"]:
-                    ed["pm40_activo"]         = True
-                    ed["pm40_p1_high"]        = v_high
-                    ed["pm40_p1_idx"]         = 1
-                    ed["pm40_p2_high"]        = None
-                    ed["pm40_p2_idx"]         = None
-                    ed["pm40_velas_bajo_p1"]  = 0
-                    ed["pm40_p1_maduro"]      = False
-                elif v_high >= ed["pm40_p1_high"]:
-                    ed["pm40_p1_high"]        = v_high
-                    ed["pm40_p1_idx"]         = 1
-                    ed["pm40_p2_high"]        = None
-                    ed["pm40_p2_idx"]         = None
-                    ed["pm40_velas_bajo_p1"]  = 0
-                    ed["pm40_p1_maduro"]      = False
-                else:
-                    ed["pm40_velas_bajo_p1"] += 1
-                    if ed["pm40_velas_bajo_p1"] >= 3:
-                        ed["pm40_p1_maduro"] = True
-                    if ed["pm40_p2_high"] is not None and v_high > ed["pm40_p2_high"]:
-                        ed["pm40_p2_high"] = v_high
-                        ed["pm40_p2_idx"]  = ed["pm40_vela_idx"]
-                        canal[simbolo]["p2"]["high"]      = v_high
-                        canal[simbolo]["p2_actual_high"]  = v_high
-                        if ed["pm40_p2_high"] >= ed["pm40_p1_high"]:
-                            ed["pm40_activo"] = False; ed["pm40_p1_high"] = None
-                            ed["pm40_p1_idx"] = None; ed["pm40_p2_high"] = None
-                            ed["pm40_p2_idx"] = None; ed["pm40_velas_bajo_p1"] = 0
-                            ed["pm40_p1_maduro"] = False; canal[simbolo]["on"] = False
-                            guardar_canales()
-                        else:
-                            guardar_canales()
+        # PM40
+        evaluar_pm40_v1(simbolo, ed, c, velas, v_high)
 
         # 4PASOS en V1
         if c["on"] and not c["apagado"] and c["p3"] is not None and not ed["4ps_fired"]:
