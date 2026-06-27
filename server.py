@@ -1048,6 +1048,29 @@ def evaluar_1vr_normal(simbolo, ed, velas, vela_actual, v_open, v_close, v_roja)
             f"<b>Open:</b> ${v_open:.2f} | <b>Close:</b> ${v_close:.2f}\n{extra_vr}"
         )
 
+def evaluar_canal_v1(simbolo, c, vela_actual, v_high):
+    """AX-013: extraida de evaluar_activo() sin cambiar comportamiento.
+    Contiene EXACTAMENTE el bloque de Canal V1 -- P2 dinamico especial
+    (cualquier tipo de vela, aplica SOLO a V1). NO toca PM40, 4PASOS,
+    Canal V2-V7, RPG/GNA/GBA/1VR, ni Reset Diario.
+    Recibe explicitamente todas las variables necesarias."""
+    # Canal V1 — P2 dinamico especial: cualquier tipo de vela
+    # Si V1 rompe el techo (mecha o cuerpo, sin importar tipo de vela)
+    # y el high es menor que P1, se convierte directamente en nuevo P2.
+    # Esto aplica SOLO a V1 — V2-V7 usan su propia logica mas abajo.
+    if c["on"] and not c["apagado"] and c.get("p1") and c.get("p2_actual_high") is not None:
+        ahora_dt_v1c = EST.localize(datetime.strptime(vela_actual["datetime"], "%Y-%m-%d %H:%M:%S"))
+        techo_v1c = calcular_techo_canal(simbolo, ahora_dt_v1c)
+        if techo_v1c and v_high > techo_v1c and v_high < c["p1"]["high"]:
+            p2_ant_v1c = c["p2_actual_high"]
+            c["p2_actual_high"] = v_high
+            c["p2"]["high"]     = v_high
+            c["p2"]["fecha"]    = ahora_dt_v1c.strftime("%Y-%m-%d")
+            c["p2"]["hora_est"] = ahora_dt_v1c.hour
+            c["p2_actual_ts"]   = ahora_dt_v1c
+            guardar_canales()
+            print(f"{simbolo} P2 dinamico (V1): ${p2_ant_v1c:.2f} -> ${v_high:.2f} ({ahora_dt_v1c.strftime('%Y-%m-%d')}) silencioso")
+
 def evaluar_activo(simbolo, velas, ahora):
     ed = estado_dia[simbolo]
     c  = canal[simbolo]
@@ -1098,22 +1121,8 @@ def evaluar_activo(simbolo, velas, ahora):
         # GBA
         evaluar_gba(simbolo, ed, v_open, v_close, v_alcista, v7_ayer, None, hora_vela, True)
 
-        # Canal V1 — P2 dinamico especial: cualquier tipo de vela
-        # Si V1 rompe el techo (mecha o cuerpo, sin importar tipo de vela)
-        # y el high es menor que P1, se convierte directamente en nuevo P2.
-        # Esto aplica SOLO a V1 — V2-V7 usan su propia logica mas abajo.
-        if c["on"] and not c["apagado"] and c.get("p1") and c.get("p2_actual_high") is not None:
-            ahora_dt_v1c = EST.localize(datetime.strptime(vela_actual["datetime"], "%Y-%m-%d %H:%M:%S"))
-            techo_v1c = calcular_techo_canal(simbolo, ahora_dt_v1c)
-            if techo_v1c and v_high > techo_v1c and v_high < c["p1"]["high"]:
-                p2_ant_v1c = c["p2_actual_high"]
-                c["p2_actual_high"] = v_high
-                c["p2"]["high"]     = v_high
-                c["p2"]["fecha"]    = ahora_dt_v1c.strftime("%Y-%m-%d")
-                c["p2"]["hora_est"] = ahora_dt_v1c.hour
-                c["p2_actual_ts"]   = ahora_dt_v1c
-                guardar_canales()
-                print(f"{simbolo} P2 dinamico (V1): ${p2_ant_v1c:.2f} -> ${v_high:.2f} ({ahora_dt_v1c.strftime('%Y-%m-%d')}) silencioso")
+        # Canal V1
+        evaluar_canal_v1(simbolo, c, vela_actual, v_high)
 
         # PM40 — P1 dinámico en V1
         if not c["on"] and not ed["pm40_fired"]:
