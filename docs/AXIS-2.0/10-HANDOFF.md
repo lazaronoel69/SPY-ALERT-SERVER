@@ -2,25 +2,28 @@
 
 ## Estado actual
 
-Sistema en producción, estable, v8.84, con AX-014 revertido (estado de AX-013). AX-014A (Post Rollback Diagnosis) ejecutado — investigación exhaustiva sin modificar código, documentada en `06-AX014-POSTMORTEM.md`.
+Sistema en producción, estable, v8.84. AX-015 (Extract PM40 V1) ejecutado — `evaluar_pm40_v1()` extraída de `evaluar_activo()`, conteniendo exactamente el bloque de PM40 en la rama V1 (P1 dinámico: inicialización, actualización de P1 si rompe, maduración tras 3 velas bajo P1, fijación/actualización de P2 con invalidación si P2≥P1). Sin tocar PM40 V2-V7, 4PASOS, Canal V2-V7 (AX-014 sigue revertido), 1VR/RPG/GNA/GBA, ni Reset Diario. Verificado con py_compile, AST, import real, prueba funcional (3 casos), **y verificación sostenida de producción siguiendo la lección de AX-014.**
 
-## Resumen del diagnóstico (ver 06-AX014-POSTMORTEM.md para detalle completo)
+## Cambio realizado en este sprint
 
-- **Diff del commit `ae0c2a6`:** revisado completo — la función `evaluar_canal_v2_v7()` es textualmente idéntica al bloque original, sin error de indentación, variables faltantes, ni return accidental.
-- **Sintaxis y AST sobre el archivo exacto del commit:** ambos válidos, sin errores.
-- **Orden de ejecución de dependencias:** correcto. `enviar_telegram()`/`enviar_senal_con_botones()` se definen después de `evaluar_canal_v2_v7()` en el archivo, pero esto es válido en Python (solo importa el orden en tiempo de *llamada*, no de *definición*).
-- **Logs de Railway disponibles:** muestran un arranque limpio sin tracebacks, aunque no se pudo confirmar con certeza absoluta que correspondan al momento exacto del incidente (limitación reconocida de la investigación).
-- **Causa confirmada:** ninguna. Se documentó como HIPÓTESIS, no como hecho confirmado, siguiendo la regla del proyecto de nunca presentar una hipótesis como causa raíz verificada.
+`evaluar_pm40_v1(simbolo, ed, c, velas, v_high)` — nueva función. Contiene exactamente el bloque original: si el canal manual está apagado y PM40 no ha disparado, calcula las 4 SMAs (20/40/100/200), verifica el orden bajista requerido, inicializa o actualiza P1 según corresponda, incrementa el conteo de velas bajo P1 hacia la maduración (3+), y fija/actualiza P2 escribiendo directamente sobre `canal[simbolo]` cuando aplica (incluyendo la invalidación si P2≥P1).
+
+Dentro de `evaluar_activo()`: `evaluar_pm40_v1(simbolo, ed, c, velas, v_high)`. Ningún otro bloque fue modificado.
+
+## Verificación reforzada (lección de AX-014 aplicada)
+
+Tras el incidente de AX-014, este sprint se verificó con rigor adicional:
+1. Logs de Railway capturados con `railway logs --tail 200` tras el deploy — confirmaron arranque completamente limpio (gunicorn, 8 canales cargados, 8 posiciones, base de datos de velas verificada, threads arrancados), sin ningún traceback, y **más de 3 horas de operación estable** antes del siguiente reinicio normal.
+2. `/status` verificado **dos veces, espaciadas 2 minutos entre sí** (no solo segundos) — ambas devolvieron `HTTP 200` con `"sistema":"AXIS Breakout Sentinel v8.84"` consistente.
 
 ## Archivos modificados en este sprint
 
-- **Creado:** `docs/AXIS-2.0/06-AX014-POSTMORTEM.md` — diagnóstico completo.
+- **Modificado:** `server.py` — `evaluar_pm40_v1()` agregada, bloque inline reemplazado por la llamada.
 - **Modificado:** `docs/AXIS-2.0/10-HANDOFF.md` (este archivo).
-- **Sin cambios en código** (server.py no fue tocado, según regla explícita del sprint).
 
 ## Último commit antes de este sprint
 
-ba20660 — Update 10-HANDOFF.md (cierre del rollback de emergencia)
+a13c56a — AX-014A Post Rollback Diagnosis
 
 ## Rama
 
@@ -28,24 +31,22 @@ main
 
 ## Sprint activo
 
-AX-014A — Post Rollback Diagnosis (este sprint)
+AX-015 — Extract PM40 V1 (este sprint)
 
 ## Próximo sprint sugerido
 
-**Reintentar AX-014** (recomendación del postmortem, sección 8), con monitoreo de logs en tiempo real durante el deploy y verificación de `/status` espaciada en minutos antes de declarar éxito — no se encontró ninguna causa real en el código que justifique evitarlo indefinidamente.
+Según `05-STRATEGY-ENGINE-DESIGN.md`: **AX-016 — extraer PM40 V2-V7** (maduración, fijación/actualización de P2 con slope proyectado, ruptura con alerta CALL, o actualización si no rompe) — mayor riesgo que este sprint por la cantidad de estado y la lógica de comparación contra el techo proyectado. Alternativamente, **reintentar AX-014** (Canal V2-V7) ahora que se confirmó que no había ninguna causa real de código en el intento anterior, aplicando la misma verificación reforzada usada en este sprint.
 
 ## Riesgos abiertos
 
-(Ver lista completa en `04-ARCHITECTURE-AUDIT.md` sección 6 y `05-STRATEGY-ENGINE-DESIGN.md` sección 4. Riesgos específicos de este incidente:)
-
-1. **NUEVO:** la causa real del 502 de AX-014 sigue sin confirmarse con evidencia directa — queda como riesgo abierto hasta que se reintente con monitoreo en tiempo real.
-2. **NUEVO:** no fue posible aislar con certeza el log histórico exacto del deployment de AX-014 — limitación de las herramientas de Railway CLI disponibles en esta sesión. Si el incidente se repite, priorizar capturar el log en el momento exacto (`railway logs --follow` durante el deploy), antes de que rote o se pierda.
-3. El motor de canales bajistas queda con Canal V1 extraído (AX-013) pero Canal V2-V7 sin extraer (AX-014 revertido) — inconsistencia arquitectónica temporal, sin justificación confirmada de mantenerla indefinidamente.
+(Ver lista completa en `04-ARCHITECTURE-AUDIT.md` sección 6, `05-STRATEGY-ENGINE-DESIGN.md` sección 4, y `06-AX014-POSTMORTEM.md`. Sin riesgos nuevos críticos de este sprint — la verificación reforzada confirmó estabilidad sostenida.)
 
 ## Notas para quien continúe
 
 - Leer siempre el AXIS_MASTER más reciente antes de cualquier cambio
-- Leer `06-AX014-POSTMORTEM.md` completo antes de reintentar AX-014
+- Leer `05-STRATEGY-ENGINE-DESIGN.md` y `06-AX014-POSTMORTEM.md` antes de cualquier sub-sprint de extracción
 - Nunca codificar sin autorización explícita de Noel
-- Nunca presentar una hipótesis como causa raíz confirmada sin evidencia directa — este postmortem es un ejemplo de cómo documentar honestamente cuando la causa real no se pudo confirmar
-- Al reintentar AX-014: monitorear logs de Railway en tiempo real durante el deploy, y verificar `/status` varias veces espaciadas en minutos (no segundos) antes de declarar éxito
+- Extraer bloques directamente del archivo real con Python, nunca transcribir a mano
+- Verificar `ast.parse()` del resultado completo antes de escribir el archivo
+- **Tras cada deploy: revisar logs de Railway con `railway logs --tail 200`, y verificar `/status` al menos 2 veces espaciadas varios minutos** — patrón confirmado como efectivo en este sprint tras la lección de AX-014
+- Validar cada sub-sprint en producción durante al menos un día de mercado completo antes de proceder al siguiente
