@@ -1306,6 +1306,7 @@ def evaluar_4pasos_v2_v7(simbolo, ed, c, vela_actual, v_low, v_close, v_roja, ho
     elif ed["4ps_p2_idx"] is not None:
             slope_4ps  = (ed["4ps_p2_low"] - ed["4ps_p1_low"]) / (ed["4ps_p2_idx"] - ed["4ps_p1_idx"])
             piso_slope = ed["4ps_p1_low"] + slope_4ps * (idx_4ps - ed["4ps_p1_idx"])
+            historial_lows = ed.get("4ps_historial_lows", [])
 
             # Caso A — LOW (mecha) rompe slope pero CIERRE queda arriba → nuevo P2
             if v_low < piso_slope and v_close >= piso_slope:
