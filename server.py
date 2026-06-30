@@ -1239,6 +1239,110 @@ def evaluar_4pasos_v1(simbolo, ed, c, vela_actual, v_low, ahora):
                 ed.setdefault("4ps_historial_lows", []).append((1, v_low))
 
 
+def evaluar_4pasos_v2_v7(simbolo, ed, c, vela_actual, v_low, v_close, v_roja, hora_vela):
+    """AX-018: extraida de evaluar_activo() sin cambiar comportamiento.
+    Contiene EXACTAMENTE el bloque 4PASOS V2-V7 (incremento de idx, historial,
+    reset por salida de canal, actualizacion de P1, fijacion/actualizacion de P2,
+    y disparo de senal PUT cuando cierre rompe slope)."""
+    if not (c["on"] and not c["apagado"] and c["p3"] is not None and ed["4ps_activo"] and not ed["4ps_fired"]):
+        return
+
+    ed["4ps_vela_idx"] += 1
+    idx_4ps = ed["4ps_vela_idx"]
+
+    ahora_dt_4ps = EST.localize(datetime.strptime(vela_actual["datetime"], "%Y-%m-%d %H:%M:%S"))
+    techo_4ps    = calcular_techo_canal(simbolo, ahora_dt_4ps)
+    piso_4ps, mitad_4ps = calcular_piso_mitad_canal(simbolo, ahora_dt_4ps)
+
+    # Registrar low de esta vela en historial para verificacion slope
+    ed.setdefault("4ps_historial_lows", []).append((idx_4ps, v_low))
+
+    # Reset si precio sale del canal RCB
+    if techo_4ps and piso_4ps and (v_close > techo_4ps or v_close < piso_4ps):
+        ed["4ps_activo"]          = False
+        ed["4ps_p1_low"]          = None
+        ed["4ps_p1_idx"]          = None
+        ed["4ps_p2_low"]          = None
+        ed["4ps_p2_idx"]          = None
+        ed["4ps_historial_lows"]  = []
+
+    # P1 se mueve si aparece low menor o igual (solo durante formacion - antes de tener P2)
+    elif v_low <= ed["4ps_p1_low"] and ed["4ps_p2_idx"] is None:
+        ed["4ps_p1_low"]         = v_low
+        ed["4ps_p1_idx"]         = idx_4ps
+        ed["4ps_p2_low"]         = None
+        ed["4ps_p2_idx"]         = None
+        ed["4ps_historial_lows"] = [(idx_4ps, v_low)]
+
+    elif ed["4ps_p2_idx"] is None:
+        distancia_4ps = idx_4ps - ed["4ps_p1_idx"]
+        historial_lows = ed.get("4ps_historial_lows", [])
+
+        proyeccion_rota = False
+        if distancia_4ps > 0:
+            slope_proyectado = (v_low - ed["4ps_p1_low"]) / distancia_4ps
+            for idx_h, low_h in historial_lows:
+                if idx_h <= ed["4ps_p1_idx"] or idx_h >= idx_4ps:
+                    continue
+                proy = ed["4ps_p1_low"] + slope_proyectado * (idx_h - ed["4ps_p1_idx"])
+                if low_h < proy:
+                    proyeccion_rota = True
+                    break
+
+        if proyeccion_rota:
+            ed["4ps_p1_low"]         = v_low
+            ed["4ps_p1_idx"]         = idx_4ps
+            ed["4ps_p2_low"]         = None
+            ed["4ps_p2_idx"]         = None
+            ed["4ps_historial_lows"] = [(idx_4ps, v_low)]
+            print(f"{simbolo} 4PASOS P1 reiniciado por ruptura de proyeccion: ${v_low:.2f} idx={idx_4ps}")
+        elif distancia_4ps >= 6:
+            if verificar_slope_4ps(ed["4ps_p1_low"], ed["4ps_p1_idx"], v_low, idx_4ps, historial_lows):
+                ed["4ps_p2_low"] = v_low
+                ed["4ps_p2_idx"] = idx_4ps
+                print(f"{simbolo} 4PASOS P2 fijado: ${v_low:.2f} idx={idx_4ps}")
+
+    # Con P2: evaluar ruptura o actualizacion
+    elif ed["4ps_p2_idx"] is not None:
+            slope_4ps  = (ed["4ps_p2_low"] - ed["4ps_p1_low"]) / (ed["4ps_p2_idx"] - ed["4ps_p1_idx"])
+            piso_slope = ed["4ps_p1_low"] + slope_4ps * (idx_4ps - ed["4ps_p1_idx"])
+
+            # Caso A — LOW (mecha) rompe slope pero CIERRE queda arriba → nuevo P2
+            if v_low < piso_slope and v_close >= piso_slope:
+                if verificar_slope_4ps(ed["4ps_p1_low"], ed["4ps_p1_idx"], v_low, idx_4ps, historial_lows):
+                    ed["4ps_p2_low"] = v_low
+                    ed["4ps_p2_idx"] = idx_4ps
+                    print(f"{simbolo} 4PASOS P2 actualizado por mecha: ${v_low:.2f} idx={idx_4ps}")
+
+            # Caso B — CIERRE rompe slope → SEÑAL PUT
+            elif v_roja and v_close < piso_slope:
+                # Determinar label: 🔥 si ruptura ocurre en 50% superior del canal RCB
+                label_4ps = "4PASOS"
+                extra_fuego = ""
+                if techo_4ps and piso_4ps and mitad_4ps:
+                    if v_close >= mitad_4ps:
+                        label_4ps  = "4PASOS 🔥"
+                        extra_fuego = f"<b>Zona:</b> 50% superior del canal — contexto de alta probabilidad\n"
+                ed["4ps_fired"]         = True
+                ed["4ps_ultima_senal"]  = ahora_dt_4ps.isoformat()
+                guardar_estado_dia()
+                ed["4ps_activo"]        = False
+                enviar_senal_con_botones(
+                    simbolo, f"{label_4ps} — RUPTURA SOPORTE ALCISTA",
+                    f"{hora_vela+1}:00 EST", v_close, "PUT",
+                    f"<b>P1:</b> ${ed['4ps_p1_low']:.2f} | <b>P2:</b> ${ed['4ps_p2_low']:.2f}\n"
+                    f"<b>Soporte:</b> ${piso_slope:.2f} | <b>Cierre:</b> ${v_close:.2f}\n"
+                    f"{extra_fuego}"
+                    f"<b>Techo RCB:</b> ${techo_4ps:.2f}\n"
+                )
+
+            # Caso C — LOW mayor que P2 actual → P2 sube (tendencia alcista continua)
+            elif v_low > ed["4ps_p2_low"]:
+                if verificar_slope_4ps(ed["4ps_p1_low"], ed["4ps_p1_idx"], v_low, idx_4ps, historial_lows):
+                    ed["4ps_p2_low"] = v_low
+                    ed["4ps_p2_idx"] = idx_4ps
+
+
 def evaluar_activo(simbolo, velas, ahora):
     ed = estado_dia[simbolo]
     c  = canal[simbolo]
@@ -1371,101 +1475,7 @@ def evaluar_activo(simbolo, velas, ahora):
     evaluar_pm40_v2_v7(simbolo, ed, c, v_high, v_close, v_alcista, hora_vela)
 
     # 4PASOS — V2-V7
-    if c["on"] and not c["apagado"] and c["p3"] is not None and ed["4ps_activo"] and not ed["4ps_fired"]:
-        ed["4ps_vela_idx"] += 1
-        idx_4ps = ed["4ps_vela_idx"]
-
-        ahora_dt_4ps = EST.localize(datetime.strptime(vela_actual["datetime"], "%Y-%m-%d %H:%M:%S"))
-        techo_4ps    = calcular_techo_canal(simbolo, ahora_dt_4ps)
-        piso_4ps, mitad_4ps = calcular_piso_mitad_canal(simbolo, ahora_dt_4ps)
-
-        # Registrar low de esta vela en historial para verificacion slope
-        ed.setdefault("4ps_historial_lows", []).append((idx_4ps, v_low))
-
-        # Reset si precio sale del canal RCB
-        if techo_4ps and piso_4ps and (v_close > techo_4ps or v_close < piso_4ps):
-            ed["4ps_activo"]          = False
-            ed["4ps_p1_low"]          = None
-            ed["4ps_p1_idx"]          = None
-            ed["4ps_p2_low"]          = None
-            ed["4ps_p2_idx"]          = None
-            ed["4ps_historial_lows"]  = []
-
-        # P1 se mueve si aparece low menor o igual (solo durante formacion - antes de tener P2)
-        elif v_low <= ed["4ps_p1_low"] and ed["4ps_p2_idx"] is None:
-            ed["4ps_p1_low"]         = v_low
-            ed["4ps_p1_idx"]         = idx_4ps
-            ed["4ps_p2_low"]         = None
-            ed["4ps_p2_idx"]         = None
-            ed["4ps_historial_lows"] = [(idx_4ps, v_low)]
-
-        elif ed["4ps_p2_idx"] is None:
-            distancia_4ps = idx_4ps - ed["4ps_p1_idx"]
-            historial_lows = ed.get("4ps_historial_lows", [])
-
-            proyeccion_rota = False
-            if distancia_4ps > 0:
-                slope_proyectado = (v_low - ed["4ps_p1_low"]) / distancia_4ps
-                for idx_h, low_h in historial_lows:
-                    if idx_h <= ed["4ps_p1_idx"] or idx_h >= idx_4ps:
-                        continue
-                    proy = ed["4ps_p1_low"] + slope_proyectado * (idx_h - ed["4ps_p1_idx"])
-                    if low_h < proy:
-                        proyeccion_rota = True
-                        break
-
-            if proyeccion_rota:
-                ed["4ps_p1_low"]         = v_low
-                ed["4ps_p1_idx"]         = idx_4ps
-                ed["4ps_p2_low"]         = None
-                ed["4ps_p2_idx"]         = None
-                ed["4ps_historial_lows"] = [(idx_4ps, v_low)]
-                print(f"{simbolo} 4PASOS P1 reiniciado por ruptura de proyeccion: ${v_low:.2f} idx={idx_4ps}")
-            elif distancia_4ps >= 6:
-                if verificar_slope_4ps(ed["4ps_p1_low"], ed["4ps_p1_idx"], v_low, idx_4ps, historial_lows):
-                    ed["4ps_p2_low"] = v_low
-                    ed["4ps_p2_idx"] = idx_4ps
-                    print(f"{simbolo} 4PASOS P2 fijado: ${v_low:.2f} idx={idx_4ps}")
-
-        # Con P2: evaluar ruptura o actualizacion
-        elif ed["4ps_p2_idx"] is not None:
-                slope_4ps  = (ed["4ps_p2_low"] - ed["4ps_p1_low"]) / (ed["4ps_p2_idx"] - ed["4ps_p1_idx"])
-                piso_slope = ed["4ps_p1_low"] + slope_4ps * (idx_4ps - ed["4ps_p1_idx"])
-
-                # Caso A — LOW (mecha) rompe slope pero CIERRE queda arriba → nuevo P2
-                if v_low < piso_slope and v_close >= piso_slope:
-                    if verificar_slope_4ps(ed["4ps_p1_low"], ed["4ps_p1_idx"], v_low, idx_4ps, historial_lows):
-                        ed["4ps_p2_low"] = v_low
-                        ed["4ps_p2_idx"] = idx_4ps
-                        print(f"{simbolo} 4PASOS P2 actualizado por mecha: ${v_low:.2f} idx={idx_4ps}")
-
-                # Caso B — CIERRE rompe slope → SEÑAL PUT
-                elif v_roja and v_close < piso_slope:
-                    # Determinar label: 🔥 si ruptura ocurre en 50% superior del canal RCB
-                    label_4ps = "4PASOS"
-                    extra_fuego = ""
-                    if techo_4ps and piso_4ps and mitad_4ps:
-                        if v_close >= mitad_4ps:
-                            label_4ps  = "4PASOS 🔥"
-                            extra_fuego = f"<b>Zona:</b> 50% superior del canal — contexto de alta probabilidad\n"
-                    ed["4ps_fired"]         = True
-                    ed["4ps_ultima_senal"]  = ahora_dt_4ps.isoformat()
-                    guardar_estado_dia()
-                    ed["4ps_activo"]        = False
-                    enviar_senal_con_botones(
-                        simbolo, f"{label_4ps} — RUPTURA SOPORTE ALCISTA",
-                        f"{hora_vela+1}:00 EST", v_close, "PUT",
-                        f"<b>P1:</b> ${ed['4ps_p1_low']:.2f} | <b>P2:</b> ${ed['4ps_p2_low']:.2f}\n"
-                        f"<b>Soporte:</b> ${piso_slope:.2f} | <b>Cierre:</b> ${v_close:.2f}\n"
-                        f"{extra_fuego}"
-                        f"<b>Techo RCB:</b> ${techo_4ps:.2f}\n"
-                    )
-
-                # Caso C — LOW mayor que P2 actual → P2 sube (tendencia alcista continua)
-                elif v_low > ed["4ps_p2_low"]:
-                    if verificar_slope_4ps(ed["4ps_p1_low"], ed["4ps_p1_idx"], v_low, idx_4ps, historial_lows):
-                        ed["4ps_p2_low"] = v_low
-                        ed["4ps_p2_idx"] = idx_4ps
+    evaluar_4pasos_v2_v7(simbolo, ed, c, vela_actual, v_low, v_close, v_roja, hora_vela)
 
     print(f"{simbolo} V{hora_vela-8} {hora_vela+1}:00 — O:{v_open:.2f} C:{v_close:.2f} | RPG:{ed['rpg_activo']} GNA:{ed['gna_activo']} GBA:{ed['gba_activo']} PM40:{ed['pm40_activo']} 4PS:{ed['4ps_activo']}")
 
