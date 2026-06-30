@@ -40,7 +40,8 @@ server._axis_market.actualizar_velas_local = lambda *a, **k: None
 # ── 3-5. Cargar velas y filtrar por fecha ────────────────────────────────────
 
 def cargar_velas_bt(symbol, fecha):
-    """Lee data/bt_velas_<SYMBOL>.json y retorna velas <= fecha, newest-first."""
+    """Lee data/bt_velas_<SYMBOL>.json y retorna velas <= fecha, newest-first.
+    Limitado a 50 velas para igualar producción (get_velas outputsize=50)."""
     path = f"data/bt_velas_{symbol}.json"
     try:
         with open(path) as f:
@@ -52,8 +53,8 @@ def cargar_velas_bt(symbol, fecha):
     # Filtrar velas hasta la fecha objetivo (inclusive) para no contaminar
     # el contexto con datos futuros al evaluar fechas históricas.
     filtradas = [v for v in todas if v["datetime"][:10] <= fecha]
-    # get_velas() devuelve newest-first; bt_velas ya viene en ese orden.
-    return filtradas
+    # Producción usa get_velas(outputsize=50) — igualamos aquí (BT-005).
+    return filtradas[:50]
 
 
 def velas_del_dia(velas, fecha):
