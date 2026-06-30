@@ -12,6 +12,8 @@ import json
 import sys
 from datetime import datetime
 
+import requests
+
 # ── 1. Importar server (el motor real) ──────────────────────────────────────
 import server
 
@@ -36,6 +38,33 @@ server.guardar_ordenes                   = lambda *a, **k: None
 server.guardar_portfolio                 = lambda *a, **k: None
 # Evita HTTP a Tradier al llamar get_velas() internamente
 server._axis_market.actualizar_velas_local = lambda *a, **k: None
+
+# ── Canal snapshot ───────────────────────────────────────────────────────────
+
+def cargar_canal_snapshot(symbol):
+    # Snapshot actual de producción — NO es reconstrucción histórica.
+    # El canal refleja el estado de HOY. Para fechas anteriores a p1["fecha"]
+    # los resultados de RCB/CNF/4PASOS pueden ser históricamente incorrectos.
+    try:
+        r = requests.get(
+            "https://web-production-bf9d0.up.railway.app/canal_estado",
+            timeout=5
+        )
+        data = r.json()
+        c = data.get(symbol)
+        if not c or not c.get("on"):
+            return  # canal off o ausente → dejar canal_vacio(), correcto
+        server.canal[symbol]["on"]             = c["on"]
+        server.canal[symbol]["apagado"]        = c.get("apagado", False)
+        server.canal[symbol]["p1"]             = c.get("p1")
+        server.canal[symbol]["p2"]             = c.get("p2")
+        server.canal[symbol]["p3"]             = c.get("p3")
+        server.canal[symbol]["p2_actual_high"] = c["p2"]["high"] if c.get("p2") else None
+        server.canal[symbol]["roto"]           = c.get("roto", False)
+        server.canal[symbol]["fecha_ruptura"]  = c.get("fecha_ruptura")
+    except Exception as e:
+        print(f"[bt] canal_snapshot fallo {symbol}: {e} — usando canal_vacio", file=sys.stderr)
+
 
 # ── 3-5. Cargar velas y filtrar por fecha ────────────────────────────────────
 
@@ -86,6 +115,8 @@ def evaluar_dia(symbol, fecha):
 
     # Forzar reset diario para que el día empiece limpio
     server.estado_dia[symbol] = server.estado_diario_vacio()
+
+    cargar_canal_snapshot(symbol)
 
     velas = cargar_velas_bt(symbol, fecha)
     if not velas:
