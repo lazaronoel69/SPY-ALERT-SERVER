@@ -1191,6 +1191,54 @@ def evaluar_pm40_v2_v7(simbolo, ed, c, v_high, v_close, v_alcista, hora_vela):
                         else:
                             guardar_canales()
 
+def evaluar_4pasos_v1(simbolo, ed, c, vela_actual, v_low, ahora):
+    """AX-017: extraida de evaluar_activo() sin cambiar comportamiento.
+    Contiene EXACTAMENTE el bloque 4PASOS en la rama V1 (verificacion de
+    espera 24h, zona valida P1, inicializacion/actualizacion de p1_low/p2_low
+    e historial de lows)."""
+    if not (c["on"] and not c["apagado"] and c["p3"] is not None and not ed["4ps_fired"]):
+        return
+
+    ultima_senal = ed.get("4ps_ultima_senal")
+    _4ps_en_espera = False
+    if ultima_senal:
+        try:
+            from datetime import datetime as _dt2
+            ts_ultima = _dt2.fromisoformat(ultima_senal)
+            if ts_ultima.tzinfo is None:
+                ts_ultima = EST.localize(ts_ultima)
+            _4ps_en_espera = (ahora - ts_ultima).total_seconds() < 86400
+        except:
+            pass
+
+    if not _4ps_en_espera:
+        ed["4ps_vela_idx"] = 1
+        ahora_dt_4ps_v1 = EST.localize(datetime.strptime(vela_actual["datetime"], "%Y-%m-%d %H:%M:%S"))
+        techo_v1_4ps, piso_v1_4ps = calcular_techo_canal(simbolo, ahora_dt_4ps_v1), None
+        piso_v1_4ps, mitad_v1_4ps = calcular_piso_mitad_canal(simbolo, ahora_dt_4ps_v1)
+        zona_p1_valida = False
+        if techo_v1_4ps and piso_v1_4ps and mitad_v1_4ps:
+            zona_max_p1 = mitad_v1_4ps + (techo_v1_4ps - piso_v1_4ps) * 0.85 / 2
+            zona_p1_valida = piso_v1_4ps <= v_low <= zona_max_p1
+
+        if zona_p1_valida:
+            if not ed["4ps_activo"]:
+                ed["4ps_activo"]         = True
+                ed["4ps_p1_low"]         = v_low
+                ed["4ps_p1_idx"]         = 1
+                ed["4ps_p2_low"]         = None
+                ed["4ps_p2_idx"]         = None
+                ed["4ps_historial_lows"] = [(1, v_low)]
+            elif v_low <= ed["4ps_p1_low"]:
+                ed["4ps_p1_low"]         = v_low
+                ed["4ps_p1_idx"]         = 1
+                ed["4ps_p2_low"]         = None
+                ed["4ps_p2_idx"]         = None
+                ed["4ps_historial_lows"] = [(1, v_low)]
+            else:
+                ed.setdefault("4ps_historial_lows", []).append((1, v_low))
+
+
 def evaluar_activo(simbolo, velas, ahora):
     ed = estado_dia[simbolo]
     c  = canal[simbolo]
@@ -1248,47 +1296,7 @@ def evaluar_activo(simbolo, velas, ahora):
         evaluar_pm40_v1(simbolo, ed, c, velas, v_high)
 
         # 4PASOS en V1
-        if c["on"] and not c["apagado"] and c["p3"] is not None and not ed["4ps_fired"]:
-            # Verificar 24 horas de espera post-senal
-            ultima_senal = ed.get("4ps_ultima_senal")
-            _4ps_en_espera = False
-            if ultima_senal:
-                try:
-                    from datetime import datetime as _dt2
-                    ts_ultima = _dt2.fromisoformat(ultima_senal)
-                    if ts_ultima.tzinfo is None:
-                        ts_ultima = EST.localize(ts_ultima)
-                    _4ps_en_espera = (ahora - ts_ultima).total_seconds() < 86400
-                except:
-                    pass
-
-            if not _4ps_en_espera:
-                ed["4ps_vela_idx"] = 1
-                # Verificar zona valida P1: desde piso hasta 85% sobre la media
-                ahora_dt_4ps_v1 = EST.localize(datetime.strptime(vela_actual["datetime"], "%Y-%m-%d %H:%M:%S"))
-                techo_v1_4ps, piso_v1_4ps = calcular_techo_canal(simbolo, ahora_dt_4ps_v1), None
-                piso_v1_4ps, mitad_v1_4ps = calcular_piso_mitad_canal(simbolo, ahora_dt_4ps_v1)
-                zona_p1_valida = False
-                if techo_v1_4ps and piso_v1_4ps and mitad_v1_4ps:
-                    zona_max_p1 = mitad_v1_4ps + (techo_v1_4ps - piso_v1_4ps) * 0.85 / 2
-                    zona_p1_valida = piso_v1_4ps <= v_low <= zona_max_p1
-
-                if zona_p1_valida:
-                    if not ed["4ps_activo"]:
-                        ed["4ps_activo"]         = True
-                        ed["4ps_p1_low"]         = v_low
-                        ed["4ps_p1_idx"]         = 1
-                        ed["4ps_p2_low"]         = None
-                        ed["4ps_p2_idx"]         = None
-                        ed["4ps_historial_lows"] = [(1, v_low)]
-                    elif v_low <= ed["4ps_p1_low"]:
-                        ed["4ps_p1_low"]         = v_low
-                        ed["4ps_p1_idx"]         = 1
-                        ed["4ps_p2_low"]         = None
-                        ed["4ps_p2_idx"]         = None
-                        ed["4ps_historial_lows"] = [(1, v_low)]
-                    else:
-                        ed.setdefault("4ps_historial_lows", []).append((1, v_low))
+        evaluar_4pasos_v1(simbolo, ed, c, vela_actual, v_low, ahora)
 
         return
 
