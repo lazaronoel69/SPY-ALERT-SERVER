@@ -1,6 +1,7 @@
 """
-AXIS Backtest Engine — BT-002 Minimal Harness
+AXIS Backtest Engine v1 — Completo
 Reutiliza evaluar_activo() del motor real sin duplicar lógica.
+Mide outcomes como proxy direccional del subyacente — NO P&L real de opciones.
 Ver docs/AXIS-2.0/08-BACKTEST-DESIGN.md para diseño completo.
 
 Uso:
@@ -93,6 +94,116 @@ def velas_del_dia(velas, fecha):
     return dia
 
 
+# ── Outcome proxy — NO usa precios de opciones ───────────────────────────────
+
+def medir_outcome(señal, dia_velas, N=4):
+    """Movimiento del subyacente en las N velas siguientes a la señal.
+    PROXY DIRECCIONAL — no equivale a P&L real de opciones."""
+    entrada = señal["precio"]
+    tipo    = señal["tipo"]
+    try:
+        ahora_hour = int(señal["hora_label"].split(":")[0])
+    except Exception:
+        ahora_hour = 0
+    vela_hora = ahora_hour - 1  # hora de inicio de la vela evaluada
+
+    velas_restantes = [
+        v for v in dia_velas
+        if int(v["datetime"][11:13]) > vela_hora
+    ]
+    velas_usadas = velas_restantes[:N]
+    n_real = len(velas_usadas)
+
+    if n_real == 0:
+        return {
+            "mov_favorable_max_pct": None,
+            "mov_adverso_max_pct":   None,
+            "acierto":               None,
+            "n_velas_outcome":       0,
+            "precio_cierre_outcome": None,
+        }
+
+    if tipo == "CALL":
+        fav = max((float(v["high"]) - entrada) / entrada * 100 for v in velas_usadas)
+        adv = max((entrada - float(v["low"]))  / entrada * 100 for v in velas_usadas)
+    else:  # PUT
+        fav = max((entrada - float(v["low"]))  / entrada * 100 for v in velas_usadas)
+        adv = max((float(v["high"]) - entrada) / entrada * 100 for v in velas_usadas)
+
+    return {
+        "mov_favorable_max_pct": round(fav, 3),
+        "mov_adverso_max_pct":   round(adv, 3),
+        "acierto":               fav > adv,
+        "n_velas_outcome":       n_real,
+        "precio_cierre_outcome": float(velas_usadas[-1]["close"]),
+    }
+
+
+def calcular_metricas(signals):
+    """Métricas agregadas proxy sobre la lista de señales con outcome."""
+    con_outcome = [s for s in signals if s.get("acierto") is not None]
+    total    = len(signals)
+    n_out    = len(con_outcome)
+
+    if n_out == 0:
+        return {
+            "total_señales":       total,
+            "señales_con_outcome": 0,
+            "tasa_acierto":        None,
+            "mov_favorable_avg":   None,
+            "mov_adverso_avg":     None,
+            "expectancy_proxy":    None,
+            "por_estrategia":      {},
+        }
+
+    aciertos = [s for s in con_outcome if s["acierto"]]
+    fallos   = [s for s in con_outcome if not s["acierto"]]
+    tasa     = len(aciertos) / n_out * 100
+
+    fav_avg = (sum(s["mov_favorable_max_pct"] for s in aciertos) / len(aciertos)
+               if aciertos else 0.0)
+    adv_avg = (sum(s["mov_adverso_max_pct"]   for s in fallos)   / len(fallos)
+               if fallos   else 0.0)
+    expectancy = round((tasa / 100) * fav_avg - (1 - tasa / 100) * adv_avg, 4)
+
+    est_data = {}
+    for s in con_outcome:
+        e = est_data.setdefault(s["estrategia"], {
+            "señales": 0, "aciertos": 0,
+            "fav_sum": 0.0, "n_fav": 0,
+            "adv_sum": 0.0, "n_adv": 0,
+        })
+        e["señales"] += 1
+        if s["acierto"]:
+            e["aciertos"] += 1
+            e["fav_sum"]  += s["mov_favorable_max_pct"]
+            e["n_fav"]    += 1
+        else:
+            e["adv_sum"] += s["mov_adverso_max_pct"]
+            e["n_adv"]   += 1
+
+    por_estrategia = {
+        est: {
+            "señales":           e["señales"],
+            "aciertos":          e["aciertos"],
+            "tasa_acierto":      round(e["aciertos"] / e["señales"] * 100, 1),
+            "mov_favorable_avg": round(e["fav_sum"] / e["n_fav"], 3) if e["n_fav"] else None,
+            "mov_adverso_avg":   round(e["adv_sum"] / e["n_adv"], 3) if e["n_adv"] else None,
+        }
+        for est, e in est_data.items()
+    }
+
+    return {
+        "total_señales":       total,
+        "señales_con_outcome": n_out,
+        "tasa_acierto":        round(tasa, 1),
+        "mov_favorable_avg":   round(fav_avg, 3),
+        "mov_adverso_avg":     round(adv_avg, 3),
+        "expectancy_proxy":    expectancy,
+        "por_estrategia":      por_estrategia,
+    }
+
+
 # ── 6. Loop de evaluación ────────────────────────────────────────────────────
 
 # V1 empieza a las 09:30 (hour=9); preparar_contexto_vela busca dt.hour == ahora.hour - 1.
@@ -145,6 +256,9 @@ def evaluar_dia(symbol, fecha):
 
     señales_capturadas = _bt_signals[señales_antes:]
 
+    for señal in señales_capturadas:
+        señal.update(medir_outcome(señal, dia))
+
     return {
         "symbol":          symbol,
         "date":            fecha,
@@ -162,6 +276,7 @@ def main():
     args = parser.parse_args()
 
     resultado = evaluar_dia(args.symbol, args.date)
+    resultado["metricas"] = calcular_metricas(resultado.get("signals", []))
     print(json.dumps(resultado, indent=2, ensure_ascii=False))
 
 

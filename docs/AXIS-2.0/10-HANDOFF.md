@@ -2,60 +2,122 @@
 
 ## Estado actual
 
-Sistema en producción, estable, v8.84. AX-021 (Fix historial_lows) ejecutado — bug real de `NameError` latente en `evaluar_4pasos_v2_v7` corregido con una línea. Core Strategy Engine completo y limpio. AX-017 a AX-019 completados previamente (extracción de 4PASOS V1, 4PASOS V2-V7, Canal V2-V7).
+Sistema en producción, estable, v8.84. Backtest Engine v1 completo (BT-001 a BT-010).
+Core Strategy Engine intacto — cero cambios a server.py durante toda la fase de backtest.
 
 ## Cambio realizado en este sprint
 
-**Bug corregido:** En `evaluar_4pasos_v2_v7` (server.py), la variable `historial_lows` era definida solo en la rama `elif ed["4ps_p2_idx"] is None:` pero referenciada en la rama mutuamente excluyente `elif ed["4ps_p2_idx"] is not None:` (Casos A y C). Esto causaría `NameError` en producción al ejecutar Caso A (P2 actualizado por mecha) o Caso C (P2 sube con tendencia alcista), una vez que 4PASOS tiene P2 fijado.
+**Sprint BT-010 — Complete Backtest v1**
 
-**Fix:** Una sola línea agregada al inicio del bloque `elif ed["4ps_p2_idx"] is not None:`, línea 1309:
-```python
-historial_lows = ed.get("4ps_historial_lows", [])
+Agregadas a `backtest.py` dos funciones nuevas y 3 líneas de integración:
+
+- `medir_outcome(señal, dia_velas, N=4)` — calcula movimiento proxy del subyacente
+  en las N velas siguientes a la señal (misma sesión, sin cruzar día).
+  Retorna: `mov_favorable_max_pct`, `mov_adverso_max_pct`, `acierto`,
+  `n_velas_outcome`, `precio_cierre_outcome`.
+
+- `calcular_metricas(signals)` — agrega métricas sobre todas las señales del run:
+  `tasa_acierto`, `mov_favorable_avg`, `mov_adverso_avg`, `expectancy_proxy`,
+  desglose `por_estrategia`.
+
+- `evaluar_dia()` enriquece cada señal capturada con su outcome antes de retornar.
+- `main()` agrega `"metricas"` al JSON de salida.
+
+**Ningún cambio a server.py ni al Core.**
+
+## Definición de acierto proxy
+
+```
+CALL: acierto = max(v.high - entrada) > max(entrada - v.low)   en N velas
+PUT:  acierto = max(entrada - v.low)  > max(v.high - entrada)  en N velas
 ```
 
-Sin cambio de lógica. Sin cambio de comportamiento. Ninguna otra línea tocada.
+N=4 velas por defecto (mismo día, sin overnight). Parámetro configurable en `medir_outcome()`.
 
-## Análisis del bug
+## Validación con datos reales
 
-- Caso B (señal PUT) no usa `historial_lows` → nunca crasheó visiblemente
-- Casos A y C sí lo usan → `NameError` al intentar actualizar P2 post-fijación
-- El bug era latente porque 4PASOS requiere varias velas para llegar a P2 fijado, y los Casos A/C son condiciones específicas de precio — infrecuente pero real
+AAPL 2026-06-30 — GBA CALL — entrada=$286.97 — N=4 velas (V3..V6):
+- `mov_favorable_max_pct`: 0.840 (high=$289.38 en V3)
+- `mov_adverso_max_pct`:   0.122 (low=$286.62 en V3)
+- `acierto`: true
+- `expectancy_proxy`: 0.840
+
+## Limitaciones conocidas del Backtest v1
+
+**L1 — Canal no es histórico (la más importante)**
+`cargar_canal_snapshot()` fetches el estado actual de producción vía `/canal_estado`.
+No es reconstrucción histórica. Para fechas anteriores al `p1["fecha"]` del canal actual,
+las estrategias RCB/CNF/4PASOS y PM40 pueden producir resultados históricamente incorrectos.
+Días afectados por símbolo: SPY=22, AAPL=24, BA=8, GLD=0, NVDA=20, AMZN=18, GOOG=10, META=22.
+Las estrategias sin dependencia de canal (1VR, RPG, GNA, GBA) son 100% correctas.
+
+**L2 — Ventana de datos: 40 días (2026-05-04 a 2026-06-30)**
+Solo 8 símbolos, un archivo `data/bt_velas_<SYMBOL>.json` por símbolo.
+No comprometidos en git (excluidos via `.git/info/exclude`).
+
+**L3 — Métricas son PROXY, NO P&L real de opciones**
+Un acierto direccional (+0.84%) no equivale a rentabilidad del contrato.
+Las opciones tienen apalancamiento, theta, IV, y bid/ask spread que este proxy ignora.
+`expectancy_proxy` mide edge direccional, no retorno esperado en dólares.
+
+**L4 — N=4 mide solo el mismo día**
+Si el movimiento esperado ocurre la sesión siguiente, el proxy reporta fallo aunque el trade
+habría ganado. V7 puede tener N_real < 4 (pocas velas restantes).
+
+**L5 — Sin P&L real de opciones (v2 pendiente)**
+v2 requeriría historial de bid/ask de opciones o reconstrucción Black-Scholes.
+No disponible actualmente. Fuera de alcance.
 
 ## Archivos modificados en este sprint
 
-- **Modificado:** `server.py` — línea 1309, una línea agregada en `evaluar_4pasos_v2_v7`
+- **Modificado:** `backtest.py` — `medir_outcome()`, `calcular_metricas()`,
+  enriquecimiento en `evaluar_dia()`, `"metricas"` en `main()`
 - **Modificado:** `docs/AXIS-2.0/10-HANDOFF.md` (este archivo)
+
+## Historia de sprints de backtest
+
+| Sprint | Contenido |
+|---|---|
+| BT-001 | Diseño del Backtest Engine (`08-BACKTEST-DESIGN.md`) |
+| BT-002 | Harness mínimo: monkey-patches, loop V1→V7, JSON output |
+| BT-003 | Primera señal encontrada: AAPL 2026-06-30 GBA |
+| BT-004 | Audit de paridad vs producción → D1/D2/D3 identificados |
+| BT-005 | Fix D2: `filtradas[:50]` — paridad outputsize con producción |
+| BT-006 | Re-audit: D2 cerrado, D1 pendiente, D3 cerrado |
+| BT-007 | Diseño del fix D1 (canal snapshot vía HTTP) |
+| BT-008 | Fix D1: `cargar_canal_snapshot()` desde `/canal_estado` |
+| BT-009 | Audit final de paridad — todos los divergencias cerradas |
+| BT-010 | Outcome proxy + métricas agregadas — Backtest v1 completo |
 
 ## Último commit antes de este sprint
 
-0a82b16 — AX-020 Core Readiness Audit
+a236681 — BT-008 Load channel snapshot
 
 ## Rama
 
 main
 
-## Sprint activo
-
-AX-021 — Fix historial_lows (este sprint)
-
 ## Próximos sprints sugeridos
 
-Según `07-CORE-READINESS-AUDIT.md`:
-- **AX-022** (P1) — Stop-loss automático por posición: cerrar si `pl_pct_actual < -60%`
-- **AX-023** (P1) — Límite máximo de posiciones abiertas simultáneas
-- **AX-024** (P2) — Endpoint `/metricas` automático por estrategia
-- **AX-025** (P2) — Cierre parcial al 50% de ganancia
+### Backtest (continuación opcional)
+- **BT-011** — Runner multi-día: iterar sobre rango de fechas, agregar métricas
+  acumuladas. Solo loop en `main()`, sin tocar `evaluar_dia()`.
+- **BT-012** — Runner multi-símbolo: iterar sobre los 8 símbolos, comparar estrategias.
 
-## Riesgos abiertos
+### Gestión de riesgo (P1, según `07-CORE-READINESS-AUDIT.md`)
+- **AX-022** — Stop-loss automático por posición (`pl_pct_actual < -60%`)
+- **AX-023** — Límite máximo de posiciones abiertas simultáneas
 
-R1 (P1 CRÍTICO): Sin reglas de riesgo de capital — sin stop-loss ni límite de posiciones. Ver `07-CORE-READINESS-AUDIT.md`.
+## Riesgos abiertos en producción
+
+R1 (P1 CRÍTICO): Sin reglas de riesgo de capital — sin stop-loss ni límite de posiciones.
 R3 (P1): GTC fijo a 2x sin trailing stop.
 R4 (P2): Señal duplicada posible en redeploy entre V7 anticipada y V7 real.
-R5 (RESUELTO en AX-021): `historial_lows` indefinido en rama `p2 is not None`.
 
 ## Notas para quien continúe
 
-- Leer siempre `07-CORE-READINESS-AUDIT.md` para prioridades P1/P2/P3 actuales
-- Preferir heredocs (`python3 << 'EOF' ... EOF`) sobre `python3 -c "..."` para pruebas con comillas anidadas
-- Tras cada deploy: revisar logs de Railway con `railway logs --tail 200`, y verificar `/status` al menos 2 veces espaciadas varios minutos
-- El Core Strategy Engine está completo — los próximos sprints son de gestión de riesgo, no de extracción
+- `python3 backtest.py --symbol AAPL --date 2026-06-30` — comando de referencia
+- Los `data/bt_velas_*.json` no están en git — deben descargarse del endpoint `/velas`
+- El Core Strategy Engine está completo y sin tocar — no modificar sin sprint explícito
+- Preferir heredocs (`python3 << 'EOF' ... EOF`) sobre `python3 -c "..."` para pruebas con comillas
+- Tras cada deploy: `railway logs --tail 200` y verificar `/status` al menos 2 veces
