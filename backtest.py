@@ -5,7 +5,10 @@ Mide outcomes como proxy direccional del subyacente — NO P&L real de opciones.
 Ver docs/AXIS-2.0/08-BACKTEST-DESIGN.md para diseño completo.
 
 Uso:
-  python3 backtest.py --symbol SPY --date 2026-06-30
+  python3 backtest.py --symbol SPY --date 2026-06-30           # single day
+  python3 backtest.py --all-symbols                            # todos, todos los días
+  python3 backtest.py --all-symbols --start 2026-06-01 --end 2026-06-30
+  python3 backtest.py --symbol AAPL --start 2026-06-01 --end 2026-06-30
 """
 
 import argparse
@@ -14,6 +17,8 @@ import sys
 from datetime import datetime
 
 import requests
+
+SYMBOLS = ["SPY", "AAPL", "BA", "GLD", "NVDA", "AMZN", "GOOG", "META"]
 
 # ── 1. Importar server (el motor real) ──────────────────────────────────────
 import server
@@ -41,30 +46,34 @@ server.guardar_portfolio                 = lambda *a, **k: None
 server._axis_market.actualizar_velas_local = lambda *a, **k: None
 
 # ── Canal snapshot ───────────────────────────────────────────────────────────
+_canal_raw = None  # cacheado una vez por proceso — evita N llamadas HTTP en multi-día
 
 def cargar_canal_snapshot(symbol):
     # Snapshot actual de producción — NO es reconstrucción histórica.
     # El canal refleja el estado de HOY. Para fechas anteriores a p1["fecha"]
     # los resultados de RCB/CNF/4PASOS pueden ser históricamente incorrectos.
-    try:
-        r = requests.get(
-            "https://web-production-bf9d0.up.railway.app/canal_estado",
-            timeout=5
-        )
-        data = r.json()
-        c = data.get(symbol)
-        if not c or not c.get("on"):
-            return  # canal off o ausente → dejar canal_vacio(), correcto
-        server.canal[symbol]["on"]             = c["on"]
-        server.canal[symbol]["apagado"]        = c.get("apagado", False)
-        server.canal[symbol]["p1"]             = c.get("p1")
-        server.canal[symbol]["p2"]             = c.get("p2")
-        server.canal[symbol]["p3"]             = c.get("p3")
-        server.canal[symbol]["p2_actual_high"] = c["p2"]["high"] if c.get("p2") else None
-        server.canal[symbol]["roto"]           = c.get("roto", False)
-        server.canal[symbol]["fecha_ruptura"]  = c.get("fecha_ruptura")
-    except Exception as e:
-        print(f"[bt] canal_snapshot fallo {symbol}: {e} — usando canal_vacio", file=sys.stderr)
+    global _canal_raw
+    if _canal_raw is None:
+        try:
+            r = requests.get(
+                "https://web-production-bf9d0.up.railway.app/canal_estado",
+                timeout=5
+            )
+            _canal_raw = r.json()
+        except Exception as e:
+            _canal_raw = {}
+            print(f"[bt] canal_snapshot fallo: {e} — usando canal_vacio para todos", file=sys.stderr)
+    c = _canal_raw.get(symbol)
+    if not c or not c.get("on"):
+        return  # canal off o ausente → dejar canal_vacio(), correcto
+    server.canal[symbol]["on"]             = c["on"]
+    server.canal[symbol]["apagado"]        = c.get("apagado", False)
+    server.canal[symbol]["p1"]             = c.get("p1")
+    server.canal[symbol]["p2"]             = c.get("p2")
+    server.canal[symbol]["p3"]             = c.get("p3")
+    server.canal[symbol]["p2_actual_high"] = c["p2"]["high"] if c.get("p2") else None
+    server.canal[symbol]["roto"]           = c.get("roto", False)
+    server.canal[symbol]["fecha_ruptura"]  = c.get("fecha_ruptura")
 
 
 # ── 3-5. Cargar velas y filtrar por fecha ────────────────────────────────────
@@ -204,6 +213,61 @@ def calcular_metricas(signals):
     }
 
 
+# ── Multi-día / multi-símbolo ────────────────────────────────────────────────
+
+def fechas_disponibles(symbol, start=None, end=None):
+    """Fechas únicas en bt_velas_<SYMBOL>.json, filtradas por rango."""
+    path = f"data/bt_velas_{symbol}.json"
+    try:
+        with open(path) as f:
+            todas = json.load(f)
+    except FileNotFoundError:
+        return []
+    fechas = sorted(set(v["datetime"][:10] for v in todas))
+    if start:
+        fechas = [f for f in fechas if f >= start]
+    if end:
+        fechas = [f for f in fechas if f <= end]
+    return fechas
+
+
+def run_multi(symbols, start, end):
+    """Runner multi-día multi-símbolo. Reutiliza evaluar_dia() sin duplicar lógica."""
+    all_signals = []
+    total_dias  = 0
+
+    for symbol in symbols:
+        for fecha in fechas_disponibles(symbol, start, end):
+            resultado = evaluar_dia(symbol, fecha)
+            all_signals.extend(resultado.get("signals", []))
+            total_dias += 1
+
+    resumen = calcular_metricas(all_signals)
+    resumen["total_dias"] = total_dias
+
+    por_simbolo = {}
+    for sym in symbols:
+        sym_sigs = [s for s in all_signals if s["simbolo"] == sym]
+        if sym_sigs:
+            m = calcular_metricas(sym_sigs)
+            por_simbolo[sym] = {
+                "total_señales":    m["total_señales"],
+                "tasa_acierto":     m["tasa_acierto"],
+                "expectancy_proxy": m["expectancy_proxy"],
+            }
+        else:
+            por_simbolo[sym] = {"total_señales": 0, "tasa_acierto": None, "expectancy_proxy": None}
+    resumen["por_simbolo"] = por_simbolo
+
+    return {
+        "simbolos": symbols,
+        "start":    start,
+        "end":      end,
+        "resumen":  resumen,
+        "signals":  all_signals,
+    }
+
+
 # ── 6. Loop de evaluación ────────────────────────────────────────────────────
 
 # V1 empieza a las 09:30 (hour=9); preparar_contexto_vela busca dt.hour == ahora.hour - 1.
@@ -271,13 +335,32 @@ def evaluar_dia(symbol, fecha):
 
 def main():
     parser = argparse.ArgumentParser(description="AXIS Backtest Engine v1")
-    parser.add_argument("--symbol", required=True, help="Símbolo, ej. SPY")
-    parser.add_argument("--date",   required=True, help="Fecha YYYY-MM-DD")
+    parser.add_argument("--symbol",      help="Símbolo, ej. SPY")
+    parser.add_argument("--date",        help="Fecha YYYY-MM-DD (single-day mode)")
+    parser.add_argument("--all-symbols", action="store_true",
+                        help=f"Todos los símbolos: {', '.join(SYMBOLS)}")
+    parser.add_argument("--start",       help="Fecha inicio YYYY-MM-DD")
+    parser.add_argument("--end",         help="Fecha fin YYYY-MM-DD")
     args = parser.parse_args()
 
-    resultado = evaluar_dia(args.symbol, args.date)
-    resultado["metricas"] = calcular_metricas(resultado.get("signals", []))
-    print(json.dumps(resultado, indent=2, ensure_ascii=False))
+    use_multi = args.all_symbols or args.start or args.end
+
+    if not use_multi:
+        # Comportamiento original — single symbol, single date
+        if not args.symbol or not args.date:
+            parser.error("--symbol y --date son requeridos (o usar --all-symbols / --start / --end)")
+        resultado = evaluar_dia(args.symbol, args.date)
+        resultado["metricas"] = calcular_metricas(resultado.get("signals", []))
+        print(json.dumps(resultado, indent=2, ensure_ascii=False))
+    else:
+        symbols = SYMBOLS if args.all_symbols else ([args.symbol] if args.symbol else SYMBOLS)
+        pool    = []
+        for sym in symbols:
+            pool.extend(fechas_disponibles(sym))
+        start = args.start or (min(pool) if pool else "2000-01-01")
+        end   = args.end   or (max(pool) if pool else "2099-12-31")
+        resultado = run_multi(symbols, start, end)
+        print(json.dumps(resultado, indent=2, ensure_ascii=False))
 
 
 if __name__ == "__main__":
