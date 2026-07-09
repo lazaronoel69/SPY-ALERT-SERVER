@@ -12,6 +12,7 @@
 | **Backtest** | BT-001 → BT-011 COMPLETED |
 | **Producción** | Running (Railway) |
 | **Último fix** | AX-FIX-002 — "EN FORMACIÓN" UI bug resolved |
+| **AX-TUNE-001A** | Iniciado — reporte diario de señales (`tools/daily_signal_review.py`) |
 | **Known Issues** | None blocking |
 
 ### Open Limitations
