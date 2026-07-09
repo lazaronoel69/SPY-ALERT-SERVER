@@ -2,7 +2,9 @@
 
 **Fecha:** 2026-06-30
 **Sprint:** BT-001
-**Estado:** Solo diseño. Sin código, sin módulos Python, sin cambios a producción.
+**Estado:** DISEÑO COMPLETADO. Implementación en `backtest.py` — BT-001 → BT-011 COMPLETE.
+
+> Backtest v1 STATUS: COMPLETE. Ver `10-HANDOFF.md` para resultados y métricas.
 
 ---
 

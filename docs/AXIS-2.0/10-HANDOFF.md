@@ -1,32 +1,68 @@
 # AXIS 2.0 — HANDOFF
 
-## Estado actual
+---
 
-Sistema en producción, estable, v8.84. **Backtest Engine v1 COMPLETO** (BT-001 a BT-011).
-Core Strategy Engine intacto — cero cambios a server.py durante toda la fase de backtest.
+## PROJECT STATUS
 
-## Cambio realizado en este sprint
+| Campo | Valor |
+|---|---|
+| **Estado** | PRODUCTION STABLE |
+| **Versión milestone** | v8.85 Stable Baseline |
+| **Core** | Frozen |
+| **Backtest** | BT-001 → BT-011 COMPLETED |
+| **Producción** | Running (Railway) |
+| **Último fix** | AX-FIX-002 — "EN FORMACIÓN" UI bug resolved |
+| **Known Issues** | None blocking |
 
-**Sprint BT-011 — Multi-day Multi-symbol Runner**
+### Open Limitations
 
-Completada la última pieza del Backtest Engine v1. Cambios en `backtest.py`:
+- **L1** — Canal snapshot no histórico: `cargar_canal_snapshot()` usa el estado actual de producción, no reconstrucción histórica. Afecta estrategias RCB/CNF/4PASOS en backtest.
+- **L2** — Outcome proxy: métricas de backtest miden movimiento direccional del subyacente, no P&L real de opciones.
+- **L3** — Datos históricos limitados a 40 días (2026-05-04 → 2026-06-30).
 
-- `SYMBOLS` — lista de los 8 símbolos del sistema
-- `_canal_raw` — cache de la respuesta HTTP de `/canal_estado` (1 llamada por proceso,
-  no 1 por día; elimina ~312 llamadas redundantes en run completo)
-- `fechas_disponibles(symbol, start, end)` — extrae fechas únicas del archivo local
-  `bt_velas_<SYMBOL>.json` filtradas por rango
-- `run_multi(symbols, start, end)` — runner principal; itera símbolos × fechas llamando
-  exactamente `evaluar_dia()` sin duplicar lógica; agrega métricas globales + por_simbolo
-- `main()` extendido con `--all-symbols`, `--start`, `--end`; modo single-day intacto
+---
 
-**Ningún cambio a server.py ni al Core.**
+## NEXT ROADMAP
 
-## Modos de uso
+| Sprint | Nombre | Estado |
+|---|---|---|
+| **AX-UI-001** | High Visibility Theme | COMPLETED |
+| **AX-TUNE-001** | Production Signal Review | PENDING |
+| **AX-TUNE-002** | Evidence-based Strategy Improvements | PENDING |
+| **AX-BT-012** | Historical Channel Reconstruction | FUTURE |
+
+### AX-TUNE-001 — Production Signal Review
+Revisar señales reales disparadas en producción (últimas 4-6 semanas). Identificar patrones de falsos positivos por estrategia. Input requerido para AX-TUNE-002.
+
+### AX-TUNE-002 — Evidence-based Strategy Improvements
+Toda mejora a parámetros de estrategia debe basarse en datos de AX-TUNE-001 o resultados de Backtest. Sin cambios subjetivos.
+
+### AX-BT-012 — Historical Channel Reconstruction
+Requiere historial de P1/P2 por fecha. Fuera de alcance hasta tener ese historial disponible.
+
+---
+
+## ENGINEERING RULES
+
+1. **Ninguna estrategia se modifica sin evidencia.** Toda modificación requiere revisión de señales reales (AX-TUNE-001) o resultados de Backtest verificados.
+2. **Toda modificación requiere revisión de señales reales o Backtest.** No se aceptan cambios basados en intuición o preferencia.
+3. **No hacer refactors innecesarios.** Si el código funciona en producción y no hay bug documentado, no se toca.
+4. **No tocar Core sin autorización explícita.** `evaluar_activo()` y todas las funciones de estrategia son off-limits sin sprint explícito y aprobado.
+5. **Mantener `server.py` como fuente única del motor.** La lógica de estrategia vive ahí y solo ahí. No duplicar en backtest, frontend ni módulos auxiliares.
+
+---
+
+## BACKTEST ENGINE v1
+
+**STATUS: COMPLETE**
+
+Sprint BT-001 → BT-011. El motor de backtest reutiliza `evaluar_activo()` sin duplicar lógica.
+
+### Uso
 
 ```bash
-# Single day (comportamiento original)
-python3 backtest.py --symbol AAPL --date 2026-06-30
+# Single day
+python3 backtest.py --symbol SPY --date 2026-06-30
 
 # Todos los símbolos, todos los días disponibles
 python3 backtest.py --all-symbols
@@ -38,9 +74,9 @@ python3 backtest.py --all-symbols --start 2026-06-01 --end 2026-06-30
 python3 backtest.py --symbol AAPL --start 2026-06-01 --end 2026-06-30
 ```
 
-## Resultados del run completo (8 símbolos × 40 días = 320 días)
+### Resultados del run completo (8 símbolos × 40 días = 320 días)
 
-Run: 2026-05-04 a 2026-06-30, todos los símbolos.
+Run: 2026-05-04 a 2026-06-30.
 
 | Métrica | Valor |
 |---|---|
@@ -76,76 +112,54 @@ Run: 2026-05-04 a 2026-06-30, todos los símbolos.
 | BA | 33 | 42.4% | -0.239 |
 | GOOG | 28 | 44.4% | -0.271 |
 
-> **AVISO:** Estas métricas son PROXY DIRECCIONAL del subyacente. No equivalen a P&L real
-> de opciones. El apalancamiento, theta, IV y bid/ask spread no están modelados.
-> Una tasa de acierto del 50% no implica breakeven real.
+> **AVISO:** Métricas son PROXY DIRECCIONAL del subyacente. No equivalen a P&L real de opciones.
 
-## Limitaciones conocidas del Backtest v1
-
-**L1 — Canal no es histórico (la más importante)**
-`cargar_canal_snapshot()` usa el estado actual de producción vía `/canal_estado` (cacheado
-una vez por proceso). No es reconstrucción histórica. Días afectados por símbolo:
-SPY=22, AAPL=24, BA=8, GLD=0, NVDA=20, AMZN=18, GOOG=10, META=22.
-Estrategias sin canal (1VR, RPG, GNA, GBA) son 100% correctas históricamente.
-
-**L2 — Ventana de datos: 40 días (2026-05-04 a 2026-06-30)**
-8 símbolos. Archivos `data/bt_velas_*.json` no están en git (excluidos en `.git/info/exclude`).
-
-**L3 — Métricas son PROXY, NO P&L real de opciones**
-Expectancy_proxy mide edge direccional del subyacente, no retorno en dólares de contratos.
-
-**L4 — N=4 mide solo el mismo día**
-Si el movimiento ocurre la sesión siguiente, el proxy reporta fallo aunque el trade ganara.
-V7 puede tener N_real < 4.
-
-**L5 — Sin P&L real de opciones (v2 pendiente)**
-Requeriría historial de bid/ask o reconstrucción Black-Scholes. Fuera de alcance v1.
-
-## Historia de sprints de backtest
+### Historia de sprints
 
 | Sprint | Contenido |
 |---|---|
 | BT-001 | Diseño del Backtest Engine (`08-BACKTEST-DESIGN.md`) |
 | BT-002 | Harness mínimo: monkey-patches, loop V1→V7, JSON output |
 | BT-003 | Primera señal encontrada: AAPL 2026-06-30 GBA |
-| BT-004 | Audit de paridad vs producción → D1/D2/D3 identificados |
+| BT-004 | Audit de paridad vs producción — D1/D2/D3 identificados |
 | BT-005 | Fix D2: `filtradas[:50]` — paridad outputsize con producción |
 | BT-006 | Re-audit: D2 cerrado, D1 pendiente, D3 cerrado |
 | BT-007 | Diseño del fix D1 (canal snapshot vía HTTP) |
 | BT-008 | Fix D1: `cargar_canal_snapshot()` desde `/canal_estado` |
-| BT-009 | Audit final de paridad — todos los divergencias cerradas |
+| BT-009 | Audit final de paridad — todas las divergencias cerradas |
 | BT-010 | Outcome proxy + métricas agregadas |
-| BT-011 | Multi-day multi-symbol runner — **Backtest v1 COMPLETO** |
+| BT-011 | Multi-day multi-symbol runner — **Backtest v1 COMPLETE** |
 
-## Archivos modificados en este sprint
+---
 
-- **Modificado:** `backtest.py` — SYMBOLS, canal cache, fechas_disponibles, run_multi, main()
-- **Modificado:** `docs/AXIS-2.0/10-HANDOFF.md` (este archivo)
+## UI FIXES
+
+| Sprint | Fix | Estado |
+|---|---|---|
+| AX-FIX-002 | "EN FORMACIÓN" label aparecía en última vela completa | RESOLVED — commit `478e553` |
+| AX-UI-001 | High Visibility Chart Theme | COMPLETED — commit `31cf336` |
+
+---
+
+## RIESGOS ABIERTOS EN PRODUCCIÓN
+
+| ID | Prioridad | Descripción |
+|---|---|---|
+| R1 | P1 CRÍTICO | Sin stop-loss automático — posición puede caer indefinidamente |
+| R3 | P1 | GTC fijo a 2x sin trailing stop |
+| R4 | P2 | Señal duplicada posible en redeploy entre V7 anticipada y V7 real |
+
+---
+
+## NOTAS PARA QUIEN CONTINÚE
+
+- `python3 backtest.py --all-symbols` — run completo de referencia
+- Los `data/bt_velas_*.json` no están en git — descargar del endpoint `/velas` si se necesitan
+- El Core Strategy Engine está completo y sin tocar
+- Tras cada deploy: verificar `/status` al menos 2 veces
+- `--workers 1` en gunicorn es load-bearing — no cambiar sin rediseñar persistencia de estado
+- `axis_bitacora.html` fetch usa paths relativos — solo funciona servida por Flask
 
 ## Rama
 
 main
-
-## Próximos sprints sugeridos
-
-### Gestión de riesgo (P1, prioridad máxima)
-- **AX-022** — Stop-loss automático por posición (`pl_pct_actual < -60%`)
-- **AX-023** — Límite máximo de posiciones abiertas simultáneas
-
-### Backtest (mejoras opcionales)
-- **BT-012** — Actualizar datos: descargar velas más recientes vía `/velas?simbolo=X&outputsize=N`
-- **BT-013** — Reconstrucción histórica del canal (requiere historial de P1/P2 por fecha)
-
-## Riesgos abiertos en producción
-
-R1 (P1 CRÍTICO): Sin reglas de riesgo de capital — sin stop-loss ni límite de posiciones.
-R3 (P1): GTC fijo a 2x sin trailing stop.
-R4 (P2): Señal duplicada posible en redeploy entre V7 anticipada y V7 real.
-
-## Notas para quien continúe
-
-- `python3 backtest.py --all-symbols` — run completo de referencia
-- Los `data/bt_velas_*.json` no están en git — descargar del endpoint `/velas` si se necesitan
-- El Core Strategy Engine está completo y sin tocar — no modificar sin sprint explícito
-- Preferir heredocs (`python3 << 'EOF' ... EOF`) sobre `python3 -c "..."` para pruebas con comillas
-- Tras cada deploy: `railway logs --tail 200` y verificar `/status` al menos 2 veces
