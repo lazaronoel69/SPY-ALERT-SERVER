@@ -3261,12 +3261,77 @@ def enviar_resumen_diario(ahora):
         print(f"Error enviar_resumen_diario: {e}")
 
 # ═══════════════════════════════════════════════════════════
-# AX-TUNE-001B — Daily Debrief
+# AX-TUNE-001B — Daily Debrief  /  AX-FOCUS-001 — Focus Engine
 # ═══════════════════════════════════════════════════════════
 _CALL_TIPOS_DB = {"GNA", "GBA"}
 
 def _tipo_corto_db(tipo):
     return (tipo or "").rstrip("+0123456789")
+
+# AX-FOCUS-001: pesos por tipo de anomalía (0 = nunca afecta prioridad por señal)
+_FOCUS_WEIGHTS = {
+    "CONFLICTO_DIRECCION":   100,
+    "MULTIPLES_ESTRATEGIAS":  80,
+    "SEÑAL_TARDIA":           60,
+    "SIMBOLO_SOBREACTIVO":    40,
+    "ESTRATEGIA_DOMINANTE":    0,
+}
+
+def calcular_focus_scores(señales, anomalias):
+    """
+    Post-proceso puro: asigna score a cada señal según las anomalías que la afectan.
+    No toca estrategias ni lógica de disparo.
+    Retorna hasta 3 señales con score > 0, ordenadas por score desc.
+    """
+    scores   = [0]   * len(señales)
+    motivos  = [[] for _ in señales]
+    acciones = ["SIN_ACCION"] * len(señales)
+
+    for a in anomalias:
+        w = _FOCUS_WEIGHTS.get(a.get("tipo", ""), 0)
+        if w == 0:
+            continue
+        accion = a.get("accion_recomendada", "SIN_ACCION")
+        for idx, s in enumerate(señales):
+            aplica = False
+            tipo_a = a.get("tipo", "")
+            if tipo_a in ("CONFLICTO_DIRECCION", "MULTIPLES_ESTRATEGIAS"):
+                aplica = (s["simbolo"] == a.get("simbolo") and
+                          (s.get("vela") or "?") == (a.get("vela") or "?"))
+            elif tipo_a == "SIMBOLO_SOBREACTIVO":
+                aplica = s["simbolo"] == a.get("simbolo")
+            elif tipo_a == "SEÑAL_TARDIA":
+                aplica = (s["simbolo"] == a.get("simbolo") and
+                          s.get("vela") == a.get("vela") and
+                          s.get("tipo") in (a.get("estrategias") or []))
+            if aplica:
+                scores[idx] += w
+                motivos[idx].append(a.get("motivo_corto", ""))
+                if accion == "REVISAR_GRAFICO":
+                    acciones[idx] = "REVISAR_GRAFICO"
+                elif accion == "MONITOREAR" and acciones[idx] == "SIN_ACCION":
+                    acciones[idx] = "MONITOREAR"
+
+    ranked = []
+    for idx, s in enumerate(señales):
+        if scores[idx] <= 0:
+            continue
+        sc = scores[idx]
+        if sc >= 100:   est = 5
+        elif sc >= 80:  est = 4
+        elif sc >= 60:  est = 3
+        elif sc >= 40:  est = 2
+        else:           est = 1
+        ranked.append({
+            **s,
+            "focus_score":    sc,
+            "focus_estrellas": est,
+            "focus_motivos":  list(dict.fromkeys(m for m in motivos[idx] if m)),
+            "focus_accion":   acciones[idx],
+        })
+
+    ranked.sort(key=lambda x: -x["focus_score"])
+    return ranked[:3]
 
 def construir_debrief_data(fecha=None):
     """Payload completo del debrief para una fecha (default: hoy)."""
@@ -3332,6 +3397,7 @@ def construir_debrief_data(fecha=None):
     por_estrategia = dict(sorted(por_estrategia.items(), key=lambda x: -len(x[1])))
     por_simbolo    = {k: v for k, v in por_simbolo.items() if v}
 
+    anomalias_list = detectar_anomalias_db(señales, por_simbolo, por_estrategia)
     return {
         "fecha":          fecha,
         "total_señales":  len(señales),
@@ -3340,7 +3406,8 @@ def construir_debrief_data(fecha=None):
         "señales":        señales,
         "por_estrategia": por_estrategia,
         "por_simbolo":    por_simbolo,
-        "anomalias":      detectar_anomalias_db(señales, por_simbolo, por_estrategia),
+        "anomalias":      anomalias_list,
+        "focus":          calcular_focus_scores(señales, anomalias_list),
     }
 
 def detectar_anomalias_db(señales, por_simbolo, por_estrategia):

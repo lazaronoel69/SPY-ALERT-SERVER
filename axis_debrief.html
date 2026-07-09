@@ -105,6 +105,22 @@
 
   .empty { color:var(--dim); font-size:12px; padding:8px 0; }
 
+  .focus-item {
+    display:flex; gap:16px; padding:14px 0;
+    border-bottom:1px solid rgba(33,38,45,0.8);
+  }
+  .focus-item:last-child { border-bottom:none; }
+  .focus-stars { font-size:18px; flex-shrink:0; min-width:90px; color:var(--cyan); letter-spacing:1px; }
+  .focus-body  { flex:1; min-width:0; }
+  .focus-title { font-size:14px; font-weight:700; color:var(--text); margin-bottom:4px; }
+  .focus-meta  { font-size:11px; color:var(--dim); margin-bottom:6px; }
+  .focus-motivo { font-size:12px; color:var(--text); margin-bottom:4px; }
+  .focus-motivo-det { font-size:11px; color:var(--dim); }
+  .focus-accion { display:inline-block; margin-top:6px; font-size:10px; font-weight:700;
+                  letter-spacing:1px; padding:2px 9px; border-radius:3px;
+                  background:rgba(88,166,255,0.12); color:var(--cyan);
+                  border:1px solid rgba(88,166,255,0.3); }
+
   #toast {
     position:fixed; bottom:20px; right:20px; padding:10px 18px;
     background:var(--accent); color:#000; border-radius:6px;
@@ -173,9 +189,15 @@
   <div id="anomalias"></div>
 </div>
 
-<!-- Lista completa -->
+<!-- HOY REVISA PRIMERO (Focus Engine) -->
+<div class="card full" id="cardFocus" style="margin-bottom:16px;display:none;border-color:rgba(88,166,255,0.35);background:rgba(88,166,255,0.04)">
+  <h2 style="color:var(--cyan)">HOY REVISA PRIMERO</h2>
+  <div id="focusItems"></div>
+</div>
+
+<!-- Todas las demás señales -->
 <div class="card full">
-  <h2>Lista completa de señales</h2>
+  <h2 id="listaHeader">Lista completa de señales</h2>
   <table>
     <thead><tr><th>Símbolo</th><th>Tipo</th><th>Dir</th><th>Vela</th><th>Hora</th><th>Label</th></tr></thead>
     <tbody id="tbSeñales"><tr><td colspan="6" class="empty">Cargando…</td></tr></tbody>
@@ -292,7 +314,43 @@ function render(d) {
     }).join('');
   }
 
-  // Lista completa
+  // HOY REVISA PRIMERO (AX-FOCUS-001)
+  const focus = d.focus || [];
+  const cardFocus = document.getElementById('cardFocus');
+  const focusItems = document.getElementById('focusItems');
+  const listaHeader = document.getElementById('listaHeader');
+  const ACCION_BADGE = {
+    'REVISAR_GRAFICO': 'Revisar gráfico',
+    'MONITOREAR':      'Monitorear',
+    'SIN_ACCION':      'Sin acción',
+  };
+  if (focus.length === 0) {
+    cardFocus.style.display = 'none';
+    listaHeader.textContent = 'Lista completa de señales';
+  } else {
+    cardFocus.style.display = 'block';
+    listaHeader.textContent = 'Todas las demás señales';
+    focusItems.innerHTML = focus.map(f => {
+      const est  = f.focus_estrellas || 1;
+      const stars = '★'.repeat(est) + '☆'.repeat(5 - est);
+      const dir  = esCall(f.tipo)
+        ? '<span class="tag call" style="font-size:10px">CALL</span>'
+        : '<span class="tag put"  style="font-size:10px">PUT</span>';
+      const motivos = (f.focus_motivos || []).join(' · ') || '—';
+      const accionTxt = ACCION_BADGE[f.focus_accion] || f.focus_accion || '—';
+      return `<div class="focus-item">
+        <div class="focus-stars">${stars}</div>
+        <div class="focus-body">
+          <div class="focus-title">${f.simbolo} ${dir} — ${fmt(f.tipo)}</div>
+          <div class="focus-meta">${fmt(f.vela)} &nbsp;|&nbsp; ${fmt(f.hora)}</div>
+          <div class="focus-motivo">${motivos}</div>
+          <span class="focus-accion">${accionTxt}</span>
+        </div>
+      </div>`;
+    }).join('');
+  }
+
+  // Lista completa de señales
   const señales = d.señales || [];
   const tbS = document.getElementById('tbSeñales');
   if (señales.length === 0) {
