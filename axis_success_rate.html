@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AXIS — Success Rate</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Bebas+Neue&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:      #080b0f;
+    --surface: #0d1117;
+    --border:  #21262d;
+    --accent:  #f0b429;
+    --green:   #3fb950;
+    --red:     #f85149;
+    --cyan:    #58a6ff;
+    --text:    #c9d1d9;
+    --dim:     #6e7681;
+    --mono:    'JetBrains Mono', monospace;
+    --disp:    'Bebas Neue', sans-serif;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:var(--bg); color:var(--text); font-family:var(--mono);
+         min-height:100vh; padding:20px; }
+
+  header {
+    display:flex; align-items:center; gap:16px;
+    padding:12px 20px; background:var(--surface);
+    border:1px solid var(--border); border-radius:8px; margin-bottom:20px;
+  }
+  .logo { font-family:var(--disp); font-size:24px; letter-spacing:3px; color:var(--accent); }
+  .logo small { display:block; font-family:var(--mono); font-size:10px; color:var(--dim); letter-spacing:1px; }
+  .btn {
+    padding:5px 14px; border:1px solid var(--border); background:transparent;
+    color:var(--dim); font-family:var(--mono); font-size:11px; font-weight:600;
+    cursor:pointer; border-radius:4px; transition:all 0.15s; letter-spacing:0.5px;
+    text-decoration:none; display:inline-block;
+  }
+  .btn:hover { border-color:var(--accent); color:var(--text); }
+  .nav-links { display:flex; gap:8px; margin-left:auto; }
+
+  .card {
+    background:var(--surface); border:1px solid var(--border);
+    border-radius:8px; padding:20px; margin-bottom:16px;
+  }
+  .card h2 {
+    font-size:11px; color:var(--dim); letter-spacing:2px; text-transform:uppercase;
+    margin-bottom:16px; font-weight:600;
+  }
+
+  /* KPI general */
+  .kpi-row { display:flex; gap:24px; flex-wrap:wrap; }
+  .kpi { }
+  .kpi .val { font-size:32px; font-weight:700; color:var(--accent);
+              font-family:var(--disp); letter-spacing:2px; line-height:1; }
+  .kpi .lbl { font-size:10px; color:var(--dim); letter-spacing:1px; margin-top:3px; }
+  .divider  { width:1px; background:var(--border); align-self:stretch; }
+
+  .dec-row { display:flex; gap:20px; flex-wrap:wrap; }
+  .dec-item { }
+  .dec-item .dval { font-size:22px; font-weight:700; font-family:var(--disp); letter-spacing:1px; }
+  .dec-item .dlbl { font-size:10px; color:var(--dim); letter-spacing:1px; margin-top:2px; }
+  .dec-item.keep    .dval { color:var(--green); }
+  .dec-item.tune    .dval { color:var(--accent); }
+  .dec-item.invest  .dval { color:var(--red); }
+
+  /* Tables */
+  table { width:100%; border-collapse:collapse; font-size:12px; }
+  th {
+    color:var(--dim); font-size:10px; letter-spacing:1px; text-transform:uppercase;
+    padding:7px 10px; border-bottom:1px solid var(--border); text-align:left;
+    font-weight:600; white-space:nowrap;
+  }
+  th.num, td.num { text-align:right; }
+  td { padding:7px 10px; border-bottom:1px solid rgba(33,38,45,0.6); }
+  tr:last-child td { border-bottom:none; }
+  tr:hover td { background:rgba(255,255,255,0.02); }
+
+  .est-name { font-weight:700; color:var(--text); }
+  .pct-keep   { color:var(--green); font-weight:600; }
+  .pct-tune   { color:var(--accent); font-weight:600; }
+  .pct-invest { color:var(--red);   font-weight:600; }
+  .stars-val  { color:var(--accent); }
+  .total-val  { color:var(--dim); }
+
+  /* Bar for keep% */
+  .bar-cell { min-width:80px; }
+  .bar-wrap { height:4px; background:rgba(255,255,255,0.06); border-radius:2px; margin-top:4px; }
+  .bar-fill-k { height:100%; background:var(--green); border-radius:2px; }
+
+  /* Stars display */
+  .stars-disp { color:var(--accent); letter-spacing:1px; }
+
+  .empty-msg {
+    text-align:center; padding:40px 20px; color:var(--dim);
+    font-size:13px; line-height:2;
+  }
+  .empty-msg a { color:var(--cyan); text-decoration:none; }
+  .empty-msg a:hover { text-decoration:underline; }
+
+  .data-note { font-size:10px; color:var(--dim); margin-top:12px; text-align:right; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">AXIS <small>SUCCESS RATE</small></div>
+  <div class="nav-links">
+    <a href="/journal" class="btn">Journal</a>
+    <a href="/daily_debrief" class="btn">Debrief</a>
+    <a href="/" class="btn">Home</a>
+  </div>
+</header>
+
+<!-- General -->
+<div class="card" id="cardGeneral">
+  <h2>Resumen general</h2>
+  <div id="general"><div style="color:var(--dim);font-size:12px">Cargando…</div></div>
+</div>
+
+<!-- Por estrategia -->
+<div class="card">
+  <h2>Por estrategia</h2>
+  <div id="porEstrategia"><div style="color:var(--dim);font-size:12px">Cargando…</div></div>
+</div>
+
+<!-- Por símbolo -->
+<div class="card">
+  <h2>Por símbolo</h2>
+  <div id="porSimbolo"><div style="color:var(--dim);font-size:12px">Cargando…</div></div>
+</div>
+
+<script>
+const RAILWAY = 'https://web-production-bf9d0.up.railway.app';
+
+function stars(avg) {
+  const full  = Math.round(avg);
+  return '★'.repeat(Math.min(full, 5)) + '☆'.repeat(Math.max(0, 5 - full));
+}
+
+function fmt1(n) { return typeof n === 'number' ? n.toFixed(1) : '—'; }
+
+async function cargar() {
+  try {
+    const r = await fetch(`${RAILWAY}/success_rate/data`);
+    const d = await r.json();
+    render(d);
+  } catch(e) {
+    document.getElementById('general').innerHTML =
+      `<div style="color:var(--red);font-size:12px">Error: ${e.message}</div>`;
+  }
+}
+
+function render(d) {
+  const total = d.total || 0;
+
+  // ── General ────────────────────────────────────────────────
+  if (total === 0) {
+    document.getElementById('general').innerHTML = `
+      <div class="empty-msg">
+        Sin revisiones todavía.<br>
+        <a href="/journal">→ Abrir Signal Journal para registrar la primera</a>
+      </div>`;
+    document.getElementById('porEstrategia').innerHTML = '';
+    document.getElementById('porSimbolo').innerHTML = '';
+    return;
+  }
+
+  const avgStars = d.avg_estrellas || 0;
+  document.getElementById('general').innerHTML = `
+    <div class="kpi-row" style="margin-bottom:20px">
+      <div class="kpi">
+        <div class="val">${total}</div>
+        <div class="lbl">REVISADAS</div>
+      </div>
+      <div class="divider"></div>
+      <div class="kpi">
+        <div class="val" style="color:var(--text)">${stars(avgStars)}</div>
+        <div class="lbl">PROMEDIO ${fmt1(avgStars)} ESTRELLAS</div>
+      </div>
+    </div>
+    <div class="dec-row">
+      <div class="dec-item keep">
+        <div class="dval">${d.keep || 0} <span style="font-size:14px">(${fmt1(d.keep_pct)}%)</span></div>
+        <div class="dlbl">KEEP</div>
+      </div>
+      <div class="dec-item tune">
+        <div class="dval">${d.tune || 0} <span style="font-size:14px">(${fmt1(d.tune_pct)}%)</span></div>
+        <div class="dlbl">TUNE</div>
+      </div>
+      <div class="dec-item invest">
+        <div class="dval">${d.investigate || 0} <span style="font-size:14px">(${fmt1(d.invest_pct)}%)</span></div>
+        <div class="dlbl">INVESTIGATE</div>
+      </div>
+    </div>
+    <div class="data-note">Fuente: /data/axis_journal.json · ${total} entrada${total !== 1 ? 's' : ''}</div>
+  `;
+
+  // ── Por estrategia ─────────────────────────────────────────
+  const ests = d.por_estrategia || [];
+  if (ests.length === 0) {
+    document.getElementById('porEstrategia').innerHTML =
+      '<div style="color:var(--dim);font-size:12px">Sin datos.</div>';
+  } else {
+    const maxKeep = Math.max(1, ...ests.map(e => e.keep_pct));
+    document.getElementById('porEstrategia').innerHTML = `
+      <table>
+        <thead>
+          <tr>
+            <th>Estrategia</th>
+            <th class="num">Total</th>
+            <th class="num">KEEP %</th>
+            <th class="num">TUNE %</th>
+            <th class="num">INV %</th>
+            <th class="num">Avg ★</th>
+            <th class="bar-cell"></th>
+          </tr>
+        </thead>
+        <tbody>
+          ${ests.map(e => `
+            <tr>
+              <td class="est-name">${e.estrategia}</td>
+              <td class="num total-val">${e.total}</td>
+              <td class="num pct-keep">${fmt1(e.keep_pct)}%</td>
+              <td class="num pct-tune">${fmt1(e.tune_pct)}%</td>
+              <td class="num pct-invest">${fmt1(e.invest_pct)}%</td>
+              <td class="num stars-val">${stars(e.avg_estrellas)} <span style="color:var(--dim)">${fmt1(e.avg_estrellas)}</span></td>
+              <td class="bar-cell">
+                <div class="bar-wrap">
+                  <div class="bar-fill-k" style="width:${e.keep_pct / maxKeep * 100}%"></div>
+                </div>
+              </td>
+            </tr>`).join('')}
+        </tbody>
+      </table>`;
+  }
+
+  // ── Por símbolo ────────────────────────────────────────────
+  const syms = d.por_simbolo || [];
+  if (syms.length === 0) {
+    document.getElementById('porSimbolo').innerHTML =
+      '<div style="color:var(--dim);font-size:12px">Sin datos.</div>';
+  } else {
+    const maxKeepS = Math.max(1, ...syms.map(s => s.keep_pct));
+    document.getElementById('porSimbolo').innerHTML = `
+      <table>
+        <thead>
+          <tr>
+            <th>Símbolo</th>
+            <th class="num">Total</th>
+            <th class="num">KEEP %</th>
+            <th class="num">TUNE %</th>
+            <th class="num">INV %</th>
+            <th class="num">Avg ★</th>
+            <th class="bar-cell"></th>
+          </tr>
+        </thead>
+        <tbody>
+          ${syms.map(s => `
+            <tr>
+              <td class="est-name">${s.simbolo}</td>
+              <td class="num total-val">${s.total}</td>
+              <td class="num pct-keep">${fmt1(s.keep_pct)}%</td>
+              <td class="num pct-tune">${fmt1(s.tune_pct)}%</td>
+              <td class="num pct-invest">${fmt1(s.invest_pct)}%</td>
+              <td class="num stars-val">${stars(s.avg_estrellas)} <span style="color:var(--dim)">${fmt1(s.avg_estrellas)}</span></td>
+              <td class="bar-cell">
+                <div class="bar-wrap">
+                  <div class="bar-fill-k" style="width:${s.keep_pct / maxKeepS * 100}%"></div>
+                </div>
+              </td>
+            </tr>`).join('')}
+        </tbody>
+      </table>`;
+  }
+}
+
+cargar();
+</script>
+</body>
+</html>

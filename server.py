@@ -1791,6 +1791,16 @@ def home(path=""):
       <div class="title">Daily Debrief</div>
       <div class="desc">Hoy revisa primero &nbsp;•&nbsp; Señales del día &nbsp;•&nbsp; Root Cause</div>
     </a>
+    <a href="/journal" class="nav-card" style="border-color:#1a1a3a;">
+      <div class="icon">📓</div>
+      <div class="title">Signal Journal</div>
+      <div class="desc">Revisar &nbsp;•&nbsp; Calificar &nbsp;•&nbsp; Decidir</div>
+    </a>
+    <a href="/success_rate" class="nav-card" style="border-color:#0d2a1a;">
+      <div class="icon">✅</div>
+      <div class="title">Success Rate</div>
+      <div class="desc">Resultados históricos de revisiones</div>
+    </a>
     <a href="/derby" class="nav-card" style="border-color:#3d0000; grid-column: 1 / -1;">
       <div class="icon">🏇</div>
       <div class="title">REAL LAZARO-PALMA</div>
@@ -3889,6 +3899,72 @@ def journal_save():
         return jsonify({"ok": True, "total": len(data["entries"])}), 200
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
+
+# ═══════════════════════════════════════════════════════════
+# AX-TUNE-004 — Success Rate Engine v1
+# ═══════════════════════════════════════════════════════════
+
+@app.route("/success_rate", methods=["GET"])
+def serve_success_rate():
+    from flask import Response
+    html_path = os.path.join(os.path.dirname(__file__), "axis_success_rate.html")
+    if os.path.exists(html_path):
+        with open(html_path, "r") as f:
+            return Response(f.read(), mimetype="text/html")
+    return Response("<h1>axis_success_rate.html no encontrado</h1>", mimetype="text/html"), 404
+
+@app.route("/success_rate/data", methods=["GET"])
+def success_rate_data():
+    entries = cargar_journal().get("entries", [])
+    total   = len(entries)
+
+    def _pct(n, t):  return round(n / t * 100, 1) if t > 0 else 0
+    def _avg(group):
+        vals = [e.get("calificacion", 3) for e in group if e.get("calificacion")]
+        return round(sum(vals) / len(vals), 2) if vals else 0.0
+    def _stats(group):
+        t   = len(group)
+        k   = sum(1 for e in group if e.get("decision") == "KEEP")
+        tu  = sum(1 for e in group if e.get("decision") == "TUNE")
+        inv = sum(1 for e in group if e.get("decision") == "INVESTIGATE")
+        return {
+            "total":        t,
+            "keep":         k,  "keep_pct":    _pct(k,   t),
+            "tune":         tu, "tune_pct":    _pct(tu,  t),
+            "investigate":  inv,"invest_pct":  _pct(inv, t),
+            "avg_estrellas": _avg(group),
+        }
+
+    # Por estrategia
+    por_est = {}
+    for e in entries:
+        por_est.setdefault(e.get("estrategia", "?"), []).append(e)
+    estrategias = [
+        {"estrategia": k, **_stats(v)}
+        for k, v in sorted(por_est.items(), key=lambda x: -len(x[1]))
+    ]
+
+    # Por símbolo
+    por_sym = {}
+    for e in entries:
+        por_sym.setdefault(e.get("simbolo", "?"), []).append(e)
+    simbolos = [
+        {"simbolo": k, **_stats(v)}
+        for k, v in sorted(por_sym.items(), key=lambda x: -len(x[1]))
+    ]
+
+    keep  = sum(1 for e in entries if e.get("decision") == "KEEP")
+    tune  = sum(1 for e in entries if e.get("decision") == "TUNE")
+    inv   = sum(1 for e in entries if e.get("decision") == "INVESTIGATE")
+    return jsonify({
+        "total":         total,
+        "keep":          keep,    "keep_pct":   _pct(keep, total),
+        "tune":          tune,    "tune_pct":   _pct(tune, total),
+        "investigate":   inv,     "invest_pct": _pct(inv,  total),
+        "avg_estrellas": _avg(entries),
+        "por_estrategia": estrategias,
+        "por_simbolo":    simbolos,
+    }), 200
 
 # ═══════════════════════════════════════════════════════════
 # SOURCE — expone archivos para lectura de AI
