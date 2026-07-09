@@ -157,6 +157,18 @@
   }
   #toast.show { opacity:1; }
   #toast.error { background:var(--red); color:#fff; }
+
+  /* Prefill context banner */
+  #prefillCtx {
+    display:none; background:rgba(88,166,255,0.06);
+    border:1px solid rgba(88,166,255,0.25); border-radius:6px;
+    padding:12px 14px; margin-bottom:18px; position:relative;
+  }
+  #prefillCtx .ctx-back { position:absolute; top:10px; right:12px;
+    font-size:10px; color:var(--cyan); text-decoration:none; font-weight:600; }
+  #prefillCtx .ctx-back:hover { text-decoration:underline; }
+  #prefillCtx .ctx-signal { font-size:15px; font-weight:700; margin-bottom:5px; }
+  #prefillCtx .ctx-meta   { font-size:11px; color:var(--dim); line-height:1.6; }
 </style>
 </head>
 <body>
@@ -173,8 +185,12 @@
 
   <!-- ── FORM ── -->
   <div class="card">
-    <h2>Nueva revisión</h2>
+    <h2 id="formTitle">Nueva revisión</h2>
 
+    <!-- Context banner (visible solo cuando se llega desde REVISAR) -->
+    <div id="prefillCtx"></div>
+
+    <div id="prefillFields">
     <div class="form-row-2">
       <div class="form-row" style="margin-bottom:0">
         <label>Fecha</label>
@@ -242,6 +258,8 @@
       <label>Motivo (Root Cause)</label>
       <input type="text" id="fMotivo" placeholder="ej. Señal tardía GOOG V7" maxlength="280">
     </div>
+
+    </div><!-- /prefillFields -->
 
     <div class="form-row">
       <label>Calificación</label>
@@ -367,8 +385,12 @@ async function guardar() {
     const d = await r.json();
     if (d.ok) {
       showToast(`✓ Guardado — ${d.total} entrada${d.total !== 1 ? 's' : ''} en el journal`);
-      limpiarForm();
-      cargarEntries();
+      if (new URLSearchParams(window.location.search).get('simbolo')) {
+        setTimeout(() => { window.location.href = '/journal'; }, 900);
+      } else {
+        limpiarForm();
+        cargarEntries();
+      }
     } else {
       showToast('Error: ' + (d.error || 'desconocido'), true);
     }
@@ -463,6 +485,57 @@ function showToast(msg, isError) {
   t.className = isError ? 'show error' : 'show';
   setTimeout(() => t.className = '', 3000);
 }
+
+// ── Prefill desde URL params (llega desde botón REVISAR del Debrief) ─────
+(function() {
+  const p = new URLSearchParams(window.location.search);
+  if (!p.get('simbolo')) return;
+
+  // Poblar inputs (permanecen en DOM aunque ocultos — guardar() los lee normal)
+  const set = (id, val) => {
+    if (!val) return;
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.value = val;
+  };
+  set('fFecha',      p.get('fecha')      || hoy);
+  set('fSimbolo',    p.get('simbolo'));
+  set('fEstrategia', p.get('estrategia'));
+  set('fDireccion',  p.get('direccion'));
+  set('fVela',       p.get('vela'));
+  set('fPrecio',     p.get('precio'));
+  set('fPrioridad',  p.get('prioridad') || 'NORMAL');
+  set('fMotivo',     p.get('motivo'));
+
+  // Ocultar campos ya rellenados
+  document.getElementById('prefillFields').style.display = 'none';
+
+  // Cambiar título
+  document.getElementById('formTitle').textContent = 'Calificación y decisión';
+
+  // Mostrar banner de contexto
+  const dir = (p.get('direccion') || '').toUpperCase();
+  const dirColor = dir === 'CALL' ? 'var(--green)' : dir === 'PUT' ? 'var(--red)' : 'var(--text)';
+  const metaParts = [
+    p.get('fecha') || hoy,
+    p.get('hora')  || null,
+    p.get('prioridad') && p.get('prioridad') !== 'NORMAL' ? 'prioridad ' + p.get('prioridad') : null,
+  ].filter(Boolean).join(' · ');
+  const motiDoc = p.get('motivo')
+    ? `<div class="ctx-meta" style="font-style:italic;margin-top:4px">${p.get('motivo')}</div>` : '';
+  document.getElementById('prefillCtx').innerHTML = `
+    <a href="/daily_debrief" class="ctx-back">← Debrief</a>
+    <div class="ctx-signal">
+      ${p.get('simbolo')}
+      <span style="color:var(--dim);font-size:13px"> ${p.get('estrategia') || ''}</span>
+      <span style="color:${dirColor}"> ${dir}</span>
+      <span style="color:var(--dim);font-size:13px"> ${p.get('vela') || ''}</span>
+    </div>
+    <div class="ctx-meta">${metaParts}</div>
+    ${motiDoc}
+  `;
+  document.getElementById('prefillCtx').style.display = 'block';
+})();
 
 // ── Init ───────────────────────────────────────────────────
 cargarEntries();
