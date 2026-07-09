@@ -1785,6 +1785,11 @@ def home(path=""):
       <div class="title">Bitácora</div>
       <div class="desc">Pendientes · Decisiones · Seguimiento</div>
     </a>
+    <a href="/daily_debrief" class="nav-card" style="border-color:#0d1a3a; grid-column: 1 / -1;">
+      <div class="icon">🎯</div>
+      <div class="title">Daily Debrief</div>
+      <div class="desc">Hoy revisa primero &nbsp;•&nbsp; Señales del día &nbsp;•&nbsp; Root Cause</div>
+    </a>
     <a href="/derby" class="nav-card" style="border-color:#3d0000; grid-column: 1 / -1;">
       <div class="icon">🏇</div>
       <div class="title">REAL LAZARO-PALMA</div>
