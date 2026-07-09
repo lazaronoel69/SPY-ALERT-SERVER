@@ -350,10 +350,10 @@ const ACTIVOS = ['SPY','AAPL','BA','GLD','NVDA','AMZN','GOOG','META'];
 
 // Colores
 const C = {
-  up:'#3fb950', dn:'#f85149', wick:'#484f58',
+  up:'#3fb950', dn:'#f85149', wick:'#8b949e',
   sma:{ 20:'#f0b429', 40:'#e05c1a', 100:'#58a6ff', 200:'#bc8cff' },
-  grid:'rgba(255,255,255,0.05)', gridH:'rgba(255,255,255,0.08)',
-  dayLine:'rgba(240,180,41,0.3)', dayLabel:'#484f58',
+  grid:'rgba(255,255,255,0.10)', gridH:'rgba(255,255,255,0.18)',
+  dayLine:'rgba(240,180,41,0.55)', dayLabel:'#8b949e',
   forming:'rgba(88,166,255,0.6)',
 };
 
@@ -1461,10 +1461,10 @@ function render() {
     const y  = yOf(p);
     ctx.beginPath();
     ctx.moveTo(M.left, y); ctx.lineTo(W-M.right, y);
-    ctx.strokeStyle = 'rgba(255,255,255,0.05)';
+    ctx.strokeStyle = C.grid;
     ctx.lineWidth = 1; ctx.stroke();
-    ctx.fillStyle = '#484f58';
-    ctx.font = '10px JetBrains Mono';
+    ctx.fillStyle = '#8b949e';
+    ctx.font = '11px JetBrains Mono';
     ctx.textAlign = 'left';
     ctx.fillText('$'+p.toFixed(2), W-M.right+6, y+4);
   }
@@ -1501,7 +1501,7 @@ function render() {
       else ctx.lineTo(x,y);
     });
     ctx.strokeStyle = C.sma[period];
-    ctx.lineWidth = 1; ctx.stroke();
+    ctx.lineWidth = 1.5; ctx.stroke();
   });
 
   // ── Velas ──
@@ -1517,12 +1517,12 @@ function render() {
     ctx.beginPath();
     ctx.moveTo(x, yH); ctx.lineTo(x, yL);
     ctx.strokeStyle = isHovered ? color : C.wick;
-    ctx.lineWidth = 1; ctx.stroke();
+    ctx.lineWidth = 1.5; ctx.stroke();
 
     // Cuerpo
     const bodyY = Math.min(yO,yC);
     const bodyH = Math.max(1, Math.abs(yC-yO));
-    ctx.fillStyle = isHovered ? color : (sube ? C.up+'99' : C.dn+'99');
+    ctx.fillStyle = isHovered ? color : (sube ? C.up : C.dn);
     ctx.fillRect(x-velW/2, bodyY, velW, bodyH);
     if (isHovered) {
       ctx.strokeStyle = color;
@@ -1875,8 +1875,8 @@ function render() {
   }
 
   // ── Eje X (fechas) ──
-  ctx.fillStyle = '#484f58';
-  ctx.font = '10px JetBrains Mono';
+  ctx.fillStyle = '#8b949e';
+  ctx.font = '11px JetBrains Mono';
   ctx.textAlign = 'center';
   const paso = Math.ceil(visible.length/10);
   visible.forEach((v,i) => {
