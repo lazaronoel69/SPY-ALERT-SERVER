@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AXIS — Signal Journal</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Bebas+Neue&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:      #080b0f;
+    --surface: #0d1117;
+    --border:  #21262d;
+    --accent:  #f0b429;
+    --green:   #3fb950;
+    --red:     #f85149;
+    --cyan:    #58a6ff;
+    --text:    #c9d1d9;
+    --dim:     #6e7681;
+    --mono:    'JetBrains Mono', monospace;
+    --disp:    'Bebas Neue', sans-serif;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:var(--bg); color:var(--text); font-family:var(--mono);
+         min-height:100vh; padding:20px; }
+
+  header {
+    display:flex; align-items:center; gap:16px;
+    padding:12px 20px; background:var(--surface);
+    border:1px solid var(--border); border-radius:8px; margin-bottom:20px;
+  }
+  .logo { font-family:var(--disp); font-size:24px; letter-spacing:3px; color:var(--accent); }
+  .logo small { display:block; font-family:var(--mono); font-size:10px; color:var(--dim); letter-spacing:1px; }
+  .btn {
+    padding:5px 14px; border:1px solid var(--border); background:transparent;
+    color:var(--dim); font-family:var(--mono); font-size:11px; font-weight:600;
+    cursor:pointer; border-radius:4px; transition:all 0.15s; letter-spacing:0.5px;
+    text-decoration:none; display:inline-block;
+  }
+  .btn:hover { border-color:var(--accent); color:var(--text); }
+  .nav-links { display:flex; gap:8px; margin-left:auto; }
+
+  .layout { display:grid; grid-template-columns:420px 1fr; gap:20px; align-items:start; }
+  @media (max-width:900px) { .layout { grid-template-columns:1fr; } }
+
+  .card {
+    background:var(--surface); border:1px solid var(--border);
+    border-radius:8px; padding:20px;
+  }
+  .card h2 {
+    font-size:11px; color:var(--dim); letter-spacing:2px; text-transform:uppercase;
+    margin-bottom:16px; font-weight:600;
+  }
+
+  /* Form */
+  .form-row { margin-bottom:14px; }
+  .form-row label {
+    display:block; font-size:10px; color:var(--dim); letter-spacing:1px;
+    text-transform:uppercase; margin-bottom:5px; font-weight:600;
+  }
+  .form-row input[type=text],
+  .form-row input[type=date],
+  .form-row input[type=number],
+  .form-row select,
+  .form-row textarea {
+    width:100%; background:#111418; border:1px solid var(--border);
+    color:var(--text); font-family:var(--mono); font-size:12px;
+    padding:7px 10px; border-radius:4px; outline:none;
+    transition:border-color 0.15s;
+  }
+  .form-row input:focus, .form-row select:focus, .form-row textarea:focus {
+    border-color:var(--accent);
+  }
+  .form-row textarea { resize:vertical; min-height:60px; }
+  .form-row select option { background:#111418; }
+
+  .form-row-2 { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:14px; }
+
+  /* Calificacion stars */
+  .cal-group { display:flex; gap:8px; }
+  .cal-opt { cursor:pointer; }
+  .cal-opt input { display:none; }
+  .cal-opt .cal-label {
+    display:flex; flex-direction:column; align-items:center; gap:4px;
+    padding:8px 12px; border:1px solid var(--border); border-radius:6px;
+    font-size:11px; color:var(--dim); transition:all 0.15s; user-select:none;
+  }
+  .cal-opt .stars { font-size:14px; letter-spacing:1px; }
+  .cal-opt input:checked + .cal-label {
+    border-color:var(--accent); color:var(--accent); background:rgba(240,180,41,0.08);
+  }
+  .cal-opt .cal-label:hover { border-color:var(--dim); color:var(--text); }
+
+  /* Decision buttons */
+  .dec-group { display:flex; gap:8px; }
+  .dec-opt { cursor:pointer; flex:1; }
+  .dec-opt input { display:none; }
+  .dec-opt .dec-label {
+    display:block; text-align:center; padding:8px 4px; border:1px solid var(--border);
+    border-radius:6px; font-size:11px; font-weight:700; color:var(--dim);
+    transition:all 0.15s; user-select:none; letter-spacing:0.5px;
+  }
+  .dec-opt input:checked + .dec-label { color:#000; }
+  .dec-opt.keep input:checked   + .dec-label { background:var(--green); border-color:var(--green); }
+  .dec-opt.tune input:checked   + .dec-label { background:var(--accent); border-color:var(--accent); }
+  .dec-opt.invest input:checked + .dec-label { background:var(--red);   border-color:var(--red); }
+  .dec-opt .dec-label:hover { border-color:var(--text); color:var(--text); }
+
+  .btn-save {
+    width:100%; padding:10px; background:var(--accent); border:none; border-radius:6px;
+    color:#000; font-family:var(--mono); font-size:13px; font-weight:700;
+    cursor:pointer; letter-spacing:1px; margin-top:6px; transition:opacity 0.15s;
+  }
+  .btn-save:hover { opacity:0.85; }
+  .btn-save:disabled { opacity:0.4; cursor:not-allowed; }
+
+  /* Entries list */
+  .filter-bar { display:flex; gap:8px; margin-bottom:14px; flex-wrap:wrap; }
+  .filter-bar select, .filter-bar input {
+    background:#111418; border:1px solid var(--border); color:var(--text);
+    font-family:var(--mono); font-size:11px; padding:5px 8px; border-radius:4px;
+    outline:none;
+  }
+
+  .entry {
+    border-bottom:1px solid rgba(33,38,45,0.8);
+    padding:12px 0;
+  }
+  .entry:last-child { border-bottom:none; }
+  .entry-head { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:5px; }
+  .entry-sym  { font-weight:700; font-size:13px; }
+  .entry-tipo { font-size:11px; color:var(--dim); }
+  .entry-date { font-size:10px; color:var(--dim); margin-left:auto; }
+  .tag {
+    display:inline-block; padding:1px 7px; border-radius:3px;
+    font-size:10px; font-weight:700;
+  }
+  .tag.call { background:rgba(63,185,80,0.15); color:var(--green); border:1px solid rgba(63,185,80,0.3); }
+  .tag.put  { background:rgba(248,81,73,0.15);  color:var(--red);   border:1px solid rgba(248,81,73,0.3); }
+  .entry-stars { font-size:13px; }
+  .dec-badge {
+    font-size:10px; font-weight:700; padding:1px 7px; border-radius:3px;
+  }
+  .dec-badge.keep    { background:rgba(63,185,80,0.15); color:var(--green); border:1px solid rgba(63,185,80,0.3); }
+  .dec-badge.tune    { background:rgba(240,180,41,0.15); color:var(--accent); border:1px solid rgba(240,180,41,0.3); }
+  .dec-badge.invest  { background:rgba(248,81,73,0.15); color:var(--red); border:1px solid rgba(248,81,73,0.3); }
+  .entry-motivo   { font-size:11px; color:var(--dim); margin-bottom:3px; }
+  .entry-comment  { font-size:11px; color:var(--text); font-style:italic; }
+
+  .empty { color:var(--dim); font-size:12px; padding:16px 0; text-align:center; }
+  .total-badge { font-size:10px; color:var(--dim); margin-left:auto; }
+
+  #toast {
+    position:fixed; bottom:20px; right:20px; padding:10px 18px;
+    background:var(--accent); color:#000; border-radius:6px;
+    font-size:12px; font-weight:700; opacity:0; transition:opacity 0.3s;
+    pointer-events:none; z-index:100;
+  }
+  #toast.show { opacity:1; }
+  #toast.error { background:var(--red); color:#fff; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">AXIS <small>SIGNAL JOURNAL</small></div>
+  <div class="nav-links">
+    <a href="/daily_debrief" class="btn">Debrief</a>
+    <a href="/" class="btn">Home</a>
+  </div>
+</header>
+
+<div class="layout">
+
+  <!-- ── FORM ── -->
+  <div class="card">
+    <h2>Nueva revisión</h2>
+
+    <div class="form-row-2">
+      <div class="form-row" style="margin-bottom:0">
+        <label>Fecha</label>
+        <input type="date" id="fFecha">
+      </div>
+      <div class="form-row" style="margin-bottom:0">
+        <label>Símbolo</label>
+        <select id="fSimbolo">
+          <option value="">— Seleccionar —</option>
+          <option>SPY</option><option>AAPL</option><option>BA</option>
+          <option>GLD</option><option>NVDA</option><option>AMZN</option>
+          <option>GOOG</option><option>META</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="form-row-2" style="margin-top:14px">
+      <div class="form-row" style="margin-bottom:0">
+        <label>Estrategia</label>
+        <select id="fEstrategia">
+          <option value="">— Seleccionar —</option>
+          <option>1VR</option><option>RPG</option><option>GNA</option><option>GBA</option>
+          <option>RCB</option><option>CNF</option><option>PM40</option>
+          <option>4PS</option><option>HED</option>
+        </select>
+      </div>
+      <div class="form-row" style="margin-bottom:0">
+        <label>Dirección</label>
+        <select id="fDireccion">
+          <option value="">— Seleccionar —</option>
+          <option>CALL</option><option>PUT</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="form-row-2" style="margin-top:14px">
+      <div class="form-row" style="margin-bottom:0">
+        <label>Vela</label>
+        <select id="fVela">
+          <option value="">— —</option>
+          <option>V1</option><option>V2</option><option>V3</option>
+          <option>V4</option><option>V5</option><option>V6</option><option>V7</option>
+        </select>
+      </div>
+      <div class="form-row" style="margin-bottom:0">
+        <label>Precio</label>
+        <input type="number" id="fPrecio" step="0.01" placeholder="0.00">
+      </div>
+    </div>
+
+    <div class="form-row-2" style="margin-top:14px">
+      <div class="form-row" style="margin-bottom:0">
+        <label>Prioridad</label>
+        <select id="fPrioridad">
+          <option value="NORMAL">NORMAL</option>
+          <option value="BAJA">BAJA</option>
+          <option value="MEDIA">MEDIA</option>
+          <option value="ALTA">ALTA</option>
+        </select>
+      </div>
+      <div></div>
+    </div>
+
+    <div class="form-row" style="margin-top:14px">
+      <label>Motivo (Root Cause)</label>
+      <input type="text" id="fMotivo" placeholder="ej. Señal tardía GOOG V7" maxlength="280">
+    </div>
+
+    <div class="form-row">
+      <label>Calificación</label>
+      <div class="cal-group">
+        <label class="cal-opt">
+          <input type="radio" name="calificacion" value="5">
+          <span class="cal-label"><span class="stars">★★★★★</span>Buena</span>
+        </label>
+        <label class="cal-opt">
+          <input type="radio" name="calificacion" value="3" checked>
+          <span class="cal-label"><span class="stars">★★★☆☆</span>Mejorable</span>
+        </label>
+        <label class="cal-opt">
+          <input type="radio" name="calificacion" value="1">
+          <span class="cal-label"><span class="stars">★☆☆☆☆</span>Mala</span>
+        </label>
+      </div>
+    </div>
+
+    <div class="form-row">
+      <label>Decisión</label>
+      <div class="dec-group">
+        <label class="dec-opt keep">
+          <input type="radio" name="decision" value="KEEP">
+          <span class="dec-label">KEEP</span>
+        </label>
+        <label class="dec-opt tune">
+          <input type="radio" name="decision" value="TUNE" checked>
+          <span class="dec-label">TUNE</span>
+        </label>
+        <label class="dec-opt invest">
+          <input type="radio" name="decision" value="INVESTIGATE">
+          <span class="dec-label">INVESTIGATE</span>
+        </label>
+      </div>
+    </div>
+
+    <div class="form-row">
+      <label>Comentario <span style="color:var(--dim);font-weight:400">(máx. 280 chars)</span></label>
+      <textarea id="fComentario" maxlength="280" placeholder="Observación breve sobre esta señal…"></textarea>
+    </div>
+
+    <button class="btn-save" id="btnSave" onclick="guardar()">Guardar revisión</button>
+  </div>
+
+  <!-- ── ENTRIES ── -->
+  <div class="card">
+    <div style="display:flex;align-items:center;margin-bottom:14px">
+      <h2 style="margin-bottom:0">Historial</h2>
+      <span class="total-badge" id="totalBadge"></span>
+    </div>
+
+    <div class="filter-bar">
+      <select id="filtroSim" onchange="cargarEntries()">
+        <option value="">Todos los símbolos</option>
+        <option>SPY</option><option>AAPL</option><option>BA</option>
+        <option>GLD</option><option>NVDA</option><option>AMZN</option>
+        <option>GOOG</option><option>META</option>
+      </select>
+      <select id="filtroEst" onchange="cargarEntries()">
+        <option value="">Todas las estrategias</option>
+        <option>1VR</option><option>RPG</option><option>GNA</option><option>GBA</option>
+        <option>RCB</option><option>CNF</option><option>PM40</option>
+        <option>4PS</option><option>HED</option>
+      </select>
+      <select id="filtroDec" onchange="cargarEntries()">
+        <option value="">Todas las decisiones</option>
+        <option value="KEEP">KEEP</option>
+        <option value="TUNE">TUNE</option>
+        <option value="INVESTIGATE">INVESTIGATE</option>
+      </select>
+    </div>
+
+    <div id="entries"><div class="empty">Cargando…</div></div>
+  </div>
+
+</div>
+
+<div id="toast"></div>
+
+<script>
+const RAILWAY = 'https://web-production-bf9d0.up.railway.app';
+
+// Fecha por defecto: hoy
+const hoy = new Date().toLocaleDateString('en-CA', {timeZone:'America/New_York'});
+document.getElementById('fFecha').value = hoy;
+
+// ── Guardar ────────────────────────────────────────────────
+async function guardar() {
+  const btn = document.getElementById('btnSave');
+  const cal = document.querySelector('input[name=calificacion]:checked');
+  const dec = document.querySelector('input[name=decision]:checked');
+
+  if (!document.getElementById('fSimbolo').value)    { showToast('Selecciona un símbolo', true); return; }
+  if (!document.getElementById('fEstrategia').value) { showToast('Selecciona una estrategia', true); return; }
+  if (!document.getElementById('fDireccion').value)  { showToast('Selecciona CALL o PUT', true); return; }
+  if (!cal) { showToast('Selecciona calificación', true); return; }
+  if (!dec) { showToast('Selecciona decisión', true); return; }
+
+  btn.disabled = true;
+  btn.textContent = 'Guardando…';
+
+  const body = {
+    fecha:       document.getElementById('fFecha').value,
+    simbolo:     document.getElementById('fSimbolo').value,
+    estrategia:  document.getElementById('fEstrategia').value,
+    direccion:   document.getElementById('fDireccion').value,
+    vela:        document.getElementById('fVela').value,
+    precio:      document.getElementById('fPrecio').value || null,
+    prioridad:   document.getElementById('fPrioridad').value,
+    motivo:      document.getElementById('fMotivo').value,
+    calificacion: parseInt(cal.value),
+    decision:    dec.value,
+    comentario:  document.getElementById('fComentario').value,
+  };
+
+  try {
+    const r = await fetch(`${RAILWAY}/journal/save`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body),
+    });
+    const d = await r.json();
+    if (d.ok) {
+      showToast(`✓ Guardado — ${d.total} entrada${d.total !== 1 ? 's' : ''} en el journal`);
+      limpiarForm();
+      cargarEntries();
+    } else {
+      showToast('Error: ' + (d.error || 'desconocido'), true);
+    }
+  } catch(e) {
+    showToast('Error de red: ' + e.message, true);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Guardar revisión';
+  }
+}
+
+function limpiarForm() {
+  document.getElementById('fSimbolo').value   = '';
+  document.getElementById('fEstrategia').value = '';
+  document.getElementById('fDireccion').value  = '';
+  document.getElementById('fVela').value       = '';
+  document.getElementById('fPrecio').value     = '';
+  document.getElementById('fMotivo').value     = '';
+  document.getElementById('fComentario').value = '';
+  document.getElementById('fPrioridad').value  = 'NORMAL';
+  document.getElementById('fFecha').value      = hoy;
+  const cal3 = document.querySelector('input[name=calificacion][value="3"]');
+  if (cal3) cal3.checked = true;
+  const decTune = document.querySelector('input[name=decision][value="TUNE"]');
+  if (decTune) decTune.checked = true;
+}
+
+// ── Cargar entradas ────────────────────────────────────────
+async function cargarEntries() {
+  const sim = document.getElementById('filtroSim').value;
+  const est = document.getElementById('filtroEst').value;
+  const dec = document.getElementById('filtroDec').value;
+  const params = new URLSearchParams();
+  if (sim) params.set('simbolo', sim);
+  if (est) params.set('estrategia', est);
+  if (dec) params.set('decision', dec);
+
+  try {
+    const r = await fetch(`${RAILWAY}/journal/data?${params}`);
+    const d = await r.json();
+    renderEntries(d.entries || [], d.total || 0);
+  } catch(e) {
+    document.getElementById('entries').innerHTML =
+      `<div class="empty">Error cargando historial: ${e.message}</div>`;
+  }
+}
+
+function renderEntries(entries, total) {
+  document.getElementById('totalBadge').textContent = `${total} entrada${total !== 1 ? 's' : ''}`;
+
+  if (entries.length === 0) {
+    document.getElementById('entries').innerHTML =
+      '<div class="empty">Sin entradas todavía.</div>';
+    return;
+  }
+
+  const CAL_STARS = { 5:'★★★★★', 3:'★★★☆☆', 1:'★☆☆☆☆' };
+  const decCls = { KEEP:'keep', TUNE:'tune', INVESTIGATE:'invest' };
+
+  document.getElementById('entries').innerHTML = entries.map(e => {
+    const stars   = CAL_STARS[e.calificacion] || '★★★☆☆';
+    const dc      = (e.decision || '').toUpperCase();
+    const dcCls   = decCls[dc] || '';
+    const dirTag  = e.direccion === 'CALL'
+      ? '<span class="tag call">CALL</span>'
+      : '<span class="tag put">PUT</span>';
+    const motivo  = e.motivo   ? `<div class="entry-motivo">${e.motivo}</div>` : '';
+    const comment = e.comentario ? `<div class="entry-comment">"${e.comentario}"</div>` : '';
+    const meta    = [e.vela, e.precio ? `$${parseFloat(e.precio).toFixed(2)}` : null,
+                     e.prioridad && e.prioridad !== 'NORMAL' ? e.prioridad : null]
+                   .filter(Boolean).join(' · ');
+    return `<div class="entry">
+      <div class="entry-head">
+        <span class="entry-sym">${e.simbolo}</span>
+        <span class="entry-tipo">${e.estrategia}</span>
+        ${dirTag}
+        <span class="entry-stars">${stars}</span>
+        <span class="dec-badge ${dcCls}">${dc}</span>
+        <span class="entry-date">${e.fecha}</span>
+      </div>
+      ${meta ? `<div class="entry-motivo" style="margin-bottom:3px;color:var(--dim)">${meta}</div>` : ''}
+      ${motivo}
+      ${comment}
+    </div>`;
+  }).join('');
+}
+
+// ── Toast ──────────────────────────────────────────────────
+function showToast(msg, isError) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = isError ? 'show error' : 'show';
+  setTimeout(() => t.className = '', 3000);
+}
+
+// ── Init ───────────────────────────────────────────────────
+cargarEntries();
+</script>
+</body>
+</html>

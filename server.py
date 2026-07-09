@@ -209,7 +209,8 @@ from axis_config import (
     CANALES_FILE, PORTFOLIO_FILE, ORDENES_FILE, ESTADO_FILE,
     SEÑALES_FILE, BITACORA_FILE, DATA_DIR,
 )
-DEBRIEF_FILE = f"{DATA_DIR}/axis_debrief.json"
+DEBRIEF_FILE  = f"{DATA_DIR}/axis_debrief.json"
+JOURNAL_FILE  = f"{DATA_DIR}/axis_journal.json"
 
 # AX-005: cargar_señales_historicas, guardar_señales_historicas movidas a axis_storage.py
 from axis_storage import cargar_señales_historicas, guardar_señales_historicas
@@ -3816,6 +3817,78 @@ def daily_debrief_send():
             pass
     enviar_daily_debrief(force=force)
     return jsonify({"ok": True, "mensaje": "Debrief enviado"}), 200
+
+# ═══════════════════════════════════════════════════════════
+# AX-TUNE-003 — Signal Journal v1
+# ═══════════════════════════════════════════════════════════
+
+def cargar_journal():
+    try:
+        with open(JOURNAL_FILE, "r") as f:
+            return json.load(f)
+    except Exception:
+        return {"entries": []}
+
+def guardar_journal(data):
+    os.makedirs(os.path.dirname(JOURNAL_FILE), exist_ok=True)
+    with open(JOURNAL_FILE, "w") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+@app.route("/journal", methods=["GET"])
+def serve_journal():
+    from flask import Response
+    html_path = os.path.join(os.path.dirname(__file__), "axis_journal.html")
+    if os.path.exists(html_path):
+        with open(html_path, "r") as f:
+            return Response(f.read(), mimetype="text/html")
+    return Response("<h1>axis_journal.html no encontrado</h1>", mimetype="text/html"), 404
+
+@app.route("/journal/data", methods=["GET"])
+def journal_data():
+    data = cargar_journal()
+    entries = data.get("entries", [])
+    simbolo    = request.args.get("simbolo", "").upper()
+    estrategia = request.args.get("estrategia", "").upper()
+    decision   = request.args.get("decision", "").upper()
+    fecha      = request.args.get("fecha", "")
+    if simbolo:
+        entries = [e for e in entries if e.get("simbolo", "").upper() == simbolo]
+    if estrategia:
+        entries = [e for e in entries if e.get("estrategia", "").upper() == estrategia]
+    if decision:
+        entries = [e for e in entries if e.get("decision", "").upper() == decision]
+    if fecha:
+        entries = [e for e in entries if e.get("fecha", "") == fecha]
+    return jsonify({"entries": list(reversed(entries)), "total": len(entries)}), 200
+
+@app.route("/journal/save", methods=["POST"])
+def journal_save():
+    try:
+        body = request.get_json(force=True)
+        required = ["fecha", "simbolo", "estrategia", "direccion", "calificacion", "decision"]
+        for field in required:
+            if not body.get(field):
+                return jsonify({"ok": False, "error": f"Campo requerido: {field}"}), 400
+        entry = {
+            "fecha":        body.get("fecha", ""),
+            "simbolo":      (body.get("simbolo", "") or "").upper()[:10],
+            "estrategia":   (body.get("estrategia", "") or "").upper()[:10],
+            "direccion":    (body.get("direccion", "") or "").upper()[:4],
+            "vela":         (body.get("vela", "") or "")[:3],
+            "precio":       float(body["precio"]) if body.get("precio") not in (None, "") else None,
+            "prioridad":    (body.get("prioridad", "NORMAL") or "NORMAL").upper()[:6],
+            "motivo":       (body.get("motivo", "") or "")[:280],
+            "calificacion": int(body.get("calificacion", 3)),
+            "decision":     (body.get("decision", "") or "").upper()[:12],
+            "comentario":   (body.get("comentario", "") or "")[:280],
+            "ts_revision":  datetime.now(EST).isoformat(),
+        }
+        data = cargar_journal()
+        data.setdefault("entries", []).append(entry)
+        guardar_journal(data)
+        return jsonify({"ok": True, "total": len(data["entries"])}), 200
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 # ═══════════════════════════════════════════════════════════
 # SOURCE — expone archivos para lectura de AI
