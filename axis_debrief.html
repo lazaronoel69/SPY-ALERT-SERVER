@@ -255,7 +255,7 @@ function render(d) {
       </div>`).join('');
   }
 
-  // Anomalías
+  // Anomalías (AX-TUNE-002A: objetos estructurados)
   const anomalias = d.anomalias || [];
   const cardAnom = document.getElementById('cardAnomalia');
   const divAnom  = document.getElementById('anomalias');
@@ -263,9 +263,32 @@ function render(d) {
     cardAnom.style.display = 'none';
   } else {
     cardAnom.style.display = 'block';
+    const ACCION_LABEL = {
+      'REVISAR_GRAFICO': '🔍 Revisar gráfico',
+      'MONITOREAR':      '👁 Monitorear',
+      'SIN_ACCION':      '✓ Sin acción',
+    };
+    const PRIO_COLOR = { ALTA:'var(--red)', MEDIA:'var(--accent)', BAJA:'var(--dim)' };
+    const INFO_TIPOS = new Set(['ESTRATEGIA_DOMINANTE','SEÑAL_TARDIA']);
     divAnom.innerHTML = anomalias.map(a => {
-      const cls = a.startsWith('ℹ️') ? 'info' : '';
-      return `<div class="anomalia-item ${cls}">${a}</div>`;
+      const prio  = a.prioridad || 'BAJA';
+      const pc    = PRIO_COLOR[prio] || 'var(--dim)';
+      const cls   = INFO_TIPOS.has(a.tipo) ? 'info' : '';
+      const sym   = a.simbolo ? `<b>${a.simbolo}</b>` : '';
+      const vela  = a.vela  ? `<span style="color:var(--dim)">${a.vela}</span>` : '';
+      const hora  = a.hora  ? `<span style="color:var(--dim);font-size:11px">${a.hora}</span>` : '';
+      const ests  = (a.estrategias||[]).join(', ');
+      const accion = ACCION_LABEL[a.accion_recomendada] || (a.accion_recomendada||'');
+      return `<div class="anomalia-item ${cls}">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:5px">
+          <span style="background:${pc};color:#000;padding:1px 8px;border-radius:3px;font-size:10px;font-weight:700;flex-shrink:0">${prio}</span>
+          ${sym} ${vela} ${hora}
+          <span style="color:var(--dim);font-size:11px">${ests}</span>
+          <span style="margin-left:auto;font-size:11px;color:var(--cyan);white-space:nowrap">${accion}</span>
+        </div>
+        <div style="font-weight:600;font-size:12px">${a.motivo_corto||''}</div>
+        <div style="color:var(--dim);font-size:11px;margin-top:3px;line-height:1.5">${a.motivo_detallado||''}</div>
+      </div>`;
     }).join('');
   }
 

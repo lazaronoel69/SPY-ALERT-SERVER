@@ -14,6 +14,7 @@
 | **Último fix** | AX-FIX-002 — "EN FORMACIÓN" UI bug resolved |
 | **AX-TUNE-001A** | COMPLETED — reporte diario de señales (`tools/daily_signal_review.py`) |
 | **AX-TUNE-001B** | COMPLETED — automated daily debrief (`axis_debrief.html`, `/daily_debrief/*`, Telegram 16:10) |
+| **AX-TUNE-002A** | COMPLETED — root cause engine v1: anomalías estructuradas (CONFLICTO_DIRECCION, MULTIPLES_ESTRATEGIAS, SIMBOLO_SOBREACTIVO, ESTRATEGIA_DOMINANTE, SEÑAL_TARDIA) con prioridad ALTA/MEDIA/BAJA y accion_recomendada. Telegram filtra solo ALTA+MEDIA. |
 | **Known Issues** | None blocking |
 
 ### Open Limitations
@@ -30,11 +31,15 @@
 |---|---|---|
 | **AX-UI-001** | High Visibility Theme | COMPLETED |
 | **AX-TUNE-001** | Production Signal Review | COMPLETED (001A + 001B) |
+| **AX-TUNE-002A** | Root Cause Engine v1 | COMPLETED |
 | **AX-TUNE-002** | Evidence-based Strategy Improvements | PENDING |
 | **AX-BT-012** | Historical Channel Reconstruction | FUTURE |
 
 ### AX-TUNE-001 — Production Signal Review
 Revisar señales reales disparadas en producción (últimas 4-6 semanas). Identificar patrones de falsos positivos por estrategia. Input requerido para AX-TUNE-002.
+
+### AX-TUNE-002A — Root Cause Engine v1
+Anomalías estructuradas en el Daily Debrief. Cinco tipos: CONFLICTO_DIRECCION (ALTA), MULTIPLES_ESTRATEGIAS (MEDIA), SIMBOLO_SOBREACTIVO (MEDIA), ESTRATEGIA_DOMINANTE (BAJA), SEÑAL_TARDIA (BAJA). Cada anomalía incluye `motivo_corto`, `motivo_detallado`, `accion_recomendada` (REVISAR_GRAFICO/MONITOREAR/SIN_ACCION). Telegram solo muestra ALTA y MEDIA. No toca estrategias ni motor.
 
 ### AX-TUNE-002 — Evidence-based Strategy Improvements
 Toda mejora a parámetros de estrategia debe basarse en datos de AX-TUNE-001 o resultados de Backtest. Sin cambios subjetivos.

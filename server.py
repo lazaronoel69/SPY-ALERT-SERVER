@@ -3344,37 +3344,99 @@ def construir_debrief_data(fecha=None):
     }
 
 def detectar_anomalias_db(señales, por_simbolo, por_estrategia):
+    """AX-TUNE-002A: devuelve lista de dicts estructurados con prioridad/motivo/accion."""
     anomalias = []
+    total = len(señales)
 
-    # 1. Conflicto CALL/PUT mismo símbolo + misma vela
     by_sym_vela = {}
     for s in señales:
         key = (s["simbolo"], s.get("vela") or "?")
         by_sym_vela.setdefault(key, []).append(s)
-    for (sym, vela), grupo in by_sym_vela.items():
-        tipos = [_tipo_corto_db(g["tipo"]) for g in grupo]
-        if len(tipos) > 1 and any(t in _CALL_TIPOS_DB for t in tipos) and any(t not in _CALL_TIPOS_DB for t in tipos):
-            anomalias.append(f"⚠️ Conflicto CALL/PUT: {sym} {vela} — {', '.join(g['tipo'] for g in grupo)}")
 
-    # 2. Múltiples estrategias mismo símbolo + misma vela
-    for (sym, vela), grupo in by_sym_vela.items():
-        if len(grupo) >= 2 and not any("Conflicto" in a and sym in a and vela in a for a in anomalias):
-            anomalias.append(f"⚠️ Multi-señal: {sym} {vela} — {', '.join(g['tipo'] for g in grupo)}")
+    conflictos = set()
 
-    # 3. Símbolo con 3+ señales
+    # A. CONFLICTO_DIRECCION: mismo símbolo + misma vela con CALL y PUT
+    for (sym, vela), grupo in by_sym_vela.items():
+        tipos_base = [_tipo_corto_db(g["tipo"]) for g in grupo]
+        if len(tipos_base) > 1 and any(t in _CALL_TIPOS_DB for t in tipos_base) and any(t not in _CALL_TIPOS_DB for t in tipos_base):
+            conflictos.add((sym, vela))
+            ests = [g["tipo"] for g in grupo]
+            hora = next((g.get("hora") for g in grupo if g.get("hora")), None)
+            anomalias.append({
+                "tipo":               "CONFLICTO_DIRECCION",
+                "prioridad":          "ALTA",
+                "simbolo":            sym,
+                "vela":               vela,
+                "hora":               hora,
+                "estrategias":        ests,
+                "motivo_corto":       f"CALL y PUT en {sym} {vela}",
+                "motivo_detallado":   f"{', '.join(ests)} generaron señales con direcciones opuestas en la misma vela. El motor no puede determinar dirección.",
+                "accion_recomendada": "REVISAR_GRAFICO",
+            })
+
+    # B. MULTIPLES_ESTRATEGIAS: mismo símbolo + misma vela, 2+ estrategias (sin conflicto)
+    for (sym, vela), grupo in by_sym_vela.items():
+        if len(grupo) >= 2 and (sym, vela) not in conflictos:
+            ests = [g["tipo"] for g in grupo]
+            hora = next((g.get("hora") for g in grupo if g.get("hora")), None)
+            anomalias.append({
+                "tipo":               "MULTIPLES_ESTRATEGIAS",
+                "prioridad":          "MEDIA",
+                "simbolo":            sym,
+                "vela":               vela,
+                "hora":               hora,
+                "estrategias":        ests,
+                "motivo_corto":       f"{len(ests)} estrategias en {sym} {vela}",
+                "motivo_detallado":   f"{', '.join(ests)} coincidieron en {sym} {vela}. Confluencia de señales en la misma apertura horaria.",
+                "accion_recomendada": "REVISAR_GRAFICO",
+            })
+
+    # C. SIMBOLO_SOBREACTIVO: símbolo con 3+ señales en el día
     for sym, tipos in por_simbolo.items():
         if len(tipos) >= 3:
-            anomalias.append(f"⚠️ {sym} acumuló {len(tipos)} señales hoy: {', '.join(tipos)}")
+            anomalias.append({
+                "tipo":               "SIMBOLO_SOBREACTIVO",
+                "prioridad":          "MEDIA",
+                "simbolo":            sym,
+                "vela":               None,
+                "hora":               None,
+                "estrategias":        tipos,
+                "motivo_corto":       f"{sym} acumuló {len(tipos)} señales",
+                "motivo_detallado":   f"{sym} disparó {', '.join(tipos)} en el mismo día. Alta frecuencia puede indicar volatilidad extrema o acumulación de falsos positivos.",
+                "accion_recomendada": "MONITOREAR",
+            })
 
-    # 4. Estrategia dominante (5+ símbolos)
-    for tipo, syms in por_estrategia.items():
-        if len(syms) >= 5:
-            anomalias.append(f"ℹ️ {tipo} se disparó en {len(syms)} símbolos: {', '.join(syms)}")
+    # D. ESTRATEGIA_DOMINANTE: estrategia >=50% de señales del día
+    if total >= 2:
+        for tipo, syms in por_estrategia.items():
+            pct = len(syms) / total * 100
+            if pct >= 50:
+                anomalias.append({
+                    "tipo":               "ESTRATEGIA_DOMINANTE",
+                    "prioridad":          "BAJA",
+                    "simbolo":            None,
+                    "vela":               None,
+                    "hora":               None,
+                    "estrategias":        [tipo],
+                    "motivo_corto":       f"{tipo} en {pct:.0f}% de señales",
+                    "motivo_detallado":   f"{tipo} se disparó en {len(syms)}/{total} señales del día ({pct:.0f}%). Posible sesgo sistémico o condición de mercado uniforme.",
+                    "accion_recomendada": "MONITOREAR",
+                })
 
-    # 5. Señal tardía (V6 o V7)
+    # E. SEÑAL_TARDIA: V6 o V7
     for s in señales:
         if s.get("vela") in ("V6", "V7"):
-            anomalias.append(f"ℹ️ Señal tardía: {s['simbolo']} {s['tipo']} en {s['vela']} ({s.get('hora') or '?'})")
+            anomalias.append({
+                "tipo":               "SEÑAL_TARDIA",
+                "prioridad":          "BAJA",
+                "simbolo":            s["simbolo"],
+                "vela":               s.get("vela"),
+                "hora":               s.get("hora"),
+                "estrategias":        [s["tipo"]],
+                "motivo_corto":       f"Señal tardía {s['simbolo']} {s.get('vela', '?')}",
+                "motivo_detallado":   f"{s['simbolo']} {s['tipo']} se disparó en {s.get('vela','?')} ({s.get('hora') or '?'}). Las señales en velas tardías tienen menor ventana de acción.",
+                "accion_recomendada": "MONITOREAR",
+            })
 
     return anomalias
 
@@ -3406,9 +3468,13 @@ def enviar_daily_debrief(force=False):
             for sym, tipos in data["por_simbolo"].items()
         ) or "  Sin señales"
         anomalias_txt = ""
-        if data["anomalias"]:
-            items = "\n".join(f"{i+1}. {a}" for i, a in enumerate(data["anomalias"][:5]))
-            anomalias_txt = f"\n\n🔍 <b>Señales que merecen tu atención:</b>\n{items}"
+        alta_media = [a for a in data["anomalias"] if a.get("prioridad") in ("ALTA", "MEDIA")]
+        if alta_media:
+            items = "\n".join(
+                f"{i+1}. [{a['prioridad']}] {a['motivo_corto']}"
+                for i, a in enumerate(alta_media[:5])
+            )
+            anomalias_txt = f"\n\n🔍 <b>Señales que merecen tu atención ({len(alta_media)}):</b>\n{items}"
 
         msg = (
             f"📊 <b>AXIS DAILY DEBRIEF</b>\n"
