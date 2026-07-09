@@ -209,6 +209,7 @@ from axis_config import (
     CANALES_FILE, PORTFOLIO_FILE, ORDENES_FILE, ESTADO_FILE,
     SEÑALES_FILE, BITACORA_FILE, DATA_DIR,
 )
+DEBRIEF_FILE = f"{DATA_DIR}/axis_debrief.json"
 
 # AX-005: cargar_señales_historicas, guardar_señales_historicas movidas a axis_storage.py
 from axis_storage import cargar_señales_historicas, guardar_señales_historicas
@@ -3259,6 +3260,174 @@ def enviar_resumen_diario(ahora):
     except Exception as e:
         print(f"Error enviar_resumen_diario: {e}")
 
+# ═══════════════════════════════════════════════════════════
+# AX-TUNE-001B — Daily Debrief
+# ═══════════════════════════════════════════════════════════
+_CALL_TIPOS_DB = {"GNA", "GBA"}
+
+def _tipo_corto_db(tipo):
+    return (tipo or "").rstrip("+0123456789")
+
+def construir_debrief_data(fecha=None):
+    """Payload completo del debrief para una fecha (default: hoy)."""
+    ahora     = datetime.now(EST)
+    fecha_hoy = ahora.strftime("%Y-%m-%d")
+    if fecha is None:
+        fecha = fecha_hoy
+
+    señales = []
+    if fecha == fecha_hoy:
+        # Fuente viva: estado_dia en proceso
+        for sym in ACTIVOS:
+            ed = estado_dia.get(sym, {})
+            if ed.get("fecha") != fecha_hoy:
+                continue
+            disparadas = ed.get("señales_disparadas", [])
+            detalle    = ed.get("señales_detalle", [])
+            label_map  = {}
+            for lbl in disparadas:
+                for k in ("1VR","RPG","GNA","GBA","PM40","CNF","RCB","4PS","HED"):
+                    if k in lbl.upper():
+                        label_map[k] = lbl
+                        break
+            if detalle:
+                for d in detalle:
+                    tipo = d.get("tipo", "?")
+                    señales.append({
+                        "simbolo": sym, "tipo": tipo,
+                        "label":  label_map.get(tipo, tipo),
+                        "hora":   d.get("hora"), "vela": d.get("vela"),
+                    })
+            else:
+                for lbl in disparadas:
+                    for k in ("1VR","RPG","GNA","GBA","PM40","CNF","RCB","4PS","HED"):
+                        if k in lbl.upper():
+                            señales.append({"simbolo": sym, "tipo": k, "label": lbl,
+                                            "hora": None, "vela": None})
+                            break
+    else:
+        # Fuente histórica
+        historial = cargar_señales_historicas()
+        dia = historial.get(fecha, {})
+        for sym in ACTIVOS:
+            for s in dia.get(sym, []):
+                if isinstance(s, str):
+                    tipo, hora, vela = s, None, None
+                else:
+                    tipo = s.get("tipo", "?")
+                    hora = s.get("hora")
+                    vela = s.get("vela")
+                señales.append({"simbolo": sym, "tipo": tipo, "label": tipo,
+                                "hora": hora, "vela": vela})
+
+    call_count = sum(1 for s in señales if _tipo_corto_db(s["tipo"]) in _CALL_TIPOS_DB)
+    put_count  = len(señales) - call_count
+
+    por_estrategia = {}
+    por_simbolo    = {}
+    for s in señales:
+        base = _tipo_corto_db(s["tipo"])
+        por_estrategia.setdefault(base, []).append(s["simbolo"])
+        por_simbolo.setdefault(s["simbolo"], []).append(base)
+    por_estrategia = dict(sorted(por_estrategia.items(), key=lambda x: -len(x[1])))
+    por_simbolo    = {k: v for k, v in por_simbolo.items() if v}
+
+    return {
+        "fecha":          fecha,
+        "total_señales":  len(señales),
+        "call_count":     call_count,
+        "put_count":      put_count,
+        "señales":        señales,
+        "por_estrategia": por_estrategia,
+        "por_simbolo":    por_simbolo,
+        "anomalias":      detectar_anomalias_db(señales, por_simbolo, por_estrategia),
+    }
+
+def detectar_anomalias_db(señales, por_simbolo, por_estrategia):
+    anomalias = []
+
+    # 1. Conflicto CALL/PUT mismo símbolo + misma vela
+    by_sym_vela = {}
+    for s in señales:
+        key = (s["simbolo"], s.get("vela") or "?")
+        by_sym_vela.setdefault(key, []).append(s)
+    for (sym, vela), grupo in by_sym_vela.items():
+        tipos = [_tipo_corto_db(g["tipo"]) for g in grupo]
+        if len(tipos) > 1 and any(t in _CALL_TIPOS_DB for t in tipos) and any(t not in _CALL_TIPOS_DB for t in tipos):
+            anomalias.append(f"⚠️ Conflicto CALL/PUT: {sym} {vela} — {', '.join(g['tipo'] for g in grupo)}")
+
+    # 2. Múltiples estrategias mismo símbolo + misma vela
+    for (sym, vela), grupo in by_sym_vela.items():
+        if len(grupo) >= 2 and not any("Conflicto" in a and sym in a and vela in a for a in anomalias):
+            anomalias.append(f"⚠️ Multi-señal: {sym} {vela} — {', '.join(g['tipo'] for g in grupo)}")
+
+    # 3. Símbolo con 3+ señales
+    for sym, tipos in por_simbolo.items():
+        if len(tipos) >= 3:
+            anomalias.append(f"⚠️ {sym} acumuló {len(tipos)} señales hoy: {', '.join(tipos)}")
+
+    # 4. Estrategia dominante (5+ símbolos)
+    for tipo, syms in por_estrategia.items():
+        if len(syms) >= 5:
+            anomalias.append(f"ℹ️ {tipo} se disparó en {len(syms)} símbolos: {', '.join(syms)}")
+
+    # 5. Señal tardía (V6 o V7)
+    for s in señales:
+        if s.get("vela") in ("V6", "V7"):
+            anomalias.append(f"ℹ️ Señal tardía: {s['simbolo']} {s['tipo']} en {s['vela']} ({s.get('hora') or '?'})")
+
+    return anomalias
+
+def enviar_daily_debrief(force=False):
+    """Envía el debrief a Telegram. Evita duplicados salvo force=True."""
+    try:
+        ahora     = datetime.now(EST)
+        fecha_hoy = ahora.strftime("%Y-%m-%d")
+
+        # Evitar duplicado
+        if not force:
+            try:
+                with open(DEBRIEF_FILE, "r") as f:
+                    ultimo = json.load(f).get("ultimo_debrief", "")
+            except Exception:
+                ultimo = ""
+            if ultimo == fecha_hoy:
+                print(f"Debrief ya enviado hoy ({fecha_hoy}) — omitido")
+                return
+
+        data = construir_debrief_data(fecha_hoy)
+
+        lineas_est = "\n".join(
+            f"  {tipo}: {len(syms)}"
+            for tipo, syms in list(data["por_estrategia"].items())[:6]
+        ) or "  Sin señales"
+        lineas_sym = "\n".join(
+            f"  {sym}: {', '.join(tipos)}"
+            for sym, tipos in data["por_simbolo"].items()
+        ) or "  Sin señales"
+        anomalias_txt = ""
+        if data["anomalias"]:
+            items = "\n".join(f"{i+1}. {a}" for i, a in enumerate(data["anomalias"][:5]))
+            anomalias_txt = f"\n\n🔍 <b>Señales que merecen tu atención:</b>\n{items}"
+
+        msg = (
+            f"📊 <b>AXIS DAILY DEBRIEF</b>\n"
+            f"<b>Fecha:</b> {fecha_hoy}\n"
+            f"<b>Total señales:</b> {data['total_señales']}\n"
+            f"<b>CALL:</b> {data['call_count']}  |  <b>PUT:</b> {data['put_count']}\n\n"
+            f"<b>Por estrategia:</b>\n{lineas_est}\n\n"
+            f"<b>Por símbolo:</b>\n{lineas_sym}"
+            f"{anomalias_txt}\n\n"
+            f"🔗 <a href='https://web-production-bf9d0.up.railway.app/daily_debrief'>Ver reporte completo</a>"
+        )
+        enviar_telegram(msg)
+
+        with open(DEBRIEF_FILE, "w") as f:
+            json.dump({"ultimo_debrief": fecha_hoy, "ts": ahora.isoformat()}, f)
+        print(f"Daily debrief enviado: {fecha_hoy}")
+    except Exception as e:
+        print(f"Error enviar_daily_debrief: {e}")
+
 def loop_v7_anticipada():
     """Todos los activos, incluyendo SPY, se tratan exactamente igual --
     sin excepciones de horario. Evaluacion anticipada a las 3:58 PM con
@@ -3295,6 +3464,10 @@ def loop_v7_anticipada():
                         guardar_snapshot_precios(ahora)
                         archivar_señales_dia(ahora.strftime("%Y-%m-%d"))
                         enviar_resumen_diario(ahora)
+                if ahora.hour == 16 and ahora.minute == 10:
+                    if "debrief" not in ejecutado_400:
+                        ejecutado_400.add("debrief")
+                        enviar_daily_debrief()
             time.sleep(30)
         except Exception as e:
             print(f"Error loop V7 anticipada: {e}")
@@ -3476,6 +3649,35 @@ def evaluar_hed(simbolo):
             enviar_telegram(f"⚠️ <b>HED {simbolo}</b> — Shooting star, error al ejecutar: {resultado.get('error','?')}")
     except Exception as e:
         print(f"Error evaluar_hed {simbolo}: {e}")
+
+# ═══════════════════════════════════════════════════════════
+# DAILY DEBRIEF — AX-TUNE-001B
+# ═══════════════════════════════════════════════════════════
+@app.route("/daily_debrief", methods=["GET"])
+def serve_daily_debrief():
+    from flask import Response
+    html_path = os.path.join(os.path.dirname(__file__), "axis_debrief.html")
+    if os.path.exists(html_path):
+        with open(html_path, "r") as f:
+            return Response(f.read(), mimetype="text/html")
+    return Response("<h1>axis_debrief.html no encontrado</h1>", mimetype="text/html"), 404
+
+@app.route("/daily_debrief/data", methods=["GET"])
+def daily_debrief_data():
+    fecha = request.args.get("fecha", datetime.now(EST).strftime("%Y-%m-%d"))
+    return jsonify(construir_debrief_data(fecha)), 200
+
+@app.route("/daily_debrief/send", methods=["GET"])
+def daily_debrief_send():
+    force = request.args.get("force", "0") == "1"
+    if force:
+        try:
+            with open(DEBRIEF_FILE, "w") as f:
+                json.dump({"ultimo_debrief": ""}, f)
+        except Exception:
+            pass
+    enviar_daily_debrief(force=force)
+    return jsonify({"ok": True, "mensaje": "Debrief enviado"}), 200
 
 # ═══════════════════════════════════════════════════════════
 # SOURCE — expone archivos para lectura de AI

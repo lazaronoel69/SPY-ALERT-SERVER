@@ -12,7 +12,8 @@
 | **Backtest** | BT-001 → BT-011 COMPLETED |
 | **Producción** | Running (Railway) |
 | **Último fix** | AX-FIX-002 — "EN FORMACIÓN" UI bug resolved |
-| **AX-TUNE-001A** | Iniciado — reporte diario de señales (`tools/daily_signal_review.py`) |
+| **AX-TUNE-001A** | COMPLETED — reporte diario de señales (`tools/daily_signal_review.py`) |
+| **AX-TUNE-001B** | COMPLETED — automated daily debrief (`axis_debrief.html`, `/daily_debrief/*`, Telegram 16:10) |
 | **Known Issues** | None blocking |
 
 ### Open Limitations
@@ -28,7 +29,7 @@
 | Sprint | Nombre | Estado |
 |---|---|---|
 | **AX-UI-001** | High Visibility Theme | COMPLETED |
-| **AX-TUNE-001** | Production Signal Review | PENDING |
+| **AX-TUNE-001** | Production Signal Review | COMPLETED (001A + 001B) |
 | **AX-TUNE-002** | Evidence-based Strategy Improvements | PENDING |
 | **AX-BT-012** | Historical Channel Reconstruction | FUTURE |
 

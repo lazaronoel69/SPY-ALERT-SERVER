@@ -147,9 +147,13 @@ def señales_historicas(historial: dict, fecha: str) -> list:
 
     for sym in SYMBOLS:
         for s in dia.get(sym, []):
-            tipo  = s.get("tipo", "?")
-            hora  = s.get("hora", "?")
-            vela  = s.get("vela", "?")
+            # Historial antiguo: strings simples ["1VR"]; reciente: dicts {tipo,hora,vela}
+            if isinstance(s, str):
+                tipo, hora, vela = s, "—", "—"
+            else:
+                tipo  = s.get("tipo", "?")
+                hora  = s.get("hora", "—")
+                vela  = s.get("vela", "—")
             label = TIPO_DESCRIPCION.get(tipo, tipo)
             resultado.append({
                 "fecha":   fecha,
@@ -224,13 +228,36 @@ def print_reporte(fecha: str, señales: list) -> None:
 
 # ── Main ─────────────────────────────────────────────────────────────────────
 
+def send_telegram_debrief() -> None:
+    """Llama /daily_debrief/send?force=1 en el servidor de producción."""
+    url = f"{RAILWAY}/daily_debrief/send?force=1"
+    try:
+        r = requests.get(url, timeout=10)
+        r.raise_for_status()
+        d = r.json()
+        if d.get("ok"):
+            print(f"  ✓ Debrief enviado a Telegram — {d.get('mensaje', '')}")
+        else:
+            print(f"  [WARN] Respuesta inesperada: {d}", file=sys.stderr)
+    except Exception as e:
+        print(f"  [ERROR] No se pudo enviar debrief: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
 def main():
     parser = argparse.ArgumentParser(description="AXIS Daily Signal Review (AX-TUNE-001A)")
     parser.add_argument("--date", help="Fecha YYYY-MM-DD (default: hoy)")
     parser.add_argument("--days", type=int, help="Últimos N días")
+    parser.add_argument("--send-telegram", action="store_true",
+                        help="Envía el daily debrief a Telegram vía /daily_debrief/send?force=1")
     args = parser.parse_args()
 
     hoy = date.today().isoformat()
+
+    if args.send_telegram:
+        print(f"\n  Fuente: {RAILWAY}")
+        send_telegram_debrief()
+        return
 
     print(f"\n  Fuente: {RAILWAY}")
 

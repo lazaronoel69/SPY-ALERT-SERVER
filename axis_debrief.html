@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AXIS — Daily Debrief</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Bebas+Neue&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:      #080b0f;
+    --surface: #0d1117;
+    --border:  #21262d;
+    --accent:  #f0b429;
+    --green:   #3fb950;
+    --red:     #f85149;
+    --cyan:    #58a6ff;
+    --text:    #c9d1d9;
+    --dim:     #6e7681;
+    --mono:    'JetBrains Mono', monospace;
+    --disp:    'Bebas Neue', sans-serif;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:var(--bg); color:var(--text); font-family:var(--mono); min-height:100vh; padding:20px; }
+
+  header {
+    display:flex; align-items:center; gap:16px;
+    padding:12px 20px; background:var(--surface);
+    border:1px solid var(--border); border-radius:8px; margin-bottom:20px;
+  }
+  .logo { font-family:var(--disp); font-size:24px; letter-spacing:3px; color:var(--accent); }
+  .logo small { display:block; font-family:var(--mono); font-size:10px; color:var(--dim); letter-spacing:1px; }
+
+  .date-nav { display:flex; gap:8px; align-items:center; margin-left:auto; }
+  .date-nav input[type=date] {
+    background:var(--surface); border:1px solid var(--border);
+    color:var(--text); font-family:var(--mono); font-size:12px;
+    padding:5px 10px; border-radius:4px; cursor:pointer;
+  }
+  .btn {
+    padding:5px 14px; border:1px solid var(--border); background:transparent;
+    color:var(--dim); font-family:var(--mono); font-size:11px; font-weight:600;
+    cursor:pointer; border-radius:4px; transition:all 0.15s; letter-spacing:0.5px;
+  }
+  .btn:hover { border-color:var(--accent); color:var(--text); }
+  .btn.primary { background:var(--accent); border-color:var(--accent); color:#000; }
+  .btn.primary:hover { opacity:0.85; }
+
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:16px; }
+  @media (max-width: 700px) { .grid { grid-template-columns:1fr; } }
+
+  .card {
+    background:var(--surface); border:1px solid var(--border);
+    border-radius:8px; padding:16px;
+  }
+  .card h2 {
+    font-size:11px; color:var(--dim); letter-spacing:2px; text-transform:uppercase;
+    margin-bottom:12px; font-weight:600;
+  }
+  .card.full { grid-column:1/-1; }
+  .card.anomalias { border-color:rgba(240,180,41,0.4); background:rgba(240,180,41,0.04); }
+  .card.anomalias h2 { color:var(--accent); }
+
+  .kpi { display:flex; gap:24px; flex-wrap:wrap; }
+  .kpi-item { }
+  .kpi-item .val { font-size:28px; font-weight:700; color:var(--accent); font-family:var(--disp); letter-spacing:2px; }
+  .kpi-item .lbl { font-size:10px; color:var(--dim); letter-spacing:1px; }
+
+  .call-put { display:flex; gap:16px; }
+  .call-put .call { color:var(--green); font-size:22px; font-weight:700; }
+  .call-put .put  { color:var(--red);   font-size:22px; font-weight:700; }
+  .call-put .sub  { font-size:10px; color:var(--dim); letter-spacing:1px; }
+
+  table { width:100%; border-collapse:collapse; font-size:12px; }
+  th { color:var(--dim); font-size:10px; letter-spacing:1px; text-transform:uppercase;
+       padding:6px 8px; border-bottom:1px solid var(--border); text-align:left; font-weight:600; }
+  td { padding:6px 8px; border-bottom:1px solid rgba(33,38,45,0.6); }
+  tr:last-child td { border-bottom:none; }
+  tr:hover td { background:rgba(255,255,255,0.02); }
+
+  .tag {
+    display:inline-block; padding:2px 7px; border-radius:3px;
+    font-size:10px; font-weight:700; letter-spacing:0.5px;
+  }
+  .tag.call { background:rgba(63,185,80,0.15); color:var(--green); border:1px solid rgba(63,185,80,0.3); }
+  .tag.put  { background:rgba(248,81,73,0.15);  color:var(--red);   border:1px solid rgba(248,81,73,0.3); }
+
+  .strat-bar { display:flex; align-items:center; gap:8px; margin-bottom:8px; }
+  .strat-bar:last-child { margin-bottom:0; }
+  .strat-name { min-width:60px; font-size:12px; color:var(--text); }
+  .strat-count { min-width:24px; font-size:12px; color:var(--accent); font-weight:700; }
+  .bar-track { flex:1; height:6px; background:rgba(255,255,255,0.05); border-radius:3px; overflow:hidden; }
+  .bar-fill  { height:100%; background:var(--accent); border-radius:3px; transition:width 0.4s ease; }
+  .strat-syms { font-size:10px; color:var(--dim); min-width:120px; }
+
+  .anomalia-item {
+    padding:8px 12px; margin-bottom:8px; border-radius:6px;
+    background:rgba(240,180,41,0.06); border-left:3px solid var(--accent);
+    font-size:12px; line-height:1.5;
+  }
+  .anomalia-item:last-child { margin-bottom:0; }
+  .anomalia-item.info { border-left-color:var(--cyan); background:rgba(88,166,255,0.06); }
+
+  .status-bar { font-size:11px; color:var(--dim); margin-top:16px; text-align:right; }
+  .status-bar span { color:var(--text); }
+
+  .empty { color:var(--dim); font-size:12px; padding:8px 0; }
+
+  #toast {
+    position:fixed; bottom:20px; right:20px; padding:10px 18px;
+    background:var(--accent); color:#000; border-radius:6px;
+    font-size:12px; font-weight:700; opacity:0; transition:opacity 0.3s;
+    pointer-events:none;
+  }
+  #toast.show { opacity:1; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">AXIS <small>DAILY DEBRIEF</small></div>
+  <div class="date-nav">
+    <input type="date" id="fechaInput">
+    <button class="btn" onclick="cargarFecha()">Cargar</button>
+    <button class="btn primary" onclick="enviarTelegram()">→ Telegram</button>
+    <a href="/charts" class="btn">Charts</a>
+  </div>
+</header>
+
+<!-- KPIs -->
+<div class="grid">
+  <div class="card">
+    <h2>Resumen del día</h2>
+    <div class="kpi">
+      <div class="kpi-item">
+        <div class="val" id="kpiTotal">—</div>
+        <div class="lbl">SEÑALES</div>
+      </div>
+      <div class="kpi-item">
+        <div class="call-put">
+          <div>
+            <div class="call" id="kpiCall">—</div>
+            <div class="sub">CALL</div>
+          </div>
+          <div style="color:var(--border);font-size:20px;align-self:center">|</div>
+          <div>
+            <div class="put" id="kpiPut">—</div>
+            <div class="sub">PUT</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="status-bar" id="statusBar">Cargando…</div>
+  </div>
+
+  <div class="card">
+    <h2>Por símbolo</h2>
+    <table>
+      <thead><tr><th>Símbolo</th><th>Estrategias</th><th>Cnt</th></tr></thead>
+      <tbody id="tbSym"><tr><td colspan="3" class="empty">—</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Estrategias -->
+<div class="card" style="margin-bottom:16px">
+  <h2>Por estrategia</h2>
+  <div id="estrategias"><span class="empty">Cargando…</span></div>
+</div>
+
+<!-- Señales que merecen atención -->
+<div class="card anomalias" id="cardAnomalia" style="margin-bottom:16px;display:none">
+  <h2>🔍 Estas señales merecen tu atención</h2>
+  <div id="anomalias"></div>
+</div>
+
+<!-- Lista completa -->
+<div class="card full">
+  <h2>Lista completa de señales</h2>
+  <table>
+    <thead><tr><th>Símbolo</th><th>Tipo</th><th>Dir</th><th>Vela</th><th>Hora</th><th>Label</th></tr></thead>
+    <tbody id="tbSeñales"><tr><td colspan="6" class="empty">Cargando…</td></tr></tbody>
+  </table>
+</div>
+
+<div id="toast"></div>
+
+<script>
+const RAILWAY = 'https://web-production-bf9d0.up.railway.app';
+const CALL_TIPOS = new Set(['GNA','GBA']);
+
+function tipoBase(t) { return (t||'').replace(/[+\d]+$/,''); }
+function esCall(t)   { return CALL_TIPOS.has(tipoBase(t)); }
+
+function fmt(v) { return v || '—'; }
+
+// ── Fecha por defecto: hoy ────────────────────────────────────────────────
+const fechaInput = document.getElementById('fechaInput');
+const hoy = new Date().toLocaleDateString('en-CA', {timeZone:'America/New_York'});
+fechaInput.value = hoy;
+
+// ── Cargar datos ──────────────────────────────────────────────────────────
+async function cargar(fecha) {
+  document.getElementById('statusBar').textContent = 'Cargando…';
+  try {
+    const r = await fetch(`${RAILWAY}/daily_debrief/data?fecha=${fecha}`);
+    const d = await r.json();
+    render(d);
+  } catch(e) {
+    document.getElementById('statusBar').textContent = 'Error: ' + e.message;
+  }
+}
+
+function cargarFecha() {
+  cargar(fechaInput.value || hoy);
+}
+
+// ── Render ────────────────────────────────────────────────────────────────
+function render(d) {
+  document.getElementById('kpiTotal').textContent = d.total_señales ?? '0';
+  document.getElementById('kpiCall').textContent  = d.call_count ?? '0';
+  document.getElementById('kpiPut').textContent   = d.put_count  ?? '0';
+  document.getElementById('statusBar').innerHTML  =
+    `<span>${d.fecha}</span> — actualizado ${new Date().toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'})}`;
+
+  // Por símbolo
+  const tbSym = document.getElementById('tbSym');
+  const por_simbolo = d.por_simbolo || {};
+  if (Object.keys(por_simbolo).length === 0) {
+    tbSym.innerHTML = '<tr><td colspan="3" class="empty">Sin señales</td></tr>';
+  } else {
+    tbSym.innerHTML = Object.entries(por_simbolo)
+      .sort((a,b) => b[1].length - a[1].length)
+      .map(([sym, tipos]) => `
+        <tr>
+          <td><b>${sym}</b></td>
+          <td style="font-size:11px;color:var(--dim)">${tipos.join(', ')}</td>
+          <td style="color:var(--accent);font-weight:700">${tipos.length}</td>
+        </tr>`)
+      .join('');
+  }
+
+  // Por estrategia (barras)
+  const por_est = d.por_estrategia || {};
+  const maxCount = Math.max(1, ...Object.values(por_est).map(s => s.length));
+  const divEst = document.getElementById('estrategias');
+  if (Object.keys(por_est).length === 0) {
+    divEst.innerHTML = '<span class="empty">Sin señales</span>';
+  } else {
+    divEst.innerHTML = Object.entries(por_est).map(([tipo, syms]) => `
+      <div class="strat-bar">
+        <span class="strat-name">${tipo}</span>
+        <span class="strat-count">${syms.length}</span>
+        <div class="bar-track"><div class="bar-fill" style="width:${syms.length/maxCount*100}%"></div></div>
+        <span class="strat-syms">${syms.join(', ')}</span>
+      </div>`).join('');
+  }
+
+  // Anomalías
+  const anomalias = d.anomalias || [];
+  const cardAnom = document.getElementById('cardAnomalia');
+  const divAnom  = document.getElementById('anomalias');
+  if (anomalias.length === 0) {
+    cardAnom.style.display = 'none';
+  } else {
+    cardAnom.style.display = 'block';
+    divAnom.innerHTML = anomalias.map(a => {
+      const cls = a.startsWith('ℹ️') ? 'info' : '';
+      return `<div class="anomalia-item ${cls}">${a}</div>`;
+    }).join('');
+  }
+
+  // Lista completa
+  const señales = d.señales || [];
+  const tbS = document.getElementById('tbSeñales');
+  if (señales.length === 0) {
+    tbS.innerHTML = '<tr><td colspan="6" class="empty">Sin señales para esta fecha</td></tr>';
+  } else {
+    tbS.innerHTML = señales.map(s => {
+      const call = esCall(s.tipo);
+      const tag  = call
+        ? '<span class="tag call">CALL</span>'
+        : '<span class="tag put">PUT</span>';
+      return `<tr>
+        <td><b>${s.simbolo}</b></td>
+        <td>${fmt(s.tipo)}</td>
+        <td>${tag}</td>
+        <td style="color:var(--dim)">${fmt(s.vela)}</td>
+        <td style="color:var(--dim)">${fmt(s.hora)}</td>
+        <td style="font-size:11px;color:var(--dim)">${fmt(s.label)}</td>
+      </tr>`;
+    }).join('');
+  }
+}
+
+// ── Enviar Telegram ───────────────────────────────────────────────────────
+async function enviarTelegram() {
+  const btn = event.target;
+  btn.disabled = true;
+  btn.textContent = 'Enviando…';
+  try {
+    const r = await fetch(`${RAILWAY}/daily_debrief/send?force=1`);
+    const d = await r.json();
+    showToast(d.ok ? '✓ Enviado a Telegram' : 'Error: ' + d.mensaje);
+  } catch(e) {
+    showToast('Error: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '→ Telegram';
+  }
+}
+
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 3000);
+}
+
+// ── Auto-refresh (5 min si hoy) ───────────────────────────────────────────
+cargar(hoy);
+setInterval(() => {
+  if (fechaInput.value === hoy) cargar(hoy);
+}, 5 * 60 * 1000);
+</script>
+</body>
+</html>
