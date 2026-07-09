@@ -1852,28 +1852,26 @@ function render() {
     }
   }
 
-  // ── Vela en formación — usa campo 'completa' del servidor ──
+  // ── Vela en formación — fuente de verdad: vela.completa del servidor ──
   if (esMercadoAbierto() && visible.length > 0) {
-    // Debug: verificar último elemento
-    const lastV = visible[visible.length - 1];
-    // Buscar la primera vela incompleta (completa===false)
     let idxFormacion = -1;
     for (let i = visible.length - 1; i >= 0; i--) {
       if (visible[i].completa === false) { idxFormacion = i; break; }
     }
-    // Si todas completas pero mercado abierto, marcar la última
-    if (idxFormacion < 0) idxFormacion = visible.length - 1;
-
-    const x = xOf(idxFormacion);
-    ctx.beginPath();
-    ctx.moveTo(x, M.top); ctx.lineTo(x, H-M.bottom);
-    ctx.strokeStyle = C.forming;
-    ctx.lineWidth = 1.5; ctx.setLineDash([3,3]);
-    ctx.stroke(); ctx.setLineDash([]);
-    ctx.fillStyle = '#58a6ff';
-    ctx.font = 'bold 10px JetBrains Mono';
-    ctx.textAlign = 'center';
-    ctx.fillText('EN FORMACIÓN', x, M.top+24);
+    // Solo dibujar si existe una vela con completa===false.
+    // Si backend dice completa=true en todas, no hay nada en formación.
+    if (idxFormacion >= 0) {
+      const x = xOf(idxFormacion);
+      ctx.beginPath();
+      ctx.moveTo(x, M.top); ctx.lineTo(x, H-M.bottom);
+      ctx.strokeStyle = C.forming;
+      ctx.lineWidth = 1.5; ctx.setLineDash([3,3]);
+      ctx.stroke(); ctx.setLineDash([]);
+      ctx.fillStyle = '#58a6ff';
+      ctx.font = 'bold 10px JetBrains Mono';
+      ctx.textAlign = 'center';
+      ctx.fillText('EN FORMACIÓN', x, M.top+24);
+    }
   }
 
   // ── Eje X (fechas) ──
