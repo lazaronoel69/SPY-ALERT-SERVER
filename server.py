@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v8.87
+AXIS Breakout Sentinel v8.88
 Estrategias: 1VR | 1VR+ | RPG | GNA | GBA | RCB/CNF
 Multi-activo: SPY, AAPL, BA, GLD
 v8.43: Portfolio fix — ejecutar_orden_tradier en webhook exec/reto | Panic Button al bid |
@@ -38,6 +38,7 @@ v8.63: FIX 1VR reconstruccion — ahora verifica condiciones adicionales (RCB 30
 v8.86: AX-OPS-001A: /version ahora resuelve git_commit desde RAILWAY_GIT_COMMIT_SHA/GIT_COMMIT/SOURCE_VERSION/COMMIT_SHA antes de intentar subprocess. Agrega deploy_id y service_name.
        AX-V7-003: /status velas_db usa ahora.date() (EST) en lugar de date.today() (UTC) — corrige tiene_hoy=false falso despues de medianoche UTC. Expande velas_db con ultima_barra_15m, fecha_ultima_barra, v7_hoy_presente, v7_hoy_completa, v7_bars, v7_bars_expected.
 v8.87: AX-V7-005: construir_v7_provisional ahora valida exactamente 3 barras 15min (15:00/15:15/15:30) y 13 barras 1min (15:45-15:57). Sort explicito, validacion OHLC, rechazo si falta cualquier pieza. bars=16, bars_expected=16.
+v8.88: AX-V7-005A: evaluar_v7_anticipada retorna True/False. loop_v7_anticipada reintenta V7 provisional cada 30s en ventana 3:58-3:59:30. HED separado (una vez por simbolo). ejecutado_358 solo se actualiza en exito. Telegram unico de omisiones a las 4:01.
 """
 
 import os
@@ -144,7 +145,7 @@ def loop_limpiar_ordenes():
             print(f"Error loop_limpiar_ordenes: {e}")
 
 # ── VERSIÓN ──────────────────────────────────────────────────────────────────
-AXIS_VERSION = "8.87"
+AXIS_VERSION = "8.88"
 _BUILD_DATE  = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
 
 def _git_commit_short():
@@ -1703,7 +1704,7 @@ def reporte_horario():
 # LOOP PRINCIPAL
 # ═══════════════════════════════════════════════════════════
 def monitor_loop():
-    print("AXIS Breakout Sentinel v8.87 iniciado...")
+    print("AXIS Breakout Sentinel v8.88 iniciado...")
     while True:
         ahora = datetime.now(EST)
         mins  = ahora.hour * 60 + ahora.minute
@@ -1861,7 +1862,7 @@ def test():
         else:
             lineas_canal.append(f"  {a}: OFF")
     enviar_telegram(
-        f"✅ <b>AXIS Breakout Sentinel v8.87</b>\n"
+        f"✅ <b>AXIS Breakout Sentinel v8.88</b>\n"
         f"<b>Hora:</b> {ahora.strftime('%A %d/%m/%Y %H:%M EST')}\n"
         f"<b>Mercado:</b> {'Abierto' if es_dia_mercado(ahora) else 'Cerrado'}\n"
         f"<b>1VR:</b> {'ON' if VR1_ON else 'OFF'} | "
@@ -2969,7 +2970,7 @@ def system_status():
         except Exception as e:
             velas_db[a] = {"status": f"❌ ERROR: {e}"}
     return jsonify({
-        "sistema": "AXIS Breakout Sentinel v8.87",
+        "sistema": "AXIS Breakout Sentinel v8.88",
         "hora_est": ahora.strftime("%Y-%m-%d %H:%M:%S EST"),
         "mercado": "ABIERTO ✅" if mercado_abierto else "CERRADO ⏸",
         "threads": threads_vivos, "activos": ACTIVOS,
@@ -3625,14 +3626,14 @@ def enviar_daily_debrief(force=False):
 
 def loop_v7_anticipada():
     """Thread V7 anticipada:
-    - 3:58 PM : V7 PROVISIONAL para los 7 activos no-SPY + HED para todos.
-    - 4:01 PM : corrige cierre V7 final para todos los activos.
-    - 4:01–4:13 : reintenta evaluar SPY con V7 final cada 30s.
-                  Avisa una sola vez si hay espera; log en reintentos intermedios.
-    - Cierre diario: ocurre cuando SPY está listo O se llega a las 4:14.
-                     Incluye barra diaria, snapshot, archivo de señales,
-                     resumen y daily debrief. Se ejecuta exactamente una vez.
-    v8.85"""
+    - 3:58–3:59 PM : V7 PROVISIONAL para los 7 activos no-SPY (retry cada 30s
+                     hasta 15:59:30). HED para todos los activos (una sola vez).
+    - 4:01 PM      : avisa omisiones de V7 provisional (Telegram único);
+                     corrige cierre V7 final para todos los activos.
+    - 4:01–4:13 PM : reintenta evaluar SPY con V7 final cada 30s.
+                     Avisa una sola vez si hay espera.
+    - Cierre diario: cuando SPY está listo O a las 4:14. Ejecuta una sola vez.
+    v8.88"""
     print("Thread V7 anticipada iniciado...")
     ejecutado_358 = set(); ejecutado_400 = set()
     fecha_actual = None
@@ -3644,17 +3645,37 @@ def loop_v7_anticipada():
                 fecha_actual = fecha_hoy
                 ejecutado_358 = set(); ejecutado_400 = set()
             if es_dia_mercado(ahora):
-                # ── 3:58 PM — V7 provisional activos no-SPY ──────────────────
-                if ahora.hour == 15 and ahora.minute == 58:
+                # ── 3:58–3:59 PM — V7 provisional + HED ─────────────────────
+                # Ventana: 15:58:00–15:59:30 (4 ticks de 30s). HED solo una vez
+                # por símbolo; V7 se reintenta en cada tick hasta éxito.
+                if ahora.hour == 15 and ahora.minute in (58, 59):
+                    # HED: ejecutar una sola vez por símbolo dentro de la ventana
+                    for simbolo in ACTIVOS_V7_ANTICIPADA_NOSPY:
+                        if f"hed_{simbolo}" not in ejecutado_358:
+                            evaluar_hed(simbolo)
+                            ejecutado_358.add(f"hed_{simbolo}")
+                    if "hed_spy" not in ejecutado_358:
+                        evaluar_hed("SPY")
+                        ejecutado_358.add("hed_spy")
+                    # V7 provisional: reintentar cada tick hasta que True
                     for simbolo in ACTIVOS_V7_ANTICIPADA_NOSPY:
                         if simbolo not in ejecutado_358:
-                            evaluar_v7_anticipada(simbolo); evaluar_hed(simbolo)
-                            ejecutado_358.add(simbolo)
-                    if "hed_spy" not in ejecutado_358:
-                        evaluar_hed("SPY"); ejecutado_358.add("hed_spy")
+                            if evaluar_v7_anticipada(simbolo):
+                                ejecutado_358.add(simbolo)
 
-                # ── 4:01 PM — Corregir cierre V7 final (todos los activos) ───
+                # ── 4:01 PM — Omisiones + corrección V7 final ────────────────
                 if ahora.hour == 16 and ahora.minute == 1:
+                    # Telegram único si algún símbolo no pudo evaluarse
+                    if "v7_358_omitidos" not in ejecutado_400:
+                        ejecutado_400.add("v7_358_omitidos")
+                        omitidos = [s for s in ACTIVOS_V7_ANTICIPADA_NOSPY
+                                    if s not in ejecutado_358]
+                        if omitidos:
+                            enviar_telegram(
+                                f"⚠️ <b>AXIS</b> — V7 provisional omitida para: "
+                                f"{', '.join(omitidos)}. Datos incompletos en "
+                                f"ventana 3:58–3:59."
+                            )
                     for simbolo in ACTIVOS_V7_ANTICIPADA:
                         if simbolo not in ejecutado_400:
                             corregir_cierre_v7(simbolo); ejecutado_400.add(simbolo)
@@ -3665,16 +3686,14 @@ def loop_v7_anticipada():
                         if evaluar_v7_final_spy():
                             ejecutado_400.add("spy_final")
                         elif "spy_wait_notified" not in ejecutado_400:
-                            # Primera falla: avisar una sola vez
                             enviar_telegram(
                                 "⏳ <b>AXIS</b> — Esperando V7 final de SPY "
                                 "antes de cerrar el reporte diario."
                             )
                             ejecutado_400.add("spy_wait_notified")
-                        # Reintentos intermedios: solo log (dentro de evaluar_v7_final_spy)
 
                 # ── Cierre diario: SPY listo O ventana agotada (≥ 4:14) ───────
-                _spy_done   = "spy_final"   in ejecutado_400
+                _spy_done   = "spy_final" in ejecutado_400
                 _ventana_ok = ahora.hour == 16 and ahora.minute >= 14
                 if (_spy_done or _ventana_ok) and "cierre_diario" not in ejecutado_400:
                     ejecutado_400.add("cierre_diario")
@@ -3815,28 +3834,23 @@ def construir_v7_provisional(simbolo, ahora):
         return None
 
 def evaluar_v7_anticipada(simbolo):
-    """Evalua estrategias a las 3:58 PM usando una V7 PROVISIONAL construida
-    con datos reales (3 barras de 15min completas: 15:00/15:15/15:30 + 13
-    barras de 1min: 15:45-15:57), en vez de depender de una 4ta barra de
-    15min incompleta. Solo se usa para activos no-SPY.
-    Esta V7 provisional NUNCA se guarda en la base de datos -- solo vive
-    en memoria para esta evaluacion puntual."""
+    """Evalua estrategias usando una V7 PROVISIONAL (3:58–3:59 PM).
+    Retorna True si evaluar_activo() se ejecutó con éxito.
+    Retorna False en cualquier otro caso (sin velas, sin provisional, excepción).
+    No envía Telegram ni duerme — el loop gestiona reintentos y notificaciones.
+    v8.88"""
     global _v7_eval_origen
     ahora = datetime.now(EST)
-    print(f"V7 anticipada {simbolo} — {ahora.strftime('%H:%M EST')}")
+    print(f"V7 anticipada {simbolo} — {ahora.strftime('%H:%M:%S EST')}")
     try:
         velas = get_velas(simbolo, outputsize=50)
         if not velas:
-            time.sleep(60)
-            velas = get_velas(simbolo, outputsize=50)
-        if not velas:
-            enviar_telegram(f"⚠️ <b>AXIS — Sin datos Tradier</b>\n<b>Activo:</b> {simbolo}\nV7 anticipada omitida.")
-            return
+            print(f"{simbolo} V7 anticipada: sin datos de velas")
+            return False
 
         v7_provisional = construir_v7_provisional(simbolo, ahora)
         if not v7_provisional:
-            print(f"{simbolo}: no se pudo construir V7 provisional, omitiendo evaluacion anticipada")
-            return
+            return False
 
         fecha_hoy_str = ahora.strftime("%Y-%m-%d")
         velas_con_provisional = [v for v in velas if not (v.get("vela") == "V7" and v["datetime"].startswith(fecha_hoy_str))]
@@ -3844,8 +3858,10 @@ def evaluar_v7_anticipada(simbolo):
 
         _v7_eval_origen = "V7_ANTICIPADA_1558"
         evaluar_activo(simbolo, velas_con_provisional, ahora.replace(hour=16, minute=1))
+        return True
     except Exception as e:
         print(f"Error V7 anticipada {simbolo}: {e}")
+        return False
     finally:
         _v7_eval_origen = None
 
