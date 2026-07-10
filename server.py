@@ -3584,10 +3584,14 @@ def enviar_daily_debrief(force=False):
 
 def loop_v7_anticipada():
     """Thread V7 anticipada:
-    - 3:58 PM: evalúa V7 PROVISIONAL para todos los activos EXCEPTO SPY.
-      SPY queda excluido de este bloque (no usa provisional).
-    - 4:01 PM: corrige cierre V7 final para todos; evalúa SPY con V7 real.
-    v8.84"""
+    - 3:58 PM : V7 PROVISIONAL para los 7 activos no-SPY + HED para todos.
+    - 4:01 PM : corrige cierre V7 final para todos los activos.
+    - 4:01–4:13 : reintenta evaluar SPY con V7 final cada 30s.
+                  Avisa una sola vez si hay espera; log en reintentos intermedios.
+    - Cierre diario: ocurre cuando SPY está listo O se llega a las 4:14.
+                     Incluye barra diaria, snapshot, archivo de señales,
+                     resumen y daily debrief. Se ejecuta exactamente una vez.
+    v8.85"""
     print("Thread V7 anticipada iniciado...")
     ejecutado_358 = set(); ejecutado_400 = set()
     fecha_actual = None
@@ -3599,6 +3603,7 @@ def loop_v7_anticipada():
                 fecha_actual = fecha_hoy
                 ejecutado_358 = set(); ejecutado_400 = set()
             if es_dia_mercado(ahora):
+                # ── 3:58 PM — V7 provisional activos no-SPY ──────────────────
                 if ahora.hour == 15 and ahora.minute == 58:
                     for simbolo in ACTIVOS_V7_ANTICIPADA_NOSPY:
                         if simbolo not in ejecutado_358:
@@ -3606,32 +3611,54 @@ def loop_v7_anticipada():
                             ejecutado_358.add(simbolo)
                     if "hed_spy" not in ejecutado_358:
                         evaluar_hed("SPY"); ejecutado_358.add("hed_spy")
+
+                # ── 4:01 PM — Corregir cierre V7 final (todos los activos) ───
                 if ahora.hour == 16 and ahora.minute == 1:
                     for simbolo in ACTIVOS_V7_ANTICIPADA:
                         if simbolo not in ejecutado_400:
                             corregir_cierre_v7(simbolo); ejecutado_400.add(simbolo)
-                    if "resumen" not in ejecutado_400:
-                        ejecutado_400.add("resumen")
-                        fecha_hoy_v7 = ahora.strftime("%Y-%m-%d")
-                        for simbolo_daily in ACTIVOS:
-                            try:
-                                agregar_barra_diaria(simbolo_daily, fecha_hoy_v7)
-                            except Exception as e:
-                                print(f"Error agregando barra diaria {simbolo_daily}: {e}")
-                        guardar_snapshot_precios(ahora)
-                        archivar_señales_dia(ahora.strftime("%Y-%m-%d"))
-                        enviar_resumen_diario(ahora)
-                # SPY V7 final: reintenta cada 30s desde las 4:01 hasta las 4:09
-                # Si la V7 no está completa, evaluar_v7_final_spy() retorna False
-                # y el loop vuelve a intentar en el próximo tick de 30s.
-                if ahora.hour == 16 and 1 <= ahora.minute <= 9:
+
+                # ── 4:01–4:13 — Espera SPY V7 final, reintento cada 30s ──────
+                if ahora.hour == 16 and 1 <= ahora.minute <= 13:
                     if "spy_final" not in ejecutado_400:
                         if evaluar_v7_final_spy():
                             ejecutado_400.add("spy_final")
-                if ahora.hour == 16 and ahora.minute == 10:
-                    if "debrief" not in ejecutado_400:
-                        ejecutado_400.add("debrief")
-                        enviar_daily_debrief()
+                        elif "spy_wait_notified" not in ejecutado_400:
+                            # Primera falla: avisar una sola vez
+                            enviar_telegram(
+                                "⏳ <b>AXIS</b> — Esperando V7 final de SPY "
+                                "antes de cerrar el reporte diario."
+                            )
+                            ejecutado_400.add("spy_wait_notified")
+                        # Reintentos intermedios: solo log (dentro de evaluar_v7_final_spy)
+
+                # ── Cierre diario: SPY listo O ventana agotada (≥ 4:14) ───────
+                _spy_done   = "spy_final"   in ejecutado_400
+                _ventana_ok = ahora.hour == 16 and ahora.minute >= 14
+                if (_spy_done or _ventana_ok) and "cierre_diario" not in ejecutado_400:
+                    ejecutado_400.add("cierre_diario")
+                    if _spy_done and "spy_wait_notified" in ejecutado_400:
+                        enviar_telegram(
+                            "✅ <b>AXIS</b> — V7 final de SPY confirmada. "
+                            "Evaluación y cierre diario completados."
+                        )
+                    elif not _spy_done:
+                        enviar_telegram(
+                            "⚠️ <b>AXIS</b> — V7 final de SPY no estuvo disponible "
+                            "antes del límite operativo. SPY fue omitido del cierre "
+                            "de hoy por datos incompletos."
+                        )
+                    fecha_cierre = ahora.strftime("%Y-%m-%d")
+                    for simbolo_daily in ACTIVOS:
+                        try:
+                            agregar_barra_diaria(simbolo_daily, fecha_cierre)
+                        except Exception as e:
+                            print(f"Error agregando barra diaria {simbolo_daily}: {e}")
+                    guardar_snapshot_precios(ahora)
+                    archivar_señales_dia(fecha_cierre)
+                    enviar_resumen_diario(ahora)
+                    enviar_daily_debrief()
+
             time.sleep(30)
         except Exception as e:
             print(f"Error loop V7 anticipada: {e}")
@@ -3752,26 +3779,27 @@ def evaluar_v7_anticipada(simbolo):
 
 
 def evaluar_v7_final_spy():
-    """Evalúa SPY a las 4:01–4:09 PM con su V7 FINAL real.
+    """Evalúa SPY con su V7 FINAL real (4 barras 15min completas).
     Retorna True si la evaluación se completó con éxito.
-    Retorna False si la V7 aún no tiene las 4 barras completas
-    (el loop reintenta cada 30s hasta las 4:09 PM).
-    Envía Telegram solo cuando velas es None (fallo total de datos)."""
+    Retorna False en cualquier otro caso (velas ausentes, V7 incompleta,
+    excepción) — el loop gestiona el reintento y los mensajes de estado,
+    de modo que esta función NO envía Telegram propia para evitar spam."""
     global _v7_eval_origen
     ahora = datetime.now(EST)
     fecha_hoy = ahora.strftime("%Y-%m-%d")
     try:
         velas = get_velas("SPY", outputsize=50)
         if not velas:
-            enviar_telegram("⚠️ <b>AXIS — Sin datos Tradier</b>\n<b>Activo:</b> SPY\nV7 final omitida.")
+            print("SPY V7 final: sin datos de velas — reintentando en 30s")
             return False
 
-        # Guard: V7 de hoy debe existir y tener las 4 barras completas
+        # Guard: V7 de hoy con completa=True y al menos 4 barras
         v7_hoy = next(
             (v for v in velas
              if v.get("vela") == "V7"
              and v["datetime"].startswith(fecha_hoy)
-             and v.get("completa") is True),
+             and v.get("completa") is True
+             and v.get("bars", 0) >= 4),
             None
         )
         if v7_hoy is None:
