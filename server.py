@@ -1579,7 +1579,10 @@ def registrar_senal_disparada(simbolo, estrategia, hora_label=None):
             vela_calc = mapa_vela.get(hora_num)
         except Exception:
             vela_calc = None
-        ed["señales_detalle"].append({"tipo": tipo_corto, "vela": vela_calc, "hora": hora_label})
+        entry = {"tipo": tipo_corto, "vela": vela_calc, "hora": hora_label}
+        if _v7_eval_origen:
+            entry["origen"] = _v7_eval_origen
+        ed["señales_detalle"].append(entry)
     guardar_estado_dia()
 
 def enviar_senal_con_botones(simbolo, estrategia, hora_label, precio_vela, tipo_opcion, extra=""):
@@ -3210,6 +3213,8 @@ def loop_polling_posiciones():
 # V7 ANTICIPADA
 # ═══════════════════════════════════════════════════════════
 ACTIVOS_V7_ANTICIPADA = ["SPY", "AAPL", "BA", "GLD", "NVDA", "AMZN", "GOOG", "META"]
+ACTIVOS_V7_ANTICIPADA_NOSPY = [s for s in ACTIVOS_V7_ANTICIPADA if s != "SPY"]
+_v7_eval_origen = None  # "V7_ANTICIPADA_1558" | "V7_FINAL_1600" | None
 
 def guardar_snapshot_precios(ahora):
     global _portfolio
@@ -3506,9 +3511,9 @@ def detectar_anomalias_db(señales, por_simbolo, por_estrategia):
                     "accion_recomendada": "MONITOREAR",
                 })
 
-    # E. SEÑAL_TARDIA: V6 o V7
+    # E. SEÑAL_TARDIA: V6 (V7 se evalúa siempre por la ruta anticipada — no es tardía)
     for s in señales:
-        if s.get("vela") in ("V6", "V7"):
+        if s.get("vela") == "V6":
             anomalias.append({
                 "tipo":               "SEÑAL_TARDIA",
                 "prioridad":          "BAJA",
@@ -3578,10 +3583,11 @@ def enviar_daily_debrief(force=False):
         print(f"Error enviar_daily_debrief: {e}")
 
 def loop_v7_anticipada():
-    """Todos los activos, incluyendo SPY, se tratan exactamente igual --
-    sin excepciones de horario. Evaluacion anticipada a las 3:58 PM con
-    vela V7 provisional (3x15min + barras 1min), cierre y resumen a las
-    4:01 PM con la V7 final real. v8.83"""
+    """Thread V7 anticipada:
+    - 3:58 PM: evalúa V7 PROVISIONAL para todos los activos EXCEPTO SPY.
+      SPY queda excluido de este bloque (no usa provisional).
+    - 4:01 PM: corrige cierre V7 final para todos; evalúa SPY con V7 real.
+    v8.84"""
     print("Thread V7 anticipada iniciado...")
     ejecutado_358 = set(); ejecutado_400 = set()
     fecha_actual = None
@@ -3594,14 +3600,18 @@ def loop_v7_anticipada():
                 ejecutado_358 = set(); ejecutado_400 = set()
             if es_dia_mercado(ahora):
                 if ahora.hour == 15 and ahora.minute == 58:
-                    for simbolo in ACTIVOS_V7_ANTICIPADA:
+                    for simbolo in ACTIVOS_V7_ANTICIPADA_NOSPY:
                         if simbolo not in ejecutado_358:
                             evaluar_v7_anticipada(simbolo); evaluar_hed(simbolo)
                             ejecutado_358.add(simbolo)
+                    if "hed_spy" not in ejecutado_358:
+                        evaluar_hed("SPY"); ejecutado_358.add("hed_spy")
                 if ahora.hour == 16 and ahora.minute == 1:
                     for simbolo in ACTIVOS_V7_ANTICIPADA:
                         if simbolo not in ejecutado_400:
                             corregir_cierre_v7(simbolo); ejecutado_400.add(simbolo)
+                    if "spy_final" not in ejecutado_400:
+                        evaluar_v7_final_spy(); ejecutado_400.add("spy_final")
                     if "resumen" not in ejecutado_400:
                         ejecutado_400.add("resumen")
                         fecha_hoy_v7 = ahora.strftime("%Y-%m-%d")
@@ -3643,7 +3653,7 @@ def construir_v7_provisional(simbolo, ahora):
             headers=TRADIER_HEADERS_REAL,
             params={
                 "symbol": simbolo, "interval": "15min",
-                "start": f"{hoy_str} 15:00", "end": f"{hoy_str} 15:45",
+                "start": f"{hoy_str} 15:00", "end": f"{hoy_str} 15:44",
                 "session_filter": "open",
             },
             timeout=15
@@ -3661,7 +3671,7 @@ def construir_v7_provisional(simbolo, ahora):
             headers=TRADIER_HEADERS_REAL,
             params={
                 "symbol": simbolo, "interval": "1min",
-                "start": f"{hoy_str} 15:45", "end": ahora.strftime("%Y-%m-%d %H:%M"),
+                "start": f"{hoy_str} 15:45", "end": f"{hoy_str} 15:57",
                 "session_filter": "open",
             },
             timeout=15
@@ -3701,12 +3711,13 @@ def construir_v7_provisional(simbolo, ahora):
         return None
 
 def evaluar_v7_anticipada(simbolo):
-    """Evalua estrategias a las 3:58 PM (4:14 PM SPY) usando una V7 PROVISIONAL
-    construida con datos reales (3 barras de 15min + barras de 1min hasta el
-    momento), en vez de depender de una 4ta barra de 15min incompleta.
-    Esta V7 provisional NUNCA se guarda en la base de datos -- solo se usa
-    en memoria para esta evaluacion puntual. La version final y real de V7
-    se construye y guarda normalmente a las 4:01/4:16 PM, sin cambios."""
+    """Evalua estrategias a las 3:58 PM usando una V7 PROVISIONAL construida
+    con datos reales (3 barras de 15min completas: 15:00/15:15/15:30 + 13
+    barras de 1min: 15:45-15:57), en vez de depender de una 4ta barra de
+    15min incompleta. Solo se usa para activos no-SPY.
+    Esta V7 provisional NUNCA se guarda en la base de datos -- solo vive
+    en memoria para esta evaluacion puntual."""
+    global _v7_eval_origen
     ahora = datetime.now(EST)
     print(f"V7 anticipada {simbolo} — {ahora.strftime('%H:%M EST')}")
     try:
@@ -3727,9 +3738,32 @@ def evaluar_v7_anticipada(simbolo):
         velas_con_provisional = [v for v in velas if not (v.get("vela") == "V7" and v["datetime"].startswith(fecha_hoy_str))]
         velas_con_provisional.insert(0, v7_provisional)
 
+        _v7_eval_origen = "V7_ANTICIPADA_1558"
         evaluar_activo(simbolo, velas_con_provisional, ahora.replace(hour=16, minute=1))
     except Exception as e:
         print(f"Error V7 anticipada {simbolo}: {e}")
+    finally:
+        _v7_eval_origen = None
+
+
+def evaluar_v7_final_spy():
+    """Evalúa SPY a las 4:01 PM con su V7 FINAL real (4 barras de 15min
+    completas: 15:00/15:15/15:30/15:45). SPY no usa provisional — su ventana
+    operativa se extiende hasta las 4:15 PM para ejecutar la orden."""
+    global _v7_eval_origen
+    ahora = datetime.now(EST)
+    print(f"V7 final SPY — {ahora.strftime('%H:%M EST')}")
+    try:
+        velas = get_velas("SPY", outputsize=50)
+        if not velas:
+            enviar_telegram("⚠️ <b>AXIS — Sin datos Tradier</b>\n<b>Activo:</b> SPY\nV7 final omitida.")
+            return
+        _v7_eval_origen = "V7_FINAL_1600"
+        evaluar_activo("SPY", velas, ahora.replace(hour=16, minute=1))
+    except Exception as e:
+        print(f"Error V7 final SPY: {e}")
+    finally:
+        _v7_eval_origen = None
 
 def corregir_cierre_v7(simbolo):
     print(f"Correccion cierre V7 {simbolo} — {datetime.now(EST).strftime('%H:%M EST')}")
