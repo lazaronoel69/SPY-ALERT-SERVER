@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v8.85
+AXIS Breakout Sentinel v8.86
 Estrategias: 1VR | 1VR+ | RPG | GNA | GBA | RCB/CNF
 Multi-activo: SPY, AAPL, BA, GLD
 v8.43: Portfolio fix — ejecutar_orden_tradier en webhook exec/reto | Panic Button al bid |
@@ -35,6 +35,8 @@ v8.63: FIX 1VR reconstruccion — ahora verifica condiciones adicionales (RCB 30
        FIX landing page — mercado abierto solo en horario 9:30-16:00 EST.
        FIX /bitacora/data — agrega ahora_est timestamp.
        NEW /source endpoint — expone codigo fuente para lectura de AI.
+v8.86: AX-OPS-001A: /version ahora resuelve git_commit desde RAILWAY_GIT_COMMIT_SHA/GIT_COMMIT/SOURCE_VERSION/COMMIT_SHA antes de intentar subprocess. Agrega deploy_id y service_name.
+       AX-V7-003: /status velas_db usa ahora.date() (EST) en lugar de date.today() (UTC) — corrige tiene_hoy=false falso despues de medianoche UTC. Expande velas_db con ultima_barra_15m, fecha_ultima_barra, v7_hoy_presente, v7_hoy_completa, v7_bars, v7_bars_expected.
 """
 
 import os
@@ -141,21 +143,29 @@ def loop_limpiar_ordenes():
             print(f"Error loop_limpiar_ordenes: {e}")
 
 # ── VERSIÓN ──────────────────────────────────────────────────────────────────
-AXIS_VERSION = "8.85"
+AXIS_VERSION = "8.86"
 _BUILD_DATE  = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
 
 def _git_commit_short():
+    for env_var in ("RAILWAY_GIT_COMMIT_SHA", "GIT_COMMIT", "SOURCE_VERSION", "COMMIT_SHA"):
+        val = os.environ.get(env_var, "")
+        if val:
+            return val[:7]
     try:
-        import subprocess
-        return subprocess.check_output(
-            ["git", "rev-parse", "--short", "HEAD"],
-            stderr=subprocess.DEVNULL, timeout=3
-        ).decode().strip()
+        import subprocess, os.path as _osp
+        if _osp.isdir(".git"):
+            return subprocess.check_output(
+                ["git", "rev-parse", "--short", "HEAD"],
+                stderr=subprocess.DEVNULL, timeout=3
+            ).decode().strip()
     except Exception:
-        return os.environ.get("GIT_COMMIT", "unknown")
+        pass
+    return "unknown"
 
-_GIT_COMMIT = _git_commit_short()
-_ENVIRONMENT = "production" if os.environ.get("RAILWAY_ENVIRONMENT") or os.environ.get("RAILWAY_SERVICE_NAME") else "development"
+_GIT_COMMIT   = _git_commit_short()
+_ENVIRONMENT  = "production" if os.environ.get("RAILWAY_ENVIRONMENT") or os.environ.get("RAILWAY_SERVICE_NAME") else "development"
+_DEPLOY_ID    = (os.environ.get("RAILWAY_DEPLOYMENT_ID") or os.environ.get("RAILWAY_DEPLOYMENT_INSTANCE_ID") or "unknown")[:12]
+_SERVICE_NAME = os.environ.get("RAILWAY_SERVICE_NAME", "unknown")
 
 # AX-003: ACTIVOS, HORAS_REPORTE, ACTIVOS_SPY, SISTEMA_ACTIVO y switches
 # de estrategia movidos a axis_config.py, mismos valores y nombres.
@@ -1692,7 +1702,7 @@ def reporte_horario():
 # LOOP PRINCIPAL
 # ═══════════════════════════════════════════════════════════
 def monitor_loop():
-    print("AXIS Breakout Sentinel v8.85 iniciado...")
+    print("AXIS Breakout Sentinel v8.86 iniciado...")
     while True:
         ahora = datetime.now(EST)
         mins  = ahora.hour * 60 + ahora.minute
@@ -1850,7 +1860,7 @@ def test():
         else:
             lineas_canal.append(f"  {a}: OFF")
     enviar_telegram(
-        f"✅ <b>AXIS Breakout Sentinel v8.85</b>\n"
+        f"✅ <b>AXIS Breakout Sentinel v8.86</b>\n"
         f"<b>Hora:</b> {ahora.strftime('%A %d/%m/%Y %H:%M EST')}\n"
         f"<b>Mercado:</b> {'Abierto' if es_dia_mercado(ahora) else 'Cerrado'}\n"
         f"<b>1VR:</b> {'ON' if VR1_ON else 'OFF'} | "
@@ -2885,9 +2895,8 @@ def ruta_velas():
 
 @app.route("/status", methods=["GET"])
 def system_status():
-    from datetime import date
     ahora    = datetime.now(EST)
-    hoy      = date.today()
+    hoy      = ahora.date()  # EST date — avoids UTC-off-by-one after midnight
     import threading
     threads_vivos = [t.name for t in threading.enumerate()]
     mercado_abierto = es_dia_mercado(ahora) and (570 <= ahora.hour * 60 + ahora.minute < 960)
@@ -2931,21 +2940,35 @@ def system_status():
         except:
             archivos_data[fname] = "NO ENCONTRADO ❌"
     velas_db = {}
+    hoy_str  = hoy.strftime("%Y-%m-%d")
     for a in ACTIVOS:
         try:
-            local   = cargar_velas_local(a)
-            b15     = [b for b in local["barras"] if b.get("interval") == "15min"]
-            tiene_hoy = any(b["time"].startswith(hoy.strftime("%Y-%m-%d")) for b in b15) if b15 else False
+            local      = cargar_velas_local(a)
+            b15        = [b for b in local["barras"] if b.get("interval") == "15min"]
+            b15_hoy    = [b for b in b15 if b["time"].startswith(hoy_str)]
+            tiene_hoy  = bool(b15_hoy)
+            ultima_15m = b15[-1]["time"] if b15 else "—"
+            fecha_ultima = ultima_15m[:10] if ultima_15m != "—" else "—"
+            # V7: 15:00–15:45 bars (hour == "15") for today
+            v7_hoy     = [b for b in b15_hoy if b["time"][11:13] == "15"]
+            v7_bars_n  = len(v7_hoy)
+            es_mktday  = es_dia_mercado(ahora)
             velas_db[a] = {
-                "barras_15min": len(b15), "ultima_barra": local.get("ultima_barra", "—"),
-                "tiene_hoy": tiene_hoy,
-                "status": "✅ OK" if (len(b15) > 100 and (tiene_hoy or not es_dia_mercado(ahora))) else
-                          "⚠️ SIN HOY" if (len(b15) > 100 and es_dia_mercado(ahora)) else "❌ VACÍO",
+                "barras_15min":       len(b15),
+                "ultima_barra_15m":   ultima_15m,
+                "fecha_ultima_barra": fecha_ultima,
+                "tiene_hoy":          tiene_hoy,
+                "v7_hoy_presente":    v7_bars_n > 0,
+                "v7_hoy_completa":    v7_bars_n >= 4,
+                "v7_bars":            v7_bars_n,
+                "v7_bars_expected":   4,
+                "status": "✅ OK" if (len(b15) > 100 and (tiene_hoy or not es_mktday)) else
+                          "⚠️ SIN HOY" if (len(b15) > 100 and es_mktday) else "❌ VACÍO",
             }
         except Exception as e:
             velas_db[a] = {"status": f"❌ ERROR: {e}"}
     return jsonify({
-        "sistema": "AXIS Breakout Sentinel v8.85",
+        "sistema": "AXIS Breakout Sentinel v8.86",
         "hora_est": ahora.strftime("%Y-%m-%d %H:%M:%S EST"),
         "mercado": "ABIERTO ✅" if mercado_abierto else "CERRADO ⏸",
         "threads": threads_vivos, "activos": ACTIVOS,
@@ -4081,12 +4104,14 @@ def success_rate_data():
 def version_endpoint():
     import sys
     return jsonify({
-        "axis_version": AXIS_VERSION,
-        "git_commit":   _GIT_COMMIT,
-        "build_date":   _BUILD_DATE,
-        "environment":  _ENVIRONMENT,
+        "axis_version":   AXIS_VERSION,
+        "git_commit":     _GIT_COMMIT,
+        "build_date":     _BUILD_DATE,
+        "environment":    _ENVIRONMENT,
+        "deploy_id":      _DEPLOY_ID,
+        "service_name":   _SERVICE_NAME,
         "python_version": sys.version.split()[0],
-        "status":       "OK",
+        "status":         "OK",
     }), 200
 
 # ═══════════════════════════════════════════════════════════
