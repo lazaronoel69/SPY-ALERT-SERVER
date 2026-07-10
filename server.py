@@ -3610,8 +3610,6 @@ def loop_v7_anticipada():
                     for simbolo in ACTIVOS_V7_ANTICIPADA:
                         if simbolo not in ejecutado_400:
                             corregir_cierre_v7(simbolo); ejecutado_400.add(simbolo)
-                    if "spy_final" not in ejecutado_400:
-                        evaluar_v7_final_spy(); ejecutado_400.add("spy_final")
                     if "resumen" not in ejecutado_400:
                         ejecutado_400.add("resumen")
                         fecha_hoy_v7 = ahora.strftime("%Y-%m-%d")
@@ -3623,6 +3621,13 @@ def loop_v7_anticipada():
                         guardar_snapshot_precios(ahora)
                         archivar_señales_dia(ahora.strftime("%Y-%m-%d"))
                         enviar_resumen_diario(ahora)
+                # SPY V7 final: reintenta cada 30s desde las 4:01 hasta las 4:09
+                # Si la V7 no está completa, evaluar_v7_final_spy() retorna False
+                # y el loop vuelve a intentar en el próximo tick de 30s.
+                if ahora.hour == 16 and 1 <= ahora.minute <= 9:
+                    if "spy_final" not in ejecutado_400:
+                        if evaluar_v7_final_spy():
+                            ejecutado_400.add("spy_final")
                 if ahora.hour == 16 and ahora.minute == 10:
                     if "debrief" not in ejecutado_400:
                         ejecutado_400.add("debrief")
@@ -3747,21 +3752,44 @@ def evaluar_v7_anticipada(simbolo):
 
 
 def evaluar_v7_final_spy():
-    """Evalúa SPY a las 4:01 PM con su V7 FINAL real (4 barras de 15min
-    completas: 15:00/15:15/15:30/15:45). SPY no usa provisional — su ventana
-    operativa se extiende hasta las 4:15 PM para ejecutar la orden."""
+    """Evalúa SPY a las 4:01–4:09 PM con su V7 FINAL real.
+    Retorna True si la evaluación se completó con éxito.
+    Retorna False si la V7 aún no tiene las 4 barras completas
+    (el loop reintenta cada 30s hasta las 4:09 PM).
+    Envía Telegram solo cuando velas es None (fallo total de datos)."""
     global _v7_eval_origen
     ahora = datetime.now(EST)
-    print(f"V7 final SPY — {ahora.strftime('%H:%M EST')}")
+    fecha_hoy = ahora.strftime("%Y-%m-%d")
     try:
         velas = get_velas("SPY", outputsize=50)
         if not velas:
             enviar_telegram("⚠️ <b>AXIS — Sin datos Tradier</b>\n<b>Activo:</b> SPY\nV7 final omitida.")
-            return
+            return False
+
+        # Guard: V7 de hoy debe existir y tener las 4 barras completas
+        v7_hoy = next(
+            (v for v in velas
+             if v.get("vela") == "V7"
+             and v["datetime"].startswith(fecha_hoy)
+             and v.get("completa") is True),
+            None
+        )
+        if v7_hoy is None:
+            bars = next(
+                (v.get("bars", 0) for v in velas
+                 if v.get("vela") == "V7" and v["datetime"].startswith(fecha_hoy)),
+                0
+            )
+            print(f"SPY V7 final aún no completa ({bars}/4 barras) — reintentando en 30s")
+            return False
+
+        print(f"SPY V7 final lista ({v7_hoy.get('bars','?')}/4 barras) — evaluando estrategias")
         _v7_eval_origen = "V7_FINAL_1600"
         evaluar_activo("SPY", velas, ahora.replace(hour=16, minute=1))
+        return True
     except Exception as e:
         print(f"Error V7 final SPY: {e}")
+        return False
     finally:
         _v7_eval_origen = None
 
