@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v8.86
+AXIS Breakout Sentinel v8.87
 Estrategias: 1VR | 1VR+ | RPG | GNA | GBA | RCB/CNF
 Multi-activo: SPY, AAPL, BA, GLD
 v8.43: Portfolio fix — ejecutar_orden_tradier en webhook exec/reto | Panic Button al bid |
@@ -37,6 +37,7 @@ v8.63: FIX 1VR reconstruccion — ahora verifica condiciones adicionales (RCB 30
        NEW /source endpoint — expone codigo fuente para lectura de AI.
 v8.86: AX-OPS-001A: /version ahora resuelve git_commit desde RAILWAY_GIT_COMMIT_SHA/GIT_COMMIT/SOURCE_VERSION/COMMIT_SHA antes de intentar subprocess. Agrega deploy_id y service_name.
        AX-V7-003: /status velas_db usa ahora.date() (EST) en lugar de date.today() (UTC) — corrige tiene_hoy=false falso despues de medianoche UTC. Expande velas_db con ultima_barra_15m, fecha_ultima_barra, v7_hoy_presente, v7_hoy_completa, v7_bars, v7_bars_expected.
+v8.87: AX-V7-005: construir_v7_provisional ahora valida exactamente 3 barras 15min (15:00/15:15/15:30) y 13 barras 1min (15:45-15:57). Sort explicito, validacion OHLC, rechazo si falta cualquier pieza. bars=16, bars_expected=16.
 """
 
 import os
@@ -143,7 +144,7 @@ def loop_limpiar_ordenes():
             print(f"Error loop_limpiar_ordenes: {e}")
 
 # ── VERSIÓN ──────────────────────────────────────────────────────────────────
-AXIS_VERSION = "8.86"
+AXIS_VERSION = "8.87"
 _BUILD_DATE  = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
 
 def _git_commit_short():
@@ -1702,7 +1703,7 @@ def reporte_horario():
 # LOOP PRINCIPAL
 # ═══════════════════════════════════════════════════════════
 def monitor_loop():
-    print("AXIS Breakout Sentinel v8.86 iniciado...")
+    print("AXIS Breakout Sentinel v8.87 iniciado...")
     while True:
         ahora = datetime.now(EST)
         mins  = ahora.hour * 60 + ahora.minute
@@ -1860,7 +1861,7 @@ def test():
         else:
             lineas_canal.append(f"  {a}: OFF")
     enviar_telegram(
-        f"✅ <b>AXIS Breakout Sentinel v8.86</b>\n"
+        f"✅ <b>AXIS Breakout Sentinel v8.87</b>\n"
         f"<b>Hora:</b> {ahora.strftime('%A %d/%m/%Y %H:%M EST')}\n"
         f"<b>Mercado:</b> {'Abierto' if es_dia_mercado(ahora) else 'Cerrado'}\n"
         f"<b>1VR:</b> {'ON' if VR1_ON else 'OFF'} | "
@@ -2968,7 +2969,7 @@ def system_status():
         except Exception as e:
             velas_db[a] = {"status": f"❌ ERROR: {e}"}
     return jsonify({
-        "sistema": "AXIS Breakout Sentinel v8.86",
+        "sistema": "AXIS Breakout Sentinel v8.87",
         "hora_est": ahora.strftime("%Y-%m-%d %H:%M:%S EST"),
         "mercado": "ABIERTO ✅" if mercado_abierto else "CERRADO ⏸",
         "threads": threads_vivos, "activos": ACTIVOS,
@@ -3706,18 +3707,28 @@ def loop_v7_anticipada():
 
 def construir_v7_provisional(simbolo, ahora):
     """Construye una V7 PROVISIONAL para evaluacion anticipada a las 3:58 PM
-    (3:58 EST no-SPY / 4:14 EST SPY), usando datos REALES ya ocurridos en
-    el mercado: las 3 primeras barras de 15min de V7 (completas) + barras
-    de 1min desde la 4ta barra hasta el momento actual. Esto evita evaluar
-    con una barra de 15min a medio formar (que causo la alerta RPG falsa
-    en BA el 06/24), sin perder la ventana de oportunidad de ejecutar antes
-    del cierre del mercado.
-    Esta vela PROVISIONAL nunca se guarda en la base de datos -- solo vive
-    en memoria para esta evaluacion. La version FINAL y real de V7 se
-    construye normalmente a las 4:01/4:16 PM con las 4 barras de 15min
-    completas, como ya funciona hoy.
-    Retorna un dict con la vela V7 provisional, o None si no hay suficientes datos."""
+    usando exactamente 3 barras 15min (15:00/15:15/15:30) + 13 barras 1min
+    (15:45–15:57). Rechaza la construccion si falta cualquier pieza, hay
+    duplicados, barras fuera de rango o campos OHLC invalidos.
+    Retorna un dict con bars=16/bars_expected=16, o None si falla validacion.
+    v8.87"""
     hoy_str = ahora.strftime("%Y-%m-%d")
+
+    ESPERADAS_15 = ["15:00", "15:15", "15:30"]
+    ESPERADAS_1  = ["15:45", "15:46", "15:47", "15:48", "15:49", "15:50",
+                    "15:51", "15:52", "15:53", "15:54", "15:55", "15:56", "15:57"]
+
+    def ts_hhmm(b):
+        t = b.get("time", "")
+        return t[11:16] if len(t) >= 16 else ""
+
+    def ohlc_valido(b):
+        for campo in ("open", "high", "low", "close"):
+            try:
+                float(b[campo])
+            except (KeyError, TypeError, ValueError):
+                return False
+        return True
 
     try:
         r15 = requests.get(
@@ -3756,27 +3767,48 @@ def construir_v7_provisional(simbolo, ahora):
                 if isinstance(b1, dict): b1 = [b1]
                 barras_1 = b1
 
-        todas = barras_15 + barras_1
-        if not todas:
+        # Sort explícito — no dependemos del orden de la respuesta Tradier
+        barras_15 = sorted(barras_15, key=lambda b: b.get("time", ""))
+        barras_1  = sorted(barras_1,  key=lambda b: b.get("time", ""))
+
+        # Validar timestamps exactos: count + valores + orden + sin duplicados
+        ts15 = [ts_hhmm(b) for b in barras_15]
+        ts1  = [ts_hhmm(b) for b in barras_1]
+
+        if ts15 != ESPERADAS_15:
+            print(f"{simbolo} V7 provisional RECHAZADA: 15min esperadas {ESPERADAS_15} obtenidas {ts15}")
+            return None
+        if ts1 != ESPERADAS_1:
+            print(f"{simbolo} V7 provisional RECHAZADA: 1min esperadas {ESPERADAS_1} obtenidas {ts1}")
             return None
 
-        v7_open  = float(todas[0]["open"])
+        # Validar OHLC de cada barra
+        for b in barras_15 + barras_1:
+            if not ohlc_valido(b):
+                print(f"{simbolo} V7 provisional RECHAZADA: OHLC invalido en barra {b.get('time','?')}")
+                return None
+
+        # Las 16 piezas están validadas y ordenadas
+        todas    = barras_15 + barras_1        # [15:00 15min … 15:57 1min]
+        v7_open  = float(todas[0]["open"])     # open de la barra 15:00 15min
         v7_high  = max(float(b["high"]) for b in todas)
         v7_low   = min(float(b["low"])  for b in todas)
-        v7_close = float(todas[-1]["close"])
+        v7_close = float(todas[-1]["close"])   # close de la barra 15:57 1min
 
-        print(f"{simbolo} V7 PROVISIONAL ({len(barras_15)}x15min + {len(barras_1)}x1min) — O:{v7_open:.2f} H:{v7_high:.2f} L:{v7_low:.2f} C:{v7_close:.2f}")
+        print(f"{simbolo} V7 PROVISIONAL OK (3x15min + 13x1min) "
+              f"O:{v7_open:.2f} H:{v7_high:.2f} L:{v7_low:.2f} C:{v7_close:.2f}")
 
         return {
-            "datetime": f"{hoy_str} 15:00:00",
-            "open":  str(round(v7_open, 4)),
-            "high":  str(round(v7_high, 4)),
-            "low":   str(round(v7_low, 4)),
-            "close": str(round(v7_close, 4)),
-            "vela":  "V7",
-            "bars":  len(todas),
-            "bars_expected": 4,
-            "completa": False,
+            "datetime":      f"{hoy_str} 15:00:00",
+            "open":          str(round(v7_open, 4)),
+            "high":          str(round(v7_high, 4)),
+            "low":           str(round(v7_low, 4)),
+            "close":         str(round(v7_close, 4)),
+            "vela":          "V7",
+            "completa":      False,
+            "bars":          16,
+            "bars_expected": 16,
+            "origen":        "V7_ANTICIPADA_1558",
         }
     except Exception as e:
         print(f"Error construyendo V7 provisional {simbolo}: {e}")
