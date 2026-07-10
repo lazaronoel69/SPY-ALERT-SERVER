@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v8.84
+AXIS Breakout Sentinel v8.85
 Estrategias: 1VR | 1VR+ | RPG | GNA | GBA | RCB/CNF
 Multi-activo: SPY, AAPL, BA, GLD
 v8.43: Portfolio fix — ejecutar_orden_tradier en webhook exec/reto | Panic Button al bid |
@@ -139,6 +139,23 @@ def loop_limpiar_ordenes():
                 print(f"Orden expirada y eliminada — ID: {oid}")
         except Exception as e:
             print(f"Error loop_limpiar_ordenes: {e}")
+
+# ── VERSIÓN ──────────────────────────────────────────────────────────────────
+AXIS_VERSION = "8.85"
+_BUILD_DATE  = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+
+def _git_commit_short():
+    try:
+        import subprocess
+        return subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"],
+            stderr=subprocess.DEVNULL, timeout=3
+        ).decode().strip()
+    except Exception:
+        return os.environ.get("GIT_COMMIT", "unknown")
+
+_GIT_COMMIT = _git_commit_short()
+_ENVIRONMENT = "production" if os.environ.get("RAILWAY_ENVIRONMENT") or os.environ.get("RAILWAY_SERVICE_NAME") else "development"
 
 # AX-003: ACTIVOS, HORAS_REPORTE, ACTIVOS_SPY, SISTEMA_ACTIVO y switches
 # de estrategia movidos a axis_config.py, mismos valores y nombres.
@@ -1675,7 +1692,7 @@ def reporte_horario():
 # LOOP PRINCIPAL
 # ═══════════════════════════════════════════════════════════
 def monitor_loop():
-    print("AXIS Breakout Sentinel v8.84 iniciado...")
+    print("AXIS Breakout Sentinel v8.85 iniciado...")
     while True:
         ahora = datetime.now(EST)
         mins  = ahora.hour * 60 + ahora.minute
@@ -1813,7 +1830,7 @@ def home(path=""):
   <div class="canales-grid">
     {canales_html}
   </div>
-  <div class="footer">AXIS Breakout Sentinel v8.84 · {activos_str}</div>
+  <div class="footer"><a href="/version" style="color:inherit;text-decoration:none">AXIS v{AXIS_VERSION}</a> · {activos_str}</div>
 </body>
 </html>"""
     from flask import Response
@@ -1833,7 +1850,7 @@ def test():
         else:
             lineas_canal.append(f"  {a}: OFF")
     enviar_telegram(
-        f"✅ <b>AXIS Breakout Sentinel v8.84</b>\n"
+        f"✅ <b>AXIS Breakout Sentinel v8.85</b>\n"
         f"<b>Hora:</b> {ahora.strftime('%A %d/%m/%Y %H:%M EST')}\n"
         f"<b>Mercado:</b> {'Abierto' if es_dia_mercado(ahora) else 'Cerrado'}\n"
         f"<b>1VR:</b> {'ON' if VR1_ON else 'OFF'} | "
@@ -2928,7 +2945,7 @@ def system_status():
         except Exception as e:
             velas_db[a] = {"status": f"❌ ERROR: {e}"}
     return jsonify({
-        "sistema": "AXIS Breakout Sentinel v8.84",
+        "sistema": "AXIS Breakout Sentinel v8.85",
         "hora_est": ahora.strftime("%Y-%m-%d %H:%M:%S EST"),
         "mercado": "ABIERTO ✅" if mercado_abierto else "CERRADO ⏸",
         "threads": threads_vivos, "activos": ACTIVOS,
@@ -4054,6 +4071,22 @@ def success_rate_data():
         "avg_estrellas": _avg(entries),
         "por_estrategia": estrategias,
         "por_simbolo":    simbolos,
+    }), 200
+
+# ═══════════════════════════════════════════════════════════
+# VERSION
+# ═══════════════════════════════════════════════════════════
+
+@app.route("/version", methods=["GET"])
+def version_endpoint():
+    import sys
+    return jsonify({
+        "axis_version": AXIS_VERSION,
+        "git_commit":   _GIT_COMMIT,
+        "build_date":   _BUILD_DATE,
+        "environment":  _ENVIRONMENT,
+        "python_version": sys.version.split()[0],
+        "status":       "OK",
     }), 200
 
 # ═══════════════════════════════════════════════════════════
