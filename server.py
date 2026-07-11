@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v8.90
+AXIS Breakout Sentinel v8.91
 Estrategias: 1VR | 1VR+ | RPG | GNA | GBA | RCB/CNF
 Multi-activo: SPY, AAPL, BA, GLD
 v8.43: Portfolio fix — ejecutar_orden_tradier en webhook exec/reto | Panic Button al bid |
@@ -41,6 +41,7 @@ v8.87: AX-V7-005: construir_v7_provisional ahora valida exactamente 3 barras 15m
 v8.88: AX-V7-005A: evaluar_v7_anticipada retorna True/False. loop_v7_anticipada reintenta V7 provisional cada 30s en ventana 3:58-3:59:30. HED separado (una vez por simbolo). ejecutado_358 solo se actualiza en exito. Telegram unico de omisiones a las 4:01.
 v8.89: AX-TRACK-001: expediente JSON persistente para cada alerta, enlazado con orden, decisión, posición y cierre; incluye HED.
 v8.90: AX-TRACK-002: seguimiento cada 5 min de posiciones activas con bid, P&L, MFE, MAE, duración y snapshots vinculados al alert_id.
+v8.91: AX-FIX-EXP-001: cierre de posiciones vencidas el mismo día a las 16:15 EST y reconciliación al arrancar, incluso fuera de mercado.
 """
 
 import os
@@ -149,7 +150,7 @@ def loop_limpiar_ordenes():
             print(f"Error loop_limpiar_ordenes: {e}")
 
 # ── VERSIÓN ──────────────────────────────────────────────────────────────────
-AXIS_VERSION = "8.90"
+AXIS_VERSION = "8.91"
 _BUILD_DATE  = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
 
 def _git_commit_short():
@@ -3362,28 +3363,71 @@ def actualizar_seguimiento_posicion(pos, bid, ahora=None):
     )
     return True
 
+VENCIMIENTO_CIERRE_MIN = 16 * 60 + 15
+
+def posicion_debe_cerrar_por_vencimiento(pos, ahora):
+    """True si el contrato ya venció o llegó a 16:15 EST en su fecha final."""
+    try:
+        from datetime import date as date_cls
+        expiration = date_cls.fromisoformat(str(pos.get("expiration", "")))
+        hoy = ahora.date()
+        if expiration < hoy:
+            return True
+        minutos = ahora.hour * 60 + ahora.minute
+        return expiration == hoy and minutos >= VENCIMIENTO_CIERRE_MIN
+    except Exception as e:
+        print(f"Error fecha vencimiento {pos.get('id', '?')}: {e}")
+        return False
+
+def precio_cierre_vencimiento(pos):
+    """Mejor precio observable; evita imponer $0 si existe un bid reciente."""
+    try:
+        bid = get_bid_opcion_tradier(pos.get("option_symbol"))
+        if bid and bid > 0:
+            return float(bid)
+    except Exception as e:
+        print(f"Error bid al vencer {pos.get('id', '?')}: {e}")
+    bid_actual = float(pos.get("bid_actual", 0) or 0)
+    if bid_actual > 0:
+        return bid_actual
+    historial = pos.get("historial_precios", [])
+    if historial:
+        ultimo_bid = float(historial[-1].get("bid", 0) or 0)
+        if ultimo_bid > 0:
+            return ultimo_bid
+    return 0.0
+
+def reconciliar_posiciones_vencidas(ahora=None):
+    """Cierra vencimientos pendientes aun fuera de horario o tras redeploy."""
+    if ahora is None:
+        ahora = datetime.now(EST)
+    if _portfolio is None:
+        return 0
+    cerradas = 0
+    for pos in list(_portfolio.get("posiciones", [])):
+        if not posicion_debe_cerrar_por_vencimiento(pos, ahora):
+            continue
+        precio_cierre = precio_cierre_vencimiento(pos)
+        if cerrar_posicion(pos["id"], precio_cierre, "vencimiento"):
+            cerradas += 1
+    if cerradas:
+        print(f"Reconciliación vencimientos: {cerradas} posición(es) cerrada(s)")
+    return cerradas
+
 def loop_polling_posiciones():
     print("Thread polling posiciones iniciado...")
     while True:
         try:
             time.sleep(300)
             ahora = datetime.now(EST)
+            reconciliar_posiciones_vencidas(ahora)
             if not es_dia_mercado(ahora): continue
             mins = ahora.hour * 60 + ahora.minute
             if not (570 <= mins <= 1020): continue
             if _portfolio is None: continue
-            from datetime import date as date_cls
-            hoy = date_cls.today()
             portfolio_actualizado = False
             for pos in list(_portfolio["posiciones"]):
                 pos_id = pos["id"]
-                try:
-                    exp = date_cls.fromisoformat(pos["expiration"])
-                    if exp < hoy:
-                        cerrar_posicion(pos_id, 0.0, "vencimiento")
-                        continue
-                except Exception as e:
-                    print(f"Error check vencimiento {pos_id}: {e}")
                 try:
                     bid = get_bid_opcion_tradier(pos.get("option_symbol"))
                     if bid and actualizar_seguimiento_posicion(pos, bid, ahora):
@@ -4362,6 +4406,7 @@ def arrancar_monitor():
     time.sleep(5)
     cargar_canales()
     cargar_portfolio()
+    reconciliar_posiciones_vencidas(datetime.now(EST))
     cargar_ordenes()
     cargar_estado_dia()
     construir_base_datos()
