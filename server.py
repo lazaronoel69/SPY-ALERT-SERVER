@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v8.89
+AXIS Breakout Sentinel v8.90
 Estrategias: 1VR | 1VR+ | RPG | GNA | GBA | RCB/CNF
 Multi-activo: SPY, AAPL, BA, GLD
 v8.43: Portfolio fix — ejecutar_orden_tradier en webhook exec/reto | Panic Button al bid |
@@ -40,6 +40,7 @@ v8.86: AX-OPS-001A: /version ahora resuelve git_commit desde RAILWAY_GIT_COMMIT_
 v8.87: AX-V7-005: construir_v7_provisional ahora valida exactamente 3 barras 15min (15:00/15:15/15:30) y 13 barras 1min (15:45-15:57). Sort explicito, validacion OHLC, rechazo si falta cualquier pieza. bars=16, bars_expected=16.
 v8.88: AX-V7-005A: evaluar_v7_anticipada retorna True/False. loop_v7_anticipada reintenta V7 provisional cada 30s en ventana 3:58-3:59:30. HED separado (una vez por simbolo). ejecutado_358 solo se actualiza en exito. Telegram unico de omisiones a las 4:01.
 v8.89: AX-TRACK-001: expediente JSON persistente para cada alerta, enlazado con orden, decisión, posición y cierre; incluye HED.
+v8.90: AX-TRACK-002: seguimiento cada 5 min de posiciones activas con bid, P&L, MFE, MAE, duración y snapshots vinculados al alert_id.
 """
 
 import os
@@ -148,7 +149,7 @@ def loop_limpiar_ordenes():
             print(f"Error loop_limpiar_ordenes: {e}")
 
 # ── VERSIÓN ──────────────────────────────────────────────────────────────────
-AXIS_VERSION = "8.89"
+AXIS_VERSION = "8.90"
 _BUILD_DATE  = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
 
 def _git_commit_short():
@@ -430,6 +431,18 @@ def registrar_posicion(opcion, estrategia, simbolo, precio_entrada, es_reto=Fals
         "pl_pct_actual":  0.0,
         "pl_pct_maximo":  0.0,
         "fecha_maximo":   datetime.now(EST).strftime("%Y-%m-%d"),
+        "pl_pct_minimo":  0.0,
+        "fecha_minimo":   datetime.now(EST).strftime("%Y-%m-%d"),
+        "mfe_pct":        0.0,
+        "mae_pct":        0.0,
+        "minutos_abierta": 0,
+        "seguimiento": [
+            {
+                "ts":     datetime.now(EST).isoformat(),
+                "bid":    precio_entrada,
+                "pl_pct": 0.0,
+            }
+        ],
     }
     _portfolio["posiciones"].append(pos)
     if es_reto and carril_id:
@@ -485,6 +498,13 @@ def cerrar_posicion(pos_id, precio_cierre, motivo="panic"):
     pos["minutos_abierta"] = minutos_abierta
     pos["estado"]          = "cerrada"
     pos["pl_pct_actual"]   = pl_pct
+    pos["pl_usd_actual"]   = pl_usd
+    pos["bid_actual"]      = precio_cierre
+    pos["ts_ultimo_seguimiento"] = pos["ts_cierre"]
+    pos.setdefault("seguimiento", []).append({
+        "ts": pos["ts_cierre"], "bid": precio_cierre,
+        "pl_pct": pl_pct, "pl_usd": pl_usd, "nota": motivo,
+    })
 
     fecha_cierre = datetime.now(EST).strftime("%Y-%m-%d")
     historial_p  = pos.get("historial_precios", [])
@@ -507,6 +527,11 @@ def cerrar_posicion(pos_id, precio_cierre, motivo="panic"):
     if pl_pct > pos.get("pl_pct_maximo", 0):
         pos["pl_pct_maximo"] = pl_pct
         pos["fecha_maximo"]  = fecha_cierre
+    if pl_pct < pos.get("pl_pct_minimo", 0):
+        pos["pl_pct_minimo"] = pl_pct
+        pos["fecha_minimo"]  = fecha_cierre
+    pos["mfe_pct"] = pos.get("pl_pct_maximo", 0)
+    pos["mae_pct"] = pos.get("pl_pct_minimo", 0)
 
     if pos.get("es_reto") and pos.get("carril_id"):
         derby = _portfolio["derby"]
@@ -560,7 +585,8 @@ def cerrar_posicion(pos_id, precio_cierre, motivo="panic"):
         pos.get("alert_id"), "CLOSED", "POSITION_CLOSED",
         precio_cierre=precio_cierre, pl_pct=pl_pct, pl_usd=pl_usd,
         motivo_cierre=motivo, minutos_abierta=minutos_abierta,
-        ts_cierre=pos["ts_cierre"],
+        ts_cierre=pos["ts_cierre"], mfe_pct=pos.get("mfe_pct", 0),
+        mae_pct=pos.get("mae_pct", 0),
     )
 
     emoji  = "✅" if pl_pct > 0 else "🔴"
@@ -3288,6 +3314,54 @@ def get_estado_orden_tradier(orden_id):
         print(f"Error estado orden {orden_id}: {e}")
         return None
 
+def actualizar_seguimiento_posicion(pos, bid, ahora=None):
+    """AX-TRACK-002: actualiza una posición sin decidir cierres ni trading."""
+    if ahora is None:
+        ahora = datetime.now(EST)
+    precio_entrada = float(pos.get("precio_entrada", 0) or 0)
+    bid = float(bid or 0)
+    if precio_entrada <= 0 or bid <= 0:
+        return False
+    try:
+        ts_entrada = datetime.fromisoformat(str(pos.get("ts_entrada", "")).replace("Z", ""))
+        if ts_entrada.tzinfo is None:
+            ts_entrada = EST.localize(ts_entrada)
+        minutos_abierta = max(0, int((ahora - ts_entrada).total_seconds() / 60))
+    except Exception:
+        minutos_abierta = int(pos.get("minutos_abierta", 0) or 0)
+
+    contratos = int(pos.get("contratos", 1) or 1)
+    pl_pct = round((bid - precio_entrada) / precio_entrada * 100, 2)
+    pl_usd = round((bid - precio_entrada) * 100 * contratos, 2)
+    mfe_anterior = float(pos.get("mfe_pct", pos.get("pl_pct_maximo", 0)) or 0)
+    mae_anterior = float(pos.get("mae_pct", pos.get("pl_pct_minimo", 0)) or 0)
+    mfe_pct = max(mfe_anterior, pl_pct)
+    mae_pct = min(mae_anterior, pl_pct)
+
+    pos["bid_actual"] = bid
+    pos["pl_pct_actual"] = pl_pct
+    pos["pl_usd_actual"] = pl_usd
+    pos["mfe_pct"] = mfe_pct
+    pos["mae_pct"] = mae_pct
+    pos["pl_pct_maximo"] = mfe_pct
+    pos["pl_pct_minimo"] = mae_pct
+    pos["minutos_abierta"] = minutos_abierta
+    pos["ts_ultimo_seguimiento"] = ahora.isoformat()
+    if pl_pct > mfe_anterior or not pos.get("fecha_maximo"):
+        pos["fecha_maximo"] = ahora.strftime("%Y-%m-%d")
+    if pl_pct < mae_anterior or not pos.get("fecha_minimo"):
+        pos["fecha_minimo"] = ahora.strftime("%Y-%m-%d")
+    pos.setdefault("seguimiento", []).append({
+        "ts": ahora.isoformat(), "bid": bid, "pl_pct": pl_pct, "pl_usd": pl_usd,
+    })
+    actualizar_alerta(
+        pos.get("alert_id"), evento=None,
+        bid_actual=bid, pl_pct_actual=pl_pct, pl_usd_actual=pl_usd,
+        mfe_pct=mfe_pct, mae_pct=mae_pct, minutos_abierta=minutos_abierta,
+        ts_ultimo_seguimiento=ahora.isoformat(),
+    )
+    return True
+
 def loop_polling_posiciones():
     print("Thread polling posiciones iniciado...")
     while True:
@@ -3300,6 +3374,7 @@ def loop_polling_posiciones():
             if _portfolio is None: continue
             from datetime import date as date_cls
             hoy = date_cls.today()
+            portfolio_actualizado = False
             for pos in list(_portfolio["posiciones"]):
                 pos_id = pos["id"]
                 try:
@@ -3309,6 +3384,12 @@ def loop_polling_posiciones():
                         continue
                 except Exception as e:
                     print(f"Error check vencimiento {pos_id}: {e}")
+                try:
+                    bid = get_bid_opcion_tradier(pos.get("option_symbol"))
+                    if bid and actualizar_seguimiento_posicion(pos, bid, ahora):
+                        portfolio_actualizado = True
+                except Exception as e:
+                    print(f"Error seguimiento {pos_id}: {e}")
                 gtc_id = pos.get("tradier_gtc_id")
                 if not gtc_id: continue
                 try:
@@ -3318,6 +3399,8 @@ def loop_polling_posiciones():
                         cerrar_posicion(pos_id, estado["avg_fill_price"], "gtc")
                 except Exception as e:
                     print(f"Error check GTC {pos_id}: {e}")
+            if portfolio_actualizado:
+                guardar_portfolio()
         except Exception as e:
             print(f"Error loop_polling_posiciones: {e}")
 
@@ -3339,17 +3422,14 @@ def guardar_snapshot_precios(ahora):
             precio_entrada = pos.get("precio_entrada", 0)
             if not option_symbol or not precio_entrada: continue
             bid = get_bid_opcion_tradier(option_symbol)
-            if not bid or bid <= 0: bid = 0.01
-            pl_pct = round((bid - precio_entrada) / precio_entrada * 100, 2)
+            if not bid or bid <= 0: continue
+            actualizar_seguimiento_posicion(pos, bid, ahora)
+            pl_pct = pos["pl_pct_actual"]
             historial = pos.get("historial_precios", [])
             fechas_existentes = [h["fecha"] for h in historial]
             if fecha_hoy not in fechas_existentes:
                 historial.append({"fecha": fecha_hoy, "bid": bid, "pl_pct": pl_pct, "nota": "cierre"})
                 pos["historial_precios"] = historial
-            pos["pl_pct_actual"] = pl_pct
-            if pl_pct > pos.get("pl_pct_maximo", 0):
-                pos["pl_pct_maximo"] = pl_pct
-                pos["fecha_maximo"]  = fecha_hoy
         except Exception as e:
             print(f"Error snapshot {pos.get('option_symbol','?')}: {e}")
     guardar_portfolio()
