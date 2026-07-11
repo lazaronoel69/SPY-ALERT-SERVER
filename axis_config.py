@@ -43,6 +43,7 @@ PORTFOLIO_FILE = "/data/axis_portfolio.json"
 ORDENES_FILE   = "/data/axis_ordenes.json"
 ESTADO_FILE    = "/data/axis_estado_dia.json"
 SEÑALES_FILE   = "/data/axis_señales_historicas.json"
+ALERTAS_FILE   = "/data/axis_alertas.json"
 BITACORA_FILE  = "/data/axis_bitacora.json"
 
 # ── Tradier — bases de URL (sin tokens) ──

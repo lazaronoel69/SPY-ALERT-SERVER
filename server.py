@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v8.88
+AXIS Breakout Sentinel v8.89
 Estrategias: 1VR | 1VR+ | RPG | GNA | GBA | RCB/CNF
 Multi-activo: SPY, AAPL, BA, GLD
 v8.43: Portfolio fix — ejecutar_orden_tradier en webhook exec/reto | Panic Button al bid |
@@ -39,6 +39,7 @@ v8.86: AX-OPS-001A: /version ahora resuelve git_commit desde RAILWAY_GIT_COMMIT_
        AX-V7-003: /status velas_db usa ahora.date() (EST) en lugar de date.today() (UTC) — corrige tiene_hoy=false falso despues de medianoche UTC. Expande velas_db con ultima_barra_15m, fecha_ultima_barra, v7_hoy_presente, v7_hoy_completa, v7_bars, v7_bars_expected.
 v8.87: AX-V7-005: construir_v7_provisional ahora valida exactamente 3 barras 15min (15:00/15:15/15:30) y 13 barras 1min (15:45-15:57). Sort explicito, validacion OHLC, rechazo si falta cualquier pieza. bars=16, bars_expected=16.
 v8.88: AX-V7-005A: evaluar_v7_anticipada retorna True/False. loop_v7_anticipada reintenta V7 provisional cada 30s en ventana 3:58-3:59:30. HED separado (una vez por simbolo). ejecutado_358 solo se actualiza en exito. Telegram unico de omisiones a las 4:01.
+v8.89: AX-TRACK-001: expediente JSON persistente para cada alerta, enlazado con orden, decisión, posición y cierre; incluye HED.
 """
 
 import os
@@ -124,6 +125,8 @@ def loop_limpiar_ordenes():
                 datos = ordenes_pendientes.pop(oid, None)
                 if not datos:
                     continue
+                actualizar_alerta(datos.get("alert_id"), "CANCELLED", "ORDER_EXPIRED",
+                                  decision="EXPIRED")
                 guardar_ordenes()
                 # Editar mensaje original en Telegram
                 try:
@@ -145,7 +148,7 @@ def loop_limpiar_ordenes():
             print(f"Error loop_limpiar_ordenes: {e}")
 
 # ── VERSIÓN ──────────────────────────────────────────────────────────────────
-AXIS_VERSION = "8.88"
+AXIS_VERSION = "8.89"
 _BUILD_DATE  = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
 
 def _git_commit_short():
@@ -236,8 +239,9 @@ canal      = {a: canal_vacio()         for a in ACTIVOS}
 # AX-003: rutas de persistencia movidas a axis_config.py, mismos valores.
 from axis_config import (
     CANALES_FILE, PORTFOLIO_FILE, ORDENES_FILE, ESTADO_FILE,
-    SEÑALES_FILE, BITACORA_FILE, DATA_DIR,
+    SEÑALES_FILE, ALERTAS_FILE, BITACORA_FILE, DATA_DIR,
 )
+from axis_alerts import crear_alerta, actualizar_alerta, listar_alertas
 DEBRIEF_FILE  = f"{DATA_DIR}/axis_debrief.json"
 JOURNAL_FILE  = f"{DATA_DIR}/axis_journal.json"
 
@@ -390,13 +394,15 @@ def guardar_portfolio():
     _axis_portfolio.guardar_portfolio(_portfolio)
 
 def registrar_posicion(opcion, estrategia, simbolo, precio_entrada, es_reto=False, carril_id=None,
-                       contratos=1, tradier_orden_id=None, tradier_gtc_id=None):
+                       contratos=1, tradier_orden_id=None, tradier_gtc_id=None,
+                       alert_id=None):
     global _portfolio
     if _portfolio is None:
         cargar_portfolio()
     import uuid
     pos = {
         "id":               str(uuid.uuid4())[:8],
+        "alert_id":         alert_id,
         "simbolo":          simbolo,
         "estrategia":       estrategia,
         "tipo":             opcion["tipo"],
@@ -433,6 +439,14 @@ def registrar_posicion(opcion, estrategia, simbolo, precio_entrada, es_reto=Fals
                 c["ronda"]   += 1
                 break
     guardar_portfolio()
+    actualizar_alerta(
+        alert_id, "ACTIVE", "POSITION_OPENED",
+        posicion_id=pos["id"], contratos=contratos,
+        precio_entrada=precio_entrada,
+        option_symbol=opcion.get("symbol"), strike=opcion.get("strike"),
+        expiration=opcion.get("expiration"), tradier_orden_id=tradier_orden_id,
+        tradier_gtc_id=tradier_gtc_id,
+    )
     return pos
 
 # AX-004: cancelar_orden_tradier, get_bid_opcion_tradier, vender_opcion_tradier
@@ -541,6 +555,13 @@ def cerrar_posicion(pos_id, precio_cierre, motivo="panic"):
     _portfolio["posiciones"] = [p for p in _portfolio["posiciones"] if p["id"] != pos_id]
     _portfolio["historial"].append(pos)
     guardar_portfolio()
+
+    actualizar_alerta(
+        pos.get("alert_id"), "CLOSED", "POSITION_CLOSED",
+        precio_cierre=precio_cierre, pl_pct=pl_pct, pl_usd=pl_usd,
+        motivo_cierre=motivo, minutos_abierta=minutos_abierta,
+        ts_cierre=pos["ts_cierre"],
+    )
 
     emoji  = "✅" if pl_pct > 0 else "🔴"
     t_str  = f"{minutos_abierta//60}h {minutos_abierta%60}m" if minutos_abierta >= 60 else f"{minutos_abierta}m"
@@ -1615,6 +1636,10 @@ def registrar_senal_disparada(simbolo, estrategia, hora_label=None):
     guardar_estado_dia()
 
 def enviar_senal_con_botones(simbolo, estrategia, hora_label, precio_vela, tipo_opcion, extra=""):
+    alert_id = crear_alerta(
+        simbolo, estrategia, tipo_opcion, precio_vela,
+        hora_label=hora_label, origen=_v7_eval_origen or "ESTRATEGIA",
+    )
     registrar_senal_disparada(simbolo, estrategia, hora_label=hora_label)
     try:
         precio = get_precio_tradier(simbolo)
@@ -1634,6 +1659,8 @@ def enviar_senal_con_botones(simbolo, estrategia, hora_label, precio_vela, tipo_
     import uuid
     orden_id = str(uuid.uuid4())[:8]
     emoji = '🔴' if tipo_opcion == 'PUT' else '🟢'
+    actualizar_alerta(alert_id, evento="MARKET_DATA_RESOLVED",
+                      precio_subyacente=precio, orden_id=orden_id)
 
     if opcion:
         opcion["subyacente"] = simbolo
@@ -1641,6 +1668,7 @@ def enviar_senal_con_botones(simbolo, estrategia, hora_label, precio_vela, tipo_
             f"{emoji} <b>{estrategia}</b>\n"
             f"<b>Activo:</b> {simbolo}\n"
             f"<b>Hora:</b> {hora_label}\n"
+            f"<b>Alert ID:</b> {alert_id}\n"
             f"<b>Precio:</b> ${precio:.2f}\n"
             f"{extra}"
             f"<b>Opcion:</b> {opcion['tipo']} ${opcion['strike']:.0f} exp {opcion['expiration']}\n"
@@ -1648,25 +1676,43 @@ def enviar_senal_con_botones(simbolo, estrategia, hora_label, precio_vela, tipo_
             f"⚠️ <b>{tipo_opcion} — ¿Ejecutar?</b> (expira en {ORDEN_TIMEOUT_MIN} min)"
         )
         message_id, chat_id = enviar_telegram_botones(msg, orden_id)
-        ordenes_pendientes[orden_id] = {
-            "opcion":          opcion,
-            "estrategia":      estrategia,
-            "ts":              datetime.now(pytz.utc),
-            "message_id":      message_id,
-            "chat_id":         chat_id,
-            "texto_original":  msg,
-        }
-        guardar_ordenes()
-        print(f"{simbolo}: señal enviada con botones — {estrategia} | opcion {opcion['tipo']} ${opcion['strike']:.0f}")
+        if message_id is not None:
+            actualizar_alerta(alert_id, "NOTIFIED", "TELEGRAM_SENT",
+                              telegram_message_id=message_id, telegram_chat_id=chat_id,
+                              option_symbol=opcion.get("symbol"), strike=opcion.get("strike"),
+                              expiration=opcion.get("expiration"), ask=opcion.get("ask"),
+                              bid=opcion.get("bid"))
+            ordenes_pendientes[orden_id] = {
+                "alert_id":        alert_id,
+                "opcion":          opcion,
+                "estrategia":      estrategia,
+                "ts":              datetime.now(pytz.utc),
+                "message_id":      message_id,
+                "chat_id":         chat_id,
+                "texto_original":  msg,
+            }
+            guardar_ordenes()
+        else:
+            actualizar_alerta(alert_id, "CANCELLED", "TELEGRAM_SEND_FAILED",
+                              motivo_cancelacion="telegram_send_failed")
+        if message_id is not None:
+            print(f"{simbolo}: señal enviada con botones — {estrategia} | opcion {opcion['tipo']} ${opcion['strike']:.0f}")
+        else:
+            print(f"{simbolo}: fallo enviando señal a Telegram — {estrategia}")
     else:
         enviar_telegram(
             f"{emoji} <b>{estrategia}</b>\n"
             f"<b>Activo:</b> {simbolo}\n"
             f"<b>Hora:</b> {hora_label}\n"
+            f"<b>Alert ID:</b> {alert_id}\n"
             f"<b>Precio:</b> ${precio:.2f}\n"
             f"{extra}"
             f"⚠️ <b>{tipo_opcion} — Tradier sin datos, evaluar manualmente</b>"
         )
+        actualizar_alerta(alert_id, "NOTIFIED", "MANUAL_REVIEW_NOTIFIED",
+                          motivo="tradier_sin_opcion")
+        actualizar_alerta(alert_id, "CANCELLED", "NO_OPTION_AVAILABLE",
+                          decision="MANUAL", motivo_cancelacion="tradier_sin_opcion")
         print(f"{simbolo}: señal enviada SIN botones — Tradier no disponible")
 
 # ═══════════════════════════════════════════════════════════
@@ -1704,7 +1750,7 @@ def reporte_horario():
 # LOOP PRINCIPAL
 # ═══════════════════════════════════════════════════════════
 def monitor_loop():
-    print("AXIS Breakout Sentinel v8.88 iniciado...")
+    print(f"AXIS Breakout Sentinel v{AXIS_VERSION} iniciado...")
     while True:
         ahora = datetime.now(EST)
         mins  = ahora.hour * 60 + ahora.minute
@@ -1862,7 +1908,7 @@ def test():
         else:
             lineas_canal.append(f"  {a}: OFF")
     enviar_telegram(
-        f"✅ <b>AXIS Breakout Sentinel v8.88</b>\n"
+        f"✅ <b>AXIS Breakout Sentinel v{AXIS_VERSION}</b>\n"
         f"<b>Hora:</b> {ahora.strftime('%A %d/%m/%Y %H:%M EST')}\n"
         f"<b>Mercado:</b> {'Abierto' if es_dia_mercado(ahora) else 'Cerrado'}\n"
         f"<b>1VR:</b> {'ON' if VR1_ON else 'OFF'} | "
@@ -2352,13 +2398,18 @@ def telegram_webhook():
                 return jsonify({"ok": True}), 200
             opcion     = datos["opcion"]
             estrategia = datos.get("estrategia", "AXIS")
+            alert_id   = datos.get("alert_id")
             resultado_tradier = ejecutar_orden_tradier_contratos(opcion, contratos)
             tradier_orden_id = resultado_tradier.get("id") if resultado_tradier["ok"] else None
             tradier_gtc_id   = resultado_tradier.get("venta_id") if resultado_tradier["ok"] else None
             costo_total = round(opcion["ask"] * 100 * contratos, 2)
             registrar_posicion(opcion, estrategia, opcion["subyacente"], opcion["ask"],
                                contratos=contratos,
-                               tradier_orden_id=tradier_orden_id, tradier_gtc_id=tradier_gtc_id)
+                               tradier_orden_id=tradier_orden_id, tradier_gtc_id=tradier_gtc_id,
+                               alert_id=alert_id if resultado_tradier["ok"] else None)
+            if not resultado_tradier["ok"]:
+                actualizar_alerta(alert_id, "CANCELLED", "TRADIER_EXECUTION_FAILED",
+                                  decision="EXECUTE", motivo_cancelacion=resultado_tradier.get("error", "unknown"))
             estado_tradier = "✅ Orden enviada a sandbox" if resultado_tradier["ok"] else f"⚠️ Error Tradier: {resultado_tradier.get('error','')}"
             agregar_recibo(
                 f"━━━━━━━━━━━━━━━━━━\n"
@@ -2377,11 +2428,16 @@ def telegram_webhook():
                 return jsonify({"ok": True}), 200
             opcion     = datos["opcion"]
             estrategia = datos.get("estrategia", "AXIS")
+            alert_id   = datos.get("alert_id")
             resultado_tradier = ejecutar_orden_tradier(opcion)
             tradier_orden_id = resultado_tradier.get("id") if resultado_tradier["ok"] else None
             tradier_gtc_id   = resultado_tradier.get("venta_id") if resultado_tradier["ok"] else None
             registrar_posicion(opcion, estrategia, opcion["subyacente"], opcion["ask"],
-                               tradier_orden_id=tradier_orden_id, tradier_gtc_id=tradier_gtc_id)
+                               tradier_orden_id=tradier_orden_id, tradier_gtc_id=tradier_gtc_id,
+                               alert_id=alert_id if resultado_tradier["ok"] else None)
+            if not resultado_tradier["ok"]:
+                actualizar_alerta(alert_id, "CANCELLED", "TRADIER_EXECUTION_FAILED",
+                                  decision="EXECUTE", motivo_cancelacion=resultado_tradier.get("error", "unknown"))
             estado_tradier = "✅ Orden enviada a sandbox" if resultado_tradier["ok"] else f"⚠️ Error Tradier: {resultado_tradier.get('error','')}"
             agregar_recibo(
                 f"━━━━━━━━━━━━━━━━━━\n"
@@ -2400,6 +2456,7 @@ def telegram_webhook():
                 return jsonify({"ok": True}), 200
             opcion     = datos["opcion"]
             estrategia = datos.get("estrategia", "AXIS")
+            alert_id   = datos.get("alert_id")
             derby = _portfolio["derby"]
             caballo = next((c for c in derby["caballos"] if c["id"] == caballo_id), None)
             if not caballo or caballo.get("eliminado"):
@@ -2410,6 +2467,8 @@ def telegram_webhook():
                         nuevo_id = c["id"]
                         break
                 if not nuevo_id:
+                    actualizar_alerta(alert_id, "CANCELLED", "NO_DERBY_LANE_AVAILABLE",
+                                      decision="DERBY")
                     agregar_recibo(f"━━━━━━━━━━━━━━━━━━\n⚠️ <b>Todos los caballos ocupados o eliminados</b>")
                     return jsonify({"ok": True}), 200
                 caballo_id = nuevo_id
@@ -2422,6 +2481,8 @@ def telegram_webhook():
                         nuevo_id = c["id"]
                         break
                 if not nuevo_id:
+                    actualizar_alerta(alert_id, "CANCELLED", "NO_DERBY_LANE_AVAILABLE",
+                                      decision="DERBY")
                     agregar_recibo(f"━━━━━━━━━━━━━━━━━━\n⚠️ <b>Todos los caballos en carrera</b>")
                     return jsonify({"ok": True}), 200
                 caballo_id = nuevo_id
@@ -2439,6 +2500,8 @@ def telegram_webhook():
                 if costo_1cont > presupuesto:
                     opcion_reto = buscar_opcion_reto(opcion, presupuesto)
                     if not opcion_reto:
+                        actualizar_alerta(alert_id, "CANCELLED", "DERBY_CAPITAL_INSUFFICIENT",
+                                          decision="DERBY")
                         rec_claude = recomendar_opcion_claude(opcion, caballo["capital"], presupuesto)
                         agregar_recibo(
                             f"━━━━━━━━━━━━━━━━━━\n"
@@ -2463,7 +2526,11 @@ def telegram_webhook():
             costo_total = round(opcion["ask"] * 100 * contratos, 2)
             registrar_posicion(opcion, estrategia, opcion["subyacente"], opcion["ask"],
                                es_reto=True, carril_id=caballo_id, contratos=contratos,
-                               tradier_orden_id=tradier_orden_id, tradier_gtc_id=tradier_gtc_id)
+                               tradier_orden_id=tradier_orden_id, tradier_gtc_id=tradier_gtc_id,
+                               alert_id=alert_id if resultado_tradier["ok"] else None)
+            if not resultado_tradier["ok"]:
+                actualizar_alerta(alert_id, "CANCELLED", "TRADIER_EXECUTION_FAILED",
+                                  decision="DERBY", motivo_cancelacion=resultado_tradier.get("error", "unknown"))
             caballo["ronda"] += 1
             estado_tradier = "✅ Orden enviada a sandbox" if resultado_tradier["ok"] else f"⚠️ Error: {resultado_tradier.get('error','')}"
             es_primera = caballo["ronda"] == 1
@@ -2479,8 +2546,11 @@ def telegram_webhook():
             )
 
         elif accion == "skip":
-            ordenes_pendientes.pop(orden_id, None)
+            datos = ordenes_pendientes.pop(orden_id, None)
             guardar_ordenes()
+            if datos:
+                actualizar_alerta(datos.get("alert_id"), "CANCELLED", "USER_SKIPPED",
+                                  decision="SKIP")
             agregar_recibo("━━━━━━━━━━━━━━━━━━\n❌ <b>Orden ignorada</b>")
 
     except Exception as e:
@@ -2970,7 +3040,7 @@ def system_status():
         except Exception as e:
             velas_db[a] = {"status": f"❌ ERROR: {e}"}
     return jsonify({
-        "sistema": "AXIS Breakout Sentinel v8.88",
+        "sistema": f"AXIS Breakout Sentinel v{AXIS_VERSION}",
         "hora_est": ahora.strftime("%Y-%m-%d %H:%M:%S EST"),
         "mercado": "ABIERTO ✅" if mercado_abierto else "CERRADO ⏸",
         "threads": threads_vivos, "activos": ACTIVOS,
@@ -3956,24 +4026,38 @@ def evaluar_hed(simbolo):
                   and techo_h is not None and zona_30_h is not None
                   and zona_30_h <= v_close <= techo_h)
         if not (cond_a or cond_b): return
+        alert_id = crear_alerta(
+            simbolo, "HED — SHOOTING STAR DIARIA", "PUT", v_close,
+            hora_label=ahora_dt.strftime("%H:%M EST"), origen="HED_AUTO",
+        )
         precio_actual = get_precio_tradier(simbolo) or v_close
         opcion = get_opcion_tradier(simbolo, "put", precio_actual)
         if not opcion:
             enviar_telegram(f"⚠️ <b>HED {simbolo}</b> — Shooting star detectada pero sin opción disponible")
+            actualizar_alerta(alert_id, "CANCELLED", "NO_OPTION_AVAILABLE",
+                              decision="AUTO", motivo_cancelacion="tradier_sin_opcion")
             return
         opcion["subyacente"] = simbolo
         resultado = ejecutar_orden_tradier(opcion)
         cond_str = "RCB 30%" if cond_b else f"SMA20({sma20:.2f})>SMA40({sma40:.2f})"
         if resultado["ok"]:
             registrar_senal_disparada(simbolo, "HED — SHOOTING STAR DIARIA")
+            registrar_posicion(
+                opcion, "HED — SHOOTING STAR DIARIA", simbolo, opcion["ask"],
+                tradier_orden_id=resultado.get("id"),
+                tradier_gtc_id=resultado.get("venta_id"), alert_id=alert_id,
+            )
             enviar_telegram(
                 f"🕯 <b>HED — SHOOTING STAR DIARIA</b>\n"
                 f"<b>Activo:</b> {simbolo} | <b>Condición:</b> {cond_str}\n"
+                f"<b>Alert ID:</b> {alert_id}\n"
                 f"<b>Mecha:</b> {mecha_sup:.2f} / <b>Cuerpo:</b> {cuerpo:.2f} = {mecha_sup/cuerpo:.2f}×\n"
                 f"✅ <b>EJECUTADA</b> | ID: {resultado['id']} | GTC: ${resultado['precio_venta']:.2f}"
             )
         else:
             enviar_telegram(f"⚠️ <b>HED {simbolo}</b> — Shooting star, error al ejecutar: {resultado.get('error','?')}")
+            actualizar_alerta(alert_id, "CANCELLED", "TRADIER_EXECUTION_FAILED",
+                              decision="AUTO", motivo_cancelacion=resultado.get("error", "unknown"))
     except Exception as e:
         print(f"Error evaluar_hed {simbolo}: {e}")
 
@@ -4030,6 +4114,19 @@ def serve_journal():
         with open(html_path, "r") as f:
             return Response(f.read(), mimetype="text/html")
     return Response("<h1>axis_journal.html no encontrado</h1>", mimetype="text/html"), 404
+
+@app.route("/alerts/data", methods=["GET"])
+def alerts_data():
+    """AX-TRACK-001: consulta de solo lectura del ciclo de alertas."""
+    alertas = listar_alertas(
+        alert_id=request.args.get("alert_id"),
+        fecha=request.args.get("fecha"),
+        simbolo=request.args.get("simbolo"),
+        estrategia=request.args.get("estrategia"),
+        estado=request.args.get("estado"),
+    )
+    limite = min(max(request.args.get("limit", 500, type=int), 1), 5000)
+    return jsonify({"alertas": list(reversed(alertas[-limite:])), "total": len(alertas)}), 200
 
 @app.route("/journal/data", methods=["GET"])
 def journal_data():

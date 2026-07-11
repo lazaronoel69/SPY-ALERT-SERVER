@@ -32,6 +32,7 @@ def guardar_ordenes(ordenes_pendientes):
             data[oid] = {
                 "opcion":         d["opcion"],
                 "estrategia":     d.get("estrategia", "AXIS"),
+                "alert_id":       d.get("alert_id"),
                 "ts":             d["ts"].isoformat() if hasattr(d["ts"], "isoformat") else str(d["ts"]),
                 "message_id":     d["message_id"],
                 "chat_id":        d["chat_id"],
@@ -65,6 +66,7 @@ def cargar_ordenes(ordenes_pendientes):
                 ordenes_pendientes[oid] = {
                     "opcion":         d["opcion"],
                     "estrategia":     d.get("estrategia", "AXIS"),
+                    "alert_id":       d.get("alert_id"),
                     "ts":             ts,
                     "message_id":     d["message_id"],
                     "chat_id":        d["chat_id"],
