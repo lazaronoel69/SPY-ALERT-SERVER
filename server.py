@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v8.91
+AXIS Breakout Sentinel v8.92
 Estrategias: 1VR | 1VR+ | RPG | GNA | GBA | RCB/CNF
 Multi-activo: SPY, AAPL, BA, GLD
 v8.43: Portfolio fix — ejecutar_orden_tradier en webhook exec/reto | Panic Button al bid |
@@ -42,6 +42,7 @@ v8.88: AX-V7-005A: evaluar_v7_anticipada retorna True/False. loop_v7_anticipada 
 v8.89: AX-TRACK-001: expediente JSON persistente para cada alerta, enlazado con orden, decisión, posición y cierre; incluye HED.
 v8.90: AX-TRACK-002: seguimiento cada 5 min de posiciones activas con bid, P&L, MFE, MAE, duración y snapshots vinculados al alert_id.
 v8.91: AX-FIX-EXP-001: cierre de posiciones vencidas el mismo día a las 16:15 EST y reconciliación al arrancar, incluso fuera de mercado.
+v8.92: AX-TRACK-003: updates operativos por Telegram: hitos P&L, fallos/reanudación, cierre con MFE/MAE y resumen diario de posiciones.
 """
 
 import os
@@ -150,7 +151,7 @@ def loop_limpiar_ordenes():
             print(f"Error loop_limpiar_ordenes: {e}")
 
 # ── VERSIÓN ──────────────────────────────────────────────────────────────────
-AXIS_VERSION = "8.91"
+AXIS_VERSION = "8.92"
 _BUILD_DATE  = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
 
 def _git_commit_short():
@@ -594,10 +595,13 @@ def cerrar_posicion(pos_id, precio_cierre, motivo="panic"):
     t_str  = f"{minutos_abierta//60}h {minutos_abierta%60}m" if minutos_abierta >= 60 else f"{minutos_abierta}m"
     enviar_telegram(
         f"{emoji} <b>Posición cerrada — {pos['simbolo']}</b>\n"
+        f"<b>Alert ID:</b> {pos.get('alert_id') or 'LEGACY-' + pos['id']}\n"
+        f"<b>Estrategia:</b> {pos.get('estrategia', 'AXIS')}\n"
         f"<b>Motivo:</b> {motivo}\n"
         f"<b>{pos['tipo']} ${pos['strike']} exp {pos['expiration']}</b>\n"
         f"<b>Contratos:</b> {contratos} | <b>Tiempo:</b> {t_str}\n"
         f"<b>P&L:</b> {'+' if pl_pct > 0 else ''}{pl_pct}% | ${'+' if pl_usd > 0 else ''}{pl_usd:.2f}\n"
+        f"<b>MFE:</b> {pos.get('mfe_pct', 0):+.2f}% | <b>MAE:</b> {pos.get('mae_pct', 0):+.2f}%\n"
         f"<b>Entrada:</b> ${pos['precio_entrada']:.2f} → <b>Cierre:</b> ${precio_cierre:.2f}"
     )
     return pos
@@ -3315,6 +3319,75 @@ def get_estado_orden_tradier(orden_id):
         print(f"Error estado orden {orden_id}: {e}")
         return None
 
+HITOS_PL_TELEGRAM = (-75, -50, -25, 25, 50, 75, 100)
+
+def _duracion_texto(minutos):
+    minutos = int(minutos or 0)
+    return f"{minutos//60}h {minutos%60}m" if minutos >= 60 else f"{minutos}m"
+
+def notificar_hito_seguimiento(pos, pl_anterior):
+    pl_actual = float(pos.get("pl_pct_actual", 0) or 0)
+    notificados = {int(x) for x in pos.get("hitos_telegram", [])}
+    cruzados = []
+    if pl_actual > pl_anterior:
+        cruzados = [h for h in HITOS_PL_TELEGRAM if h > 0 and pl_anterior < h <= pl_actual]
+    elif pl_actual < pl_anterior:
+        cruzados = [h for h in HITOS_PL_TELEGRAM if h < 0 and pl_anterior > h >= pl_actual]
+    nuevos = [h for h in cruzados if h not in notificados]
+    if not nuevos:
+        return False
+    hito = max(nuevos) if pl_actual > pl_anterior else min(nuevos)
+    notificados.update(cruzados)
+    pos["hitos_telegram"] = sorted(notificados)
+    emoji = "🚀" if hito > 0 else "⚠️"
+    enviar_telegram(
+        f"{emoji} <b>AXIS — Hito de seguimiento {hito:+d}%</b>\n"
+        f"<b>Alert ID:</b> {pos.get('alert_id') or 'LEGACY-' + pos['id']}\n"
+        f"<b>{pos.get('simbolo', '?')} {pos.get('tipo', '')} ${pos.get('strike', 0):g}</b>\n"
+        f"<b>Estrategia:</b> {pos.get('estrategia', 'AXIS')}\n"
+        f"<b>P&L actual:</b> {pl_actual:+.2f}% | ${pos.get('pl_usd_actual', 0):+.2f}\n"
+        f"<b>MFE:</b> {pos.get('mfe_pct', 0):+.2f}% | <b>MAE:</b> {pos.get('mae_pct', 0):+.2f}%\n"
+        f"<b>Tiempo abierta:</b> {_duracion_texto(pos.get('minutos_abierta', 0))}"
+    )
+    actualizar_alerta(pos.get("alert_id"), evento="TELEGRAM_PL_MILESTONE",
+                      ultimo_hito_telegram=hito)
+    return True
+
+def registrar_fallo_seguimiento(pos, ahora, motivo="bid_no_disponible"):
+    fallos = int(pos.get("fallos_seguimiento", 0) or 0) + 1
+    pos["fallos_seguimiento"] = fallos
+    pos["ts_ultimo_fallo_seguimiento"] = ahora.isoformat()
+    if fallos >= 3 and not pos.get("fallo_seguimiento_notificado"):
+        pos["fallo_seguimiento_notificado"] = True
+        enviar_telegram(
+            f"⚠️ <b>AXIS — Seguimiento interrumpido</b>\n"
+            f"<b>Alert ID:</b> {pos.get('alert_id') or 'LEGACY-' + pos['id']}\n"
+            f"<b>Posición:</b> {pos.get('simbolo', '?')} {pos.get('tipo', '')} ${pos.get('strike', 0):g}\n"
+            f"Sin bid válido durante {fallos} consultas consecutivas.\n"
+            f"<b>Acción:</b> revisar manualmente en Tradier."
+        )
+        actualizar_alerta(pos.get("alert_id"), evento="TRACKING_INTERRUPTED",
+                          fallos_seguimiento=fallos, motivo_seguimiento=motivo)
+        return True
+    return False
+
+def registrar_recuperacion_seguimiento(pos, ahora):
+    estaba_notificado = bool(pos.get("fallo_seguimiento_notificado"))
+    fallos = int(pos.get("fallos_seguimiento", 0) or 0)
+    pos["fallos_seguimiento"] = 0
+    pos["fallo_seguimiento_notificado"] = False
+    if estaba_notificado:
+        enviar_telegram(
+            f"✅ <b>AXIS — Seguimiento restablecido</b>\n"
+            f"<b>Alert ID:</b> {pos.get('alert_id') or 'LEGACY-' + pos['id']}\n"
+            f"<b>Posición:</b> {pos.get('simbolo', '?')} {pos.get('tipo', '')} ${pos.get('strike', 0):g}\n"
+            f"Bid recibido nuevamente después de {fallos} fallos."
+        )
+        actualizar_alerta(pos.get("alert_id"), evento="TRACKING_RESTORED",
+                          fallos_seguimiento=0, ts_seguimiento_restaurado=ahora.isoformat())
+        return True
+    return False
+
 def actualizar_seguimiento_posicion(pos, bid, ahora=None):
     """AX-TRACK-002: actualiza una posición sin decidir cierres ni trading."""
     if ahora is None:
@@ -3331,6 +3404,7 @@ def actualizar_seguimiento_posicion(pos, bid, ahora=None):
     except Exception:
         minutos_abierta = int(pos.get("minutos_abierta", 0) or 0)
 
+    pl_anterior = float(pos.get("pl_pct_actual", 0) or 0)
     contratos = int(pos.get("contratos", 1) or 1)
     pl_pct = round((bid - precio_entrada) / precio_entrada * 100, 2)
     pl_usd = round((bid - precio_entrada) * 100 * contratos, 2)
@@ -3361,6 +3435,7 @@ def actualizar_seguimiento_posicion(pos, bid, ahora=None):
         mfe_pct=mfe_pct, mae_pct=mae_pct, minutos_abierta=minutos_abierta,
         ts_ultimo_seguimiento=ahora.isoformat(),
     )
+    notificar_hito_seguimiento(pos, pl_anterior)
     return True
 
 VENCIMIENTO_CIERRE_MIN = 16 * 60 + 15
@@ -3430,10 +3505,16 @@ def loop_polling_posiciones():
                 pos_id = pos["id"]
                 try:
                     bid = get_bid_opcion_tradier(pos.get("option_symbol"))
+                    if bid:
+                        registrar_recuperacion_seguimiento(pos, ahora)
+                    else:
+                        registrar_fallo_seguimiento(pos, ahora)
                     if bid and actualizar_seguimiento_posicion(pos, bid, ahora):
                         portfolio_actualizado = True
                 except Exception as e:
                     print(f"Error seguimiento {pos_id}: {e}")
+                    registrar_fallo_seguimiento(pos, ahora, motivo=str(e))
+                portfolio_actualizado = True
                 gtc_id = pos.get("tradier_gtc_id")
                 if not gtc_id: continue
                 try:
@@ -3499,7 +3580,18 @@ def enviar_resumen_diario(ahora):
         hist_wins  = sum(1 for p in _portfolio["historial"] if (p.get("pl_usd", 0) or 0) > 0)
         wr = f"{round(hist_wins/hist_total*100,1)}%" if hist_total else "—"
         emoji_pl = "✅" if pl_dia >= 0 else "🔴"
-        msg = (
+        posiciones_lineas = []
+        for p in _portfolio["posiciones"]:
+            posiciones_lineas.append(
+                f"• <b>{p.get('simbolo','?')} {p.get('tipo','')} ${p.get('strike',0):g}</b> "
+                f"({p.get('estrategia','AXIS')})\n"
+                f"  ID {p.get('alert_id') or 'LEGACY-' + p.get('id','?')} | "
+                f"P&L {p.get('pl_pct_actual',0):+.2f}% (${p.get('pl_usd_actual',0):+.2f})\n"
+                f"  MFE {p.get('mfe_pct',p.get('pl_pct_maximo',0)):+.2f}% | "
+                f"MAE {p.get('mae_pct',p.get('pl_pct_minimo',0)):+.2f}% | "
+                f"{_duracion_texto(p.get('minutos_abierta',0))}"
+            )
+        msg_general = (
             f"📊 <b>AXIS — Resumen {ahora.strftime('%m/%d/%Y')}</b>\n"
             f"━━━━━━━━━━━━━━━━━━\n\n"
             f"<b>Señales del día:</b>\n"
@@ -3507,13 +3599,34 @@ def enviar_resumen_diario(ahora):
             + f"\n<b>Operaciones cerradas hoy:</b> {len(cerradas_hoy)}"
             + (f" ({wins}W / {len(cerradas_hoy)-wins}L)" if cerradas_hoy else "")
             + f"\n{emoji_pl} <b>P&L del día:</b> ${pl_dia:+.2f}\n"
-            f"📈 <b>Posiciones abiertas:</b> {len(_portfolio['posiciones'])}\n\n"
             f"<b>Win Rate global:</b> {wr} ({hist_wins}/{hist_total})\n\n"
             f"🏇 <b>Derby:</b> {'Activo' if reto['activo'] else 'Inactivo'}\n"
             f"  Caballos vivos: {vivos}/4 | Capital total: ${cap_reto:,.2f}\n\n"
-            f"<i>AXIS v8.63 | {ahora.strftime('%H:%M EST')}</i>"
+            f"<i>AXIS v{AXIS_VERSION} | {ahora.strftime('%H:%M EST')}</i>"
         )
-        enviar_telegram(msg)
+        enviar_telegram(msg_general)
+
+        if not posiciones_lineas:
+            enviar_telegram("📈 <b>AXIS — Posiciones abiertas:</b> 0\nNinguna")
+        else:
+            grupos = []
+            grupo_actual = []
+            longitud = 0
+            for linea in posiciones_lineas:
+                if grupo_actual and longitud + len(linea) + 2 > 3400:
+                    grupos.append(grupo_actual)
+                    grupo_actual = []
+                    longitud = 0
+                grupo_actual.append(linea)
+                longitud += len(linea) + 2
+            if grupo_actual:
+                grupos.append(grupo_actual)
+            for idx, grupo in enumerate(grupos, 1):
+                parte = f" ({idx}/{len(grupos)})" if len(grupos) > 1 else ""
+                enviar_telegram(
+                    f"📈 <b>AXIS — Posiciones abiertas: {len(posiciones_lineas)}{parte}</b>\n\n"
+                    + "\n\n".join(grupo)
+                )
     except Exception as e:
         print(f"Error enviar_resumen_diario: {e}")
 
