@@ -12,7 +12,7 @@
 
 ## Estado del proyecto
 
-AXIS está en producción activa (Railway), operando en vivo sobre 8 activos (SPY, AAPL, BA, GLD, NVDA, AMZN, GOOG, META). El día 06/25/2026 se resolvió un incidente de seguridad crítico (token de Telegram comprometido) y varios bugs de evaluación de la vela V7. El sistema es estable a partir de v8.84.
+AXIS está en producción activa (Railway). El universo configurado desde v8.93 comprende 10 activos (SPY, AAPL, BA, GLD, NVDA, AMZN, GOOG, META, MU, SPCX). El día 06/25/2026 se resolvió un incidente de seguridad crítico (token de Telegram comprometido) y varios bugs de evaluación de la vela V7. El sistema es estable a partir de v8.84.
 
 Este sprint (AX-001) NO modifica nada del sistema en producción. Es exclusivamente la base de documentación de ingeniería para futuros sprints de AXIS 2.0.
 

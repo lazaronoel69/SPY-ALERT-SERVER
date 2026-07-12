@@ -22,7 +22,7 @@ from typing import Optional
 import requests
 
 RAILWAY = "https://web-production-bf9d0.up.railway.app"
-SYMBOLS = ["SPY", "AAPL", "BA", "GLD", "NVDA", "AMZN", "GOOG", "META"]
+SYMBOLS = ["SPY", "AAPL", "BA", "GLD", "NVDA", "AMZN", "GOOG", "META", "MU", "SPCX"]
 
 TIPO_DESCRIPCION = {
     "1VR":  "PRIMERA VELA ROJA",

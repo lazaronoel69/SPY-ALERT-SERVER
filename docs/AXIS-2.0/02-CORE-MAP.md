@@ -57,7 +57,7 @@ Existe un SEGUNDO camino paralelo, fuera de `monitor_loop`, exclusivo para la ú
 
 ## 2. reporte_horario()
 
-**Propósito:** iterar sobre los 8 activos y evaluar cada uno con los datos más recientes de velas.
+**Propósito:** iterar sobre los activos configurados en `ACTIVOS` y evaluar cada uno con los datos más recientes de velas (10 activos desde AX-ASSET-001).
 
 **Quién la llama:** `monitor_loop()` (automático) y la ruta `/reporte` (manual, vía Flask).
 

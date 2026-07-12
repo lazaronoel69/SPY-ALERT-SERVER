@@ -18,7 +18,7 @@ from datetime import datetime
 
 import requests
 
-SYMBOLS = ["SPY", "AAPL", "BA", "GLD", "NVDA", "AMZN", "GOOG", "META"]
+SYMBOLS = ["SPY", "AAPL", "BA", "GLD", "NVDA", "AMZN", "GOOG", "META", "MU", "SPCX"]
 
 # ── 1. Importar server (el motor real) ──────────────────────────────────────
 import server

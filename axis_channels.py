@@ -57,6 +57,10 @@ CANALES_DEFAULT = {
              "p2_actual_high": None, "p2_actual_ts": None, "v1_candidato": None},
     "META": {"on": False, "apagado": False, "p1": None, "p2": None, "p3": None,
              "p2_actual_high": None, "p2_actual_ts": None, "v1_candidato": None},
+    "MU":   {"on": False, "apagado": False, "p1": None, "p2": None, "p3": None,
+             "p2_actual_high": None, "p2_actual_ts": None, "v1_candidato": None},
+    "SPCX": {"on": False, "apagado": False, "p1": None, "p2": None, "p3": None,
+             "p2_actual_high": None, "p2_actual_ts": None, "v1_candidato": None},
 }
 
 

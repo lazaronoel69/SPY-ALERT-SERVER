@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v8.92
+AXIS Breakout Sentinel v8.93
 Estrategias: 1VR | 1VR+ | RPG | GNA | GBA | RCB/CNF
-Multi-activo: SPY, AAPL, BA, GLD
+Multi-activo: SPY, AAPL, BA, GLD, NVDA, AMZN, GOOG, META, MU, SPCX
 v8.43: Portfolio fix — ejecutar_orden_tradier en webhook exec/reto | Panic Button al bid |
        Reto con capital 80% + ±5 strikes + Claude fallback | Reset route | Sin precios live
 v8.44: Persistencia ordenes_pendientes en /data/axis_ordenes.json — sobrevive reinicios Railway
@@ -43,6 +43,7 @@ v8.89: AX-TRACK-001: expediente JSON persistente para cada alerta, enlazado con 
 v8.90: AX-TRACK-002: seguimiento cada 5 min de posiciones activas con bid, P&L, MFE, MAE, duración y snapshots vinculados al alert_id.
 v8.91: AX-FIX-EXP-001: cierre de posiciones vencidas el mismo día a las 16:15 EST y reconciliación al arrancar, incluso fuera de mercado.
 v8.92: AX-TRACK-003: updates operativos por Telegram: hitos P&L, fallos/reanudación, cierre con MFE/MAE y resumen diario de posiciones.
+v8.93: AX-ASSET-001: MU y SPCX agregados al monitoreo, V1-V7, Telegram, canales, dashboards, backtest y revisión diaria.
 """
 
 import os
@@ -151,7 +152,7 @@ def loop_limpiar_ordenes():
             print(f"Error loop_limpiar_ordenes: {e}")
 
 # ── VERSIÓN ──────────────────────────────────────────────────────────────────
-AXIS_VERSION = "8.92"
+AXIS_VERSION = "8.93"
 _BUILD_DATE  = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
 
 def _git_commit_short():
@@ -1872,7 +1873,7 @@ def home(path=""):
     </div>
     <div class="status-pill">{ahora.strftime('%H:%M EST')}</div>
     <div class="status-pill">{pos_count} posición{'es' if pos_count != 1 else ''} abierta{'s' if pos_count != 1 else ''}</div>
-    <div class="status-pill">v8.63 · {len(ACTIVOS)} activos</div>
+    <div class="status-pill">v{AXIS_VERSION} · {len(ACTIVOS)} activos</div>
   </div>
   <div class="nav-grid">
     <a href="/charts" class="nav-card">
@@ -2847,12 +2848,12 @@ def ruta_bitacora_seed():
         "produccion": "https://web-production-bf9d0.up.railway.app",
         "instrucciones_ai": "Lee este archivo completo antes de actuar. NUNCA codifiques sin autorización de Noel. Conversa, diseña, Noel aprueba, luego implementas. Un cambio a la vez. Verifica con /status después de cada deploy.",
         "versiones": {
-            "server_py":          "v8.63",
+            "server_py":          f"v{AXIS_VERSION}",
             "axis_charts_html":   "v1.4.1",
             "axis_portfolio_html":"v1.3",
             "axis_bitacora_html": "v1.0"
         },
-        "activos": ["SPY","AAPL","BA","GLD","NVDA","AMZN","GOOG","META"],
+        "activos": ACTIVOS,
         "entradas": []
     }
     with open(BITACORA_FILE, "w") as f:
@@ -3532,7 +3533,7 @@ def loop_polling_posiciones():
 # ═══════════════════════════════════════════════════════════
 # V7 ANTICIPADA
 # ═══════════════════════════════════════════════════════════
-ACTIVOS_V7_ANTICIPADA = ["SPY", "AAPL", "BA", "GLD", "NVDA", "AMZN", "GOOG", "META"]
+ACTIVOS_V7_ANTICIPADA = list(ACTIVOS)
 ACTIVOS_V7_ANTICIPADA_NOSPY = [s for s in ACTIVOS_V7_ANTICIPADA if s != "SPY"]
 _v7_eval_origen = None  # "V7_ANTICIPADA_1558" | "V7_FINAL_1600" | None
 

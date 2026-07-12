@@ -18,7 +18,7 @@ import pytz
 EST = pytz.timezone("America/New_York")
 
 # ── Activos monitoreados ──
-ACTIVOS     = ["SPY", "AAPL", "BA", "GLD", "NVDA", "AMZN", "GOOG", "META"]
+ACTIVOS     = ["SPY", "AAPL", "BA", "GLD", "NVDA", "AMZN", "GOOG", "META", "MU", "SPCX"]
 ACTIVOS_SPY = ["SPY"]
 
 # ── Horario de reportes (monitor_loop) ──
