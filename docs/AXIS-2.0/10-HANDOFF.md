@@ -8,44 +8,39 @@
 |---|---|
 | **Estado** | PRODUCTION ACTIVE — TRACKING VALIDATION |
 | **Versión actual** | v8.94 |
-| **Commit producción** | `33d8587` |
-| **Build producción** | 2026-07-13 14:00:44 UTC |
+| **Commit producción** | `0e2e1cb` |
+| **Build producción** | 2026-07-25 17:08:24 UTC |
 | **Core** | Frozen |
 | **Backtest** | BT-001 → BT-011 COMPLETED |
 | **Producción** | Running (Railway), `/version` y `/status` OK |
 | **Universo** | 10 activos: SPY, AAPL, BA, GLD, NVDA, AMZN, GOOG, META, MU, SPCX |
 | **Último sprint** | AX-TRACK-004 — seguimiento intradía silencioso y consolidación diaria por Telegram |
-| **Alert Lifecycle** | 81 expedientes: 26 ACTIVE, 25 CLOSED, 30 CANCELLED |
-| **Portfolio observado** | 26 posiciones abiertas; reconciliación interna aprobada en AX-TRACK-AUDIT-001 |
+| **Alert Lifecycle** | 146 expedientes: 25 ACTIVE, 64 CLOSED, 57 CANCELLED |
+| **Portfolio observado** | 27 posiciones abiertas: 25 vinculadas y 2 huérfanas P1 |
 | **AX-TUNE-001A** | COMPLETED — reporte diario de señales (`tools/daily_signal_review.py`) |
 | **AX-TUNE-001B** | COMPLETED — automated daily debrief (`axis_debrief.html`, `/daily_debrief/*`, Telegram 16:10) |
 | **AX-TUNE-002A** | COMPLETED — root cause engine v1: anomalías estructuradas (CONFLICTO_DIRECCION, MULTIPLES_ESTRATEGIAS, SIMBOLO_SOBREACTIVO, ESTRATEGIA_DOMINANTE, SEÑAL_TARDIA) con prioridad ALTA/MEDIA/BAJA y accion_recomendada. Telegram filtra solo ALTA+MEDIA. |
-| **Última verificación** | 2026-07-25 12:15 EST; mercado cerrado; cinco threads operativos presentes |
+| **Última verificación** | 2026-08-05 09:37 EST; mercado abierto; producción OK |
 
-### Production Snapshot — 2026-07-25
+### Production Snapshot — 2026-08-05
 
-- Producción ejecuta AXIS v8.94 desde el commit `33d8587`.
+- Producción ejecuta AXIS v8.94 desde el commit `0e2e1cb`.
 - El seguimiento de posiciones funciona aproximadamente cada cinco minutos y
   persiste bid, P&L actual, MFE, MAE, duración y snapshots.
-- El último día de mercado disponible es 2026-07-24.
-- El 2026-07-24 se registraron seis señales, todas 1VR. El Root Cause Engine
-  clasificó la concentración como `ESTRATEGIA_DOMINANTE`, prioridad BAJA,
-  acción `MONITOREAR`.
-- `/data/axis_portfolio.json` ocupa aproximadamente 2.5 MB. El crecimiento se
-  debe en parte a la serie completa de snapshots cada cinco minutos.
-- AXIS reporta 26 posiciones abiertas, con vencimientos entre 2026-07-27 y
-  2026-07-31. Antes de usar sus resultados para tuning debe verificarse que
-  correspondan a las ejecuciones esperadas y que ninguna deba estar cerrada o
-  reconciliada.
+- El segundo corte incorporó 65 alertas nuevas y 39 nuevos cierres.
+- AXIS acumula 64 cierres; 44 pertenecen a 1VR.
+- Dos posiciones del 2026-08-03 quedaron sin `alert_id`, orden de Tradier ni
+  GTC después de `TRADIER_EXECUTION_FAILED`. Se excluyen del tuning.
+- La sesión del 2026-08-05 estaba abierta al corte; las estadísticas completas
+  terminan en 2026-08-04.
 
 ### Open Limitations
 
 - **L1** — Canal snapshot no histórico: `cargar_canal_snapshot()` usa el estado actual de producción, no reconstrucción histórica. Afecta estrategias RCB/CNF/4PASOS en backtest.
 - **L2** — Outcome proxy: métricas de backtest miden movimiento direccional del subyacente, no P&L real de opciones.
 - **L3** — Datos históricos limitados a 40 días (2026-05-04 → 2026-06-30).
-- **L4** — El historial de producción posterior a AX-TRACK ya mide opciones
-  reales de sandbox, pero la muestra sigue siendo temprana y no debe usarse
-  todavía para cambios de estrategia sin reconciliación y revisión estadística.
+- **L4** — 1VR ya permite análisis preliminar con 44 cierres. Las demás
+  estrategias siguen con muestras demasiado pequeñas para cambios permanentes.
 - **L5** — Las líneas manuales del chart están separadas en memoria por activo,
   pero el canvas no se redibuja al cambiar de símbolo; una línea de MU puede
   permanecer visualmente sobre SPCX hasta refrescar o redibujar. Bug
@@ -67,21 +62,23 @@
 | **AX-ASSET-001** | Add MU and SPCX | COMPLETED — v8.93 |
 | **AX-TRACK-004** | Silent Intraday Tracking | COMPLETED — v8.94 |
 | **AX-TRACK-AUDIT-001** | First Internal Reconciliation | COMPLETED — 2026-07-25 |
-| **AX-STATS-001** | Validate Lifecycle Statistics | NEXT after more closed outcomes |
+| **AX-TRACK-AUDIT-002** | Second Incremental Reconciliation | COMPLETED — 2026-08-05 |
+| **AX-FIX-EXEC-001** | Prevent positions when Tradier execution fails | NEXT — requires authorization |
+| **AX-STATS-001** | Validate 1VR Lifecycle Statistics | NEXT after P1 fix |
 | **AX-TUNE-002** | Evidence-based Strategy Improvements | BLOCKED until audit/statistics |
 | **AX-ASSET-002** | Add TSLA to Monitoring Universe | PENDING — include in next approved update |
 | **AX-BT-012** | Historical Channel Reconstruction | FUTURE |
 
 ### Immediate Objective
 
-AX-TRACK-AUDIT-001 confirmed internal consistency across 81 alerts and 26 open
-positions. The next objective is to continue collecting terminal outcomes and
-produce incremental reconciliations without rebuilding the initial period.
-Strategy tuning remains blocked until each strategy has a materially larger
-closed sample.
+AX-TRACK-AUDIT-002 found two orphan positions caused by registering a portfolio
+position after a failed Tradier execution. The next objective is to correct
+that P1 integrity defect under an approved sprint, reconcile the two existing
+records, and then analyze the 44 closed 1VR outcomes. Strategy rules remain
+frozen.
 
-Baseline report:
-[`reconciliations/2026-07-25-AX-TRACK-AUDIT-001.md`](reconciliations/2026-07-25-AX-TRACK-AUDIT-001.md)
+Latest report:
+[`reconciliations/2026-08-05-AX-TRACK-AUDIT-002.md`](reconciliations/2026-08-05-AX-TRACK-AUDIT-002.md)
 
 ### AX-TUNE-001 — Production Signal Review
 Revisar señales reales disparadas en producción (últimas 4-6 semanas). Identificar patrones de falsos positivos por estrategia. Input requerido para AX-TUNE-002.
@@ -207,6 +204,7 @@ Run: 2026-05-04 a 2026-06-30.
 | R5 | P1 | 26 posiciones abiertas simultáneamente; no existe evidencia en este handoff de un límite operativo aplicado |
 | R6 | P2 | Crecimiento continuo de `axis_portfolio.json` por snapshots cada cinco minutos; ~2.5 MB al 2026-07-25 |
 | R7 | P3 | Bug visual de líneas manuales al cambiar de activo; no afecta estrategias ni persistencia |
+| R8 | P1 | `registrar_posicion()` crea posiciones aunque Tradier falle; dos posiciones huérfanas detectadas el 2026-08-03 |
 
 ---
 
@@ -222,10 +220,13 @@ Run: 2026-05-04 a 2026-06-30.
 - No modificar código, documentación, Git ni producción sin autorización
   específica del propietario.
 - No hacer `git push` sin autorización expresa.
+- Automatización `AXIS — Reconciliación semanal` activa los sábados a las
+  10:00 EST. Tiene autorización permanente y limitada para commit/push del
+  reporte semanal, su CSV y esta actualización del handoff. No puede incluir
+  código ni otros archivos.
 - Este handoff describe estado actual; no reemplaza el Operating Manual.
 
 ## Rama
 
-`main`, sincronizada con `origin/main` al 2026-07-25. Único archivo local no
-tracked observado: `AGENTS.md` (preexistente; no modificar ni incluir sin
-autorización).
+Base `main` en `0e2e1cb`. Único archivo local no tracked ajeno al sprint:
+`AGENTS.md` (preexistente; no modificar ni incluir sin autorización).
