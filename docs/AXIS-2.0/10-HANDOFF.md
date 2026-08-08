@@ -8,31 +8,30 @@
 |---|---|
 | **Estado** | PRODUCTION ACTIVE — TRACKING VALIDATION |
 | **Versión actual** | v8.94 |
-| **Commit producción** | `0e2e1cb` |
-| **Build producción** | 2026-07-25 17:08:24 UTC |
+| **Commit producción** | `0766456` |
+| **Build producción** | 2026-08-05 13:47:47 UTC |
 | **Core** | Frozen |
 | **Backtest** | BT-001 → BT-011 COMPLETED |
 | **Producción** | Running (Railway), `/version` y `/status` OK |
 | **Universo** | 10 activos: SPY, AAPL, BA, GLD, NVDA, AMZN, GOOG, META, MU, SPCX |
 | **Último sprint** | AX-TRACK-004 — seguimiento intradía silencioso y consolidación diaria por Telegram |
-| **Alert Lifecycle** | 146 expedientes: 25 ACTIVE, 64 CLOSED, 57 CANCELLED |
-| **Portfolio observado** | 27 posiciones abiertas: 25 vinculadas y 2 huérfanas P1 |
+| **Alert Lifecycle** | 173 expedientes: 23 ACTIVE, 84 CLOSED, 66 CANCELLED |
+| **Portfolio observado** | 29 posiciones abiertas: 23 vinculadas y 6 huérfanas P1 |
 | **AX-TUNE-001A** | COMPLETED — reporte diario de señales (`tools/daily_signal_review.py`) |
 | **AX-TUNE-001B** | COMPLETED — automated daily debrief (`axis_debrief.html`, `/daily_debrief/*`, Telegram 16:10) |
 | **AX-TUNE-002A** | COMPLETED — root cause engine v1: anomalías estructuradas (CONFLICTO_DIRECCION, MULTIPLES_ESTRATEGIAS, SIMBOLO_SOBREACTIVO, ESTRATEGIA_DOMINANTE, SEÑAL_TARDIA) con prioridad ALTA/MEDIA/BAJA y accion_recomendada. Telegram filtra solo ALTA+MEDIA. |
-| **Última verificación** | 2026-08-05 09:37 EST; mercado abierto; producción OK |
+| **Última verificación** | 2026-08-08 11:38 EST; mercado cerrado; producción OK |
 
-### Production Snapshot — 2026-08-05
+### Estado de reconciliación — 2026-08-08
 
-- Producción ejecuta AXIS v8.94 desde el commit `0e2e1cb`.
-- El seguimiento de posiciones funciona aproximadamente cada cinco minutos y
-  persiste bid, P&L actual, MFE, MAE, duración y snapshots.
-- El segundo corte incorporó 65 alertas nuevas y 39 nuevos cierres.
-- AXIS acumula 64 cierres; 44 pertenecen a 1VR.
-- Dos posiciones del 2026-08-03 quedaron sin `alert_id`, orden de Tradier ni
-  GTC después de `TRADIER_EXECUTION_FAILED`. Se excluyen del tuning.
-- La sesión del 2026-08-05 estaba abierta al corte; las estadísticas completas
-  terminan en 2026-08-04.
+- AX-TRACK-AUDIT-003 incluye sesiones completas del 2026-08-05 al 2026-08-07,
+  con 29 resultados terminales nuevos (20 CLOSED y 9 CANCELLED).
+- Las 23 alertas ACTIVE están vinculadas a posiciones abiertas; no hay
+  posiciones vencidas activas ni métricas MFE/MAE/duración faltantes.
+- Se mantienen dos posiciones huérfanas del 2026-08-03 y se detectan cuatro
+  adicionales del 2026-08-05 tras cancelaciones `EXECUTE`: seis en total.
+- Estas posiciones huérfanas permanecen excluidas del tuning hasta resolver
+  AX-FIX-EXEC-001. Producción y estrategias no fueron modificadas.
 
 ### Open Limitations
 
@@ -63,6 +62,7 @@
 | **AX-TRACK-004** | Silent Intraday Tracking | COMPLETED — v8.94 |
 | **AX-TRACK-AUDIT-001** | First Internal Reconciliation | COMPLETED — 2026-07-25 |
 | **AX-TRACK-AUDIT-002** | Second Incremental Reconciliation | COMPLETED — 2026-08-05 |
+| **AX-TRACK-AUDIT-003** | Weekly Incremental Reconciliation | COMPLETED — 2026-08-08 |
 | **AX-FIX-EXEC-001** | Prevent positions when Tradier execution fails | NEXT — requires authorization |
 | **AX-STATS-001** | Validate 1VR Lifecycle Statistics | NEXT after P1 fix |
 | **AX-TUNE-002** | Evidence-based Strategy Improvements | BLOCKED until audit/statistics |
@@ -71,14 +71,14 @@
 
 ### Immediate Objective
 
-AX-TRACK-AUDIT-002 found two orphan positions caused by registering a portfolio
-position after a failed Tradier execution. The next objective is to correct
-that P1 integrity defect under an approved sprint, reconcile the two existing
-records, and then analyze the 44 closed 1VR outcomes. Strategy rules remain
+AX-TRACK-AUDIT-003 confirms that the P1 execution-integrity defect now affects
+six open orphan positions (two from 2026-08-03 and four from 2026-08-05).
+The next objective is to correct the defect under an approved sprint, reconcile
+the six records, and then analyze lifecycle statistics. Strategy rules remain
 frozen.
 
 Latest report:
-[`reconciliations/2026-08-05-AX-TRACK-AUDIT-002.md`](reconciliations/2026-08-05-AX-TRACK-AUDIT-002.md)
+[`reconciliations/2026-08-08-AX-TRACK-AUDIT-003.md`](reconciliations/2026-08-08-AX-TRACK-AUDIT-003.md)
 
 ### AX-TUNE-001 — Production Signal Review
 Revisar señales reales disparadas en producción (últimas 4-6 semanas). Identificar patrones de falsos positivos por estrategia. Input requerido para AX-TUNE-002.
