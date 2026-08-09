@@ -229,6 +229,7 @@ def notification_status(reports_dir=REPORTS_DIR, state_file=STATE_FILE):
         "status": status,
         "last_sent_report": state.get("last_sent_report"),
         "last_sent_at": state.get("last_sent_at"),
+        "telegram_message_id": state.get("telegram_message_id"),
         "last_attempt_at": state.get("last_attempt_at"),
         "last_error": state.get("last_error"),
     }

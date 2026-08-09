@@ -7,20 +7,20 @@
 | Campo | Valor |
 |---|---|
 | **Estado** | PRODUCTION ACTIVE — TRACKING VALIDATION |
-| **Versión actual** | v8.94 |
-| **Commit producción** | `0766456` |
-| **Build producción** | 2026-08-05 13:47:47 UTC |
+| **Versión actual** | v8.95 |
+| **Commit producción** | `f42df7d` |
+| **Build producción** | 2026-08-09 00:58:31 UTC |
 | **Core** | Frozen |
 | **Backtest** | BT-001 → BT-011 COMPLETED |
 | **Producción** | Running (Railway), `/version` y `/status` OK |
 | **Universo** | 10 activos: SPY, AAPL, BA, GLD, NVDA, AMZN, GOOG, META, MU, SPCX |
-| **Último sprint** | AX-TRACK-004 — seguimiento intradía silencioso y consolidación diaria por Telegram |
+| **Último sprint** | AX-TRACK-NOTIFY-001 — entrega automática de reconciliaciones por Telegram |
 | **Alert Lifecycle** | 173 expedientes: 23 ACTIVE, 84 CLOSED, 66 CANCELLED |
 | **Portfolio observado** | 29 posiciones abiertas: 23 vinculadas y 6 huérfanas P1 |
 | **AX-TUNE-001A** | COMPLETED — reporte diario de señales (`tools/daily_signal_review.py`) |
 | **AX-TUNE-001B** | COMPLETED — automated daily debrief (`axis_debrief.html`, `/daily_debrief/*`, Telegram 16:10) |
 | **AX-TUNE-002A** | COMPLETED — root cause engine v1: anomalías estructuradas (CONFLICTO_DIRECCION, MULTIPLES_ESTRATEGIAS, SIMBOLO_SOBREACTIVO, ESTRATEGIA_DOMINANTE, SEÑAL_TARDIA) con prioridad ALTA/MEDIA/BAJA y accion_recomendada. Telegram filtra solo ALTA+MEDIA. |
-| **Última verificación** | 2026-08-08 11:38 EST; mercado cerrado; producción OK |
+| **Última verificación** | 2026-08-08 20:58 EST; mercado cerrado; producción v8.95 OK; AX-TRACK-AUDIT-003 enviado por Telegram |
 
 ### Estado de reconciliación — 2026-08-08
 
@@ -60,6 +60,7 @@
 | **AX-TRACK-003** | Telegram Operational Updates | COMPLETED — v8.92 |
 | **AX-ASSET-001** | Add MU and SPCX | COMPLETED — v8.93 |
 | **AX-TRACK-004** | Silent Intraday Tracking | COMPLETED — v8.94 |
+| **AX-TRACK-NOTIFY-001** | Weekly Reconciliation Telegram Delivery | COMPLETED — v8.95 |
 | **AX-TRACK-AUDIT-001** | First Internal Reconciliation | COMPLETED — 2026-07-25 |
 | **AX-TRACK-AUDIT-002** | Second Incremental Reconciliation | COMPLETED — 2026-08-05 |
 | **AX-TRACK-AUDIT-003** | Weekly Incremental Reconciliation | COMPLETED — 2026-08-08 |
@@ -217,6 +218,9 @@ Run: 2026-05-04 a 2026-06-30.
 - `--workers 1` en gunicorn es load-bearing — no cambiar sin rediseñar persistencia de estado
 - `axis_bitacora.html` fetch usa paths relativos — solo funciona servida por Flask
 - La comunicación operativa para el propietario se realiza por Telegram.
+- Cada nueva reconciliación desplegada se resume y entrega automáticamente por
+  Telegram. El estado se verifica en `/reconciliation/notification-status`;
+  `/data/axis_reconciliation_notify.json` evita envíos duplicados tras reinicios.
 - No modificar código, documentación, Git ni producción sin autorización
   específica del propietario.
 - No hacer `git push` sin autorización expresa.
@@ -228,5 +232,5 @@ Run: 2026-05-04 a 2026-06-30.
 
 ## Rama
 
-Base `main` en `0e2e1cb`. Único archivo local no tracked ajeno al sprint:
+Base `main` en `f42df7d`. Único archivo local no tracked ajeno al sprint:
 `AGENTS.md` (preexistente; no modificar ni incluir sin autorización).
