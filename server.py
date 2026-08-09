@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v8.94
+AXIS Breakout Sentinel v8.95
 Estrategias: 1VR | 1VR+ | RPG | GNA | GBA | RCB/CNF
 Multi-activo: SPY, AAPL, BA, GLD, NVDA, AMZN, GOOG, META, MU, SPCX
 v8.43: Portfolio fix — ejecutar_orden_tradier en webhook exec/reto | Panic Button al bid |
@@ -45,6 +45,7 @@ v8.91: AX-FIX-EXP-001: cierre de posiciones vencidas el mismo día a las 16:15 E
 v8.92: AX-TRACK-003: updates operativos por Telegram: hitos P&L, fallos/reanudación, cierre con MFE/MAE y resumen diario de posiciones.
 v8.93: AX-ASSET-001: MU y SPCX agregados al monitoreo, V1-V7, Telegram, canales, dashboards, backtest y revisión diaria.
 v8.94: AX-TRACK-004: seguimiento 5 min silencioso; hitos/fallos se registran sin Telegram y se consolidan al cierre diario.
+v8.95: AX-TRACK-NOTIFY-001: cada reconciliación semanal se envía una sola vez por Telegram, con reintentos y estado verificable.
 """
 
 import os
@@ -153,7 +154,7 @@ def loop_limpiar_ordenes():
             print(f"Error loop_limpiar_ordenes: {e}")
 
 # ── VERSIÓN ──────────────────────────────────────────────────────────────────
-AXIS_VERSION = "8.94"
+AXIS_VERSION = "8.95"
 _BUILD_DATE  = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
 
 def _git_commit_short():
@@ -689,6 +690,10 @@ def es_dia_mercado(dt=None):
 # AX-006: enviar_telegram movida a axis_telegram.py. Mismo nombre,
 # mismo comportamiento, mismo parse_mode HTML, mismo timeout.
 from axis_telegram import enviar_telegram
+from axis_reconciliation_notify import (
+    notification_status,
+    reconciliation_notification_loop,
+)
 
 # ═══════════════════════════════════════════════════════════
 # UTILIDAD — Dias habiles
@@ -4466,6 +4471,11 @@ def version_endpoint():
         "status":         "OK",
     }), 200
 
+@app.route("/reconciliation/notification-status", methods=["GET"])
+def reconciliation_notification_status_endpoint():
+    """Estado de entrega Telegram; nunca expone token ni chat_id."""
+    return jsonify(notification_status()), 200
+
 # ═══════════════════════════════════════════════════════════
 # SOURCE — expone archivos para lectura de AI
 # GET /source/<filename>?key=AXIS_PASSWORD
@@ -4487,6 +4497,9 @@ def get_source(filename):
 
 def arrancar_monitor():
     time.sleep(5)
+    # AX-TRACK-NOTIFY-001 no depende de mercado ni del Core. Inicia primero
+    # para que un fallo posterior de carga no bloquee la entrega semanal.
+    threading.Thread(target=reconciliation_notification_loop, daemon=True).start()
     cargar_canales()
     cargar_portfolio()
     reconciliar_posiciones_vencidas(datetime.now(EST))
