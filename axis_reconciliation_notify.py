@@ -141,7 +141,8 @@ def build_message(report_path):
 
 def _send_telegram(message):
     token = os.environ.get("TELEGRAM_TOKEN", "")
-    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
+    # Mantiene el mismo fallback histórico que axis_telegram.py/server.py.
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "-5010153427")
     if not token or not chat_id:
         raise RuntimeError("credenciales de Telegram no disponibles")
 
