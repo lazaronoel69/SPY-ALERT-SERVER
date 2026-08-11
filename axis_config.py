@@ -45,6 +45,7 @@ ESTADO_FILE    = "/data/axis_estado_dia.json"
 SEÑALES_FILE   = "/data/axis_señales_historicas.json"
 ALERTAS_FILE   = "/data/axis_alertas.json"
 BITACORA_FILE  = "/data/axis_bitacora.json"
+MOBILE_ACCESS_FILE = "/data/axis_mobile_access.json"
 
 # ── Tradier — bases de URL (sin tokens) ──
 TRADIER_BASE      = "https://sandbox.tradier.com/v1"

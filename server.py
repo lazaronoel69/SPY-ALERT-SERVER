@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v8.97
+AXIS Breakout Sentinel v8.98
 Estrategias: 1VR | 1VR+ | RPG | GNA | GBA | RCB/CNF
 Multi-activo: SPY, AAPL, BA, GLD, NVDA, AMZN, GOOG, META, MU, SPCX
 v8.43: Portfolio fix — ejecutar_orden_tradier en webhook exec/reto | Panic Button al bid |
@@ -48,6 +48,7 @@ v8.94: AX-TRACK-004: seguimiento 5 min silencioso; hitos/fallos se registran sin
 v8.95: AX-TRACK-NOTIFY-001: cada reconciliación semanal se envía una sola vez por Telegram, con reintentos y estado verificable.
 v8.96: AX-SEC-001: control administrativo autenticado, webhook Telegram validado, CORS restringido y rutas mutables solo POST.
 v8.97: AX-FIX-EXEC-001: una posición solo se registra tras confirmación de compra de Tradier; huérfanas sin confirmación se anulan y excluyen de métricas.
+v8.98: AX-MOBILE-001: Derby móvil se empareja por Telegram privado con sesión HttpOnly; el token administrativo nunca se comparte.
 """
 
 import os
@@ -55,10 +56,12 @@ import requests
 import threading
 import time
 import hmac
+import hashlib
+import secrets
 from functools import wraps
 from datetime import datetime, timedelta, date
 import pytz
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, Response, redirect
 
 app = Flask(__name__)
 
@@ -89,6 +92,8 @@ def handle_options(path):
 
 AXIS_ADMIN_TOKEN = os.environ.get("AXIS_ADMIN_TOKEN", "")
 TELEGRAM_WEBHOOK_SECRET = os.environ.get("TELEGRAM_WEBHOOK_SECRET", "")
+AXIS_OWNER_TELEGRAM_USER_ID = os.environ.get("AXIS_OWNER_TELEGRAM_USER_ID", "")
+TELEGRAM_BOT_USERNAME = os.environ.get("TELEGRAM_BOT_USERNAME", "").lstrip("@")
 
 
 def _forbidden(message="unauthorized", status=401):
@@ -96,15 +101,17 @@ def _forbidden(message="unauthorized", status=401):
 
 
 def require_admin(view):
-    """Protege operaciones internas sin exponer secretos en URLs o frontends."""
+    """Protege operaciones internas con token o sesión móvil emparejada."""
     @wraps(view)
     def wrapped(*args, **kwargs):
         if not AXIS_ADMIN_TOKEN:
             return _forbidden("admin security not configured", 503)
         supplied = request.headers.get("X-AXIS-Admin-Token", "")
-        if not supplied or not hmac.compare_digest(supplied, AXIS_ADMIN_TOKEN):
-            return _forbidden()
-        return view(*args, **kwargs)
+        if supplied and hmac.compare_digest(supplied, AXIS_ADMIN_TOKEN):
+            return view(*args, **kwargs)
+        if _mobile_session_valida(request.cookies.get("axis_mobile_session", "")):
+            return view(*args, **kwargs)
+        return _forbidden()
     return wrapped
 
 
@@ -203,7 +210,7 @@ def loop_limpiar_ordenes():
             print(f"Error loop_limpiar_ordenes: {e}")
 
 # ── VERSIÓN ──────────────────────────────────────────────────────────────────
-AXIS_VERSION = "8.97"
+AXIS_VERSION = "8.98"
 _BUILD_DATE  = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
 
 def _git_commit_short():
@@ -294,11 +301,146 @@ canal      = {a: canal_vacio()         for a in ACTIVOS}
 # AX-003: rutas de persistencia movidas a axis_config.py, mismos valores.
 from axis_config import (
     CANALES_FILE, PORTFOLIO_FILE, ORDENES_FILE, ESTADO_FILE,
-    SEÑALES_FILE, ALERTAS_FILE, BITACORA_FILE, DATA_DIR,
+    SEÑALES_FILE, ALERTAS_FILE, BITACORA_FILE, MOBILE_ACCESS_FILE, DATA_DIR,
 )
 from axis_alerts import crear_alerta, actualizar_alerta, listar_alertas
 DEBRIEF_FILE  = f"{DATA_DIR}/axis_debrief.json"
 JOURNAL_FILE  = f"{DATA_DIR}/axis_journal.json"
+
+# ── AX-MOBILE-001: acceso móvil emparejado con Telegram privado ──────────
+# La sesión se entrega solamente al navegador que inició el código; en disco
+# se guardan hashes, nunca el token de sesión ni el código de emparejamiento.
+MOBILE_PAIR_SECONDS = 10 * 60
+MOBILE_SESSION_SECONDS = 30 * 24 * 60 * 60
+_mobile_access_lock = threading.RLock()
+
+
+def _sha256(valor):
+    return hashlib.sha256(valor.encode("utf-8")).hexdigest()
+
+
+def _cargar_mobile_access():
+    try:
+        with open(MOBILE_ACCESS_FILE, "r") as f:
+            datos = json.load(f)
+        if isinstance(datos, dict):
+            return {
+                "pending": datos.get("pending", {}) if isinstance(datos.get("pending"), dict) else {},
+                "sessions": datos.get("sessions", {}) if isinstance(datos.get("sessions"), dict) else {},
+            }
+    except (OSError, ValueError, TypeError):
+        pass
+    return {"pending": {}, "sessions": {}}
+
+
+_mobile_access = _cargar_mobile_access()
+
+
+def _guardar_mobile_access():
+    os.makedirs(os.path.dirname(MOBILE_ACCESS_FILE), exist_ok=True)
+    temporal = f"{MOBILE_ACCESS_FILE}.tmp"
+    with open(temporal, "w") as f:
+        json.dump(_mobile_access, f, ensure_ascii=False, separators=(",", ":"))
+    os.chmod(temporal, 0o600)
+    os.replace(temporal, MOBILE_ACCESS_FILE)
+
+
+def _limpiar_mobile_access(ahora=None):
+    ahora = time.time() if ahora is None else ahora
+    cambio = False
+    for pair_id, datos in list(_mobile_access["pending"].items()):
+        try:
+            expirado = float(datos.get("expires_at", 0)) <= ahora
+        except (TypeError, ValueError, AttributeError):
+            expirado = True
+        if not isinstance(datos, dict) or expirado:
+            _mobile_access["pending"].pop(pair_id, None)
+            cambio = True
+    for sesion_hash, datos in list(_mobile_access["sessions"].items()):
+        try:
+            expirada = float(datos.get("expires_at", 0)) <= ahora
+        except (TypeError, ValueError, AttributeError):
+            expirada = True
+        if not isinstance(datos, dict) or expirada:
+            _mobile_access["sessions"].pop(sesion_hash, None)
+            cambio = True
+    return cambio
+
+
+def _mobile_session_valida(sesion):
+    if not sesion or not isinstance(sesion, str):
+        return False
+    with _mobile_access_lock:
+        cambio = _limpiar_mobile_access()
+        valida = _sha256(sesion) in _mobile_access["sessions"]
+        if cambio:
+            _guardar_mobile_access()
+        return valida
+
+
+def _respuesta_mobile_autorizada(sesion):
+    respuesta = jsonify({"ok": True, "authorized": True})
+    respuesta.set_cookie(
+        "axis_mobile_session", sesion, max_age=MOBILE_SESSION_SECONDS,
+        secure=True, httponly=True, samesite="Lax", path="/",
+    )
+    return respuesta
+
+
+def _procesar_emparejamiento_movil(message):
+    """Aprueba un código solo si llega por DM desde el creador autorizado."""
+    remitente = message.get("from") or {}
+    chat = message.get("chat") or {}
+    usuario_id = str(remitente.get("id", ""))
+    chat_id = str(chat.get("id", ""))
+    texto = (message.get("text") or "").strip()
+    partes = texto.split()
+    comando = partes[0].split("@", 1)[0].lower() if partes else ""
+    if (
+        not AXIS_OWNER_TELEGRAM_USER_ID
+        or usuario_id != str(AXIS_OWNER_TELEGRAM_USER_ID)
+        or chat_id != usuario_id
+        or comando != "/axis"
+        or len(partes) != 2
+    ):
+        return False
+    if partes[1].lower() == "revoke":
+        with _mobile_access_lock:
+            if _mobile_access["sessions"]:
+                _mobile_access["sessions"] = {}
+                _guardar_mobile_access()
+        if TELEGRAM_TOKEN:
+            try:
+                requests.post(
+                    f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
+                    json={"chat_id": chat_id, "text": "✅ Todas las sesiones móviles AXIS fueron revocadas."},
+                    timeout=5,
+                )
+            except requests.RequestException:
+                pass
+        return True
+    codigo_hash = _sha256(partes[1].upper())
+    with _mobile_access_lock:
+        cambio = _limpiar_mobile_access()
+        aprobado = False
+        for datos in _mobile_access["pending"].values():
+            if hmac.compare_digest(datos.get("code_hash", ""), codigo_hash):
+                datos["approved_at"] = time.time()
+                aprobado = True
+                cambio = True
+                break
+        if cambio:
+            _guardar_mobile_access()
+    if aprobado and TELEGRAM_TOKEN:
+        try:
+            requests.post(
+                f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
+                json={"chat_id": chat_id, "text": "✅ Acceso móvil AXIS aprobado. Regresa al navegador para abrir Derby."},
+                timeout=5,
+            )
+        except requests.RequestException:
+            pass
+    return aprobado
 
 # AX-005: cargar_señales_historicas, guardar_señales_historicas movidas a axis_storage.py
 from axis_storage import cargar_señales_historicas, guardar_señales_historicas
@@ -2501,6 +2643,113 @@ def reto_activar():
 def reto_desactivar():
     return derby_desactivar()
 
+
+@app.route("/mobile", methods=["GET"])
+def mobile_access():
+    """Puerta de Derby para celular; no solicita ni muestra el token administrativo."""
+    if _mobile_session_valida(request.cookies.get("axis_mobile_session", "")):
+        return redirect("/derby")
+    bot_json = json.dumps(TELEGRAM_BOT_USERNAME).replace("<", "\\u003c")
+    return Response(f'''<!doctype html>
+<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AXIS · Acceso móvil</title><style>
+body{{margin:0;background:#07111f;color:#edf5ff;font:16px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;display:grid;min-height:100vh;place-items:center}}
+main{{width:min(92vw,440px);box-sizing:border-box;padding:30px 24px;border:1px solid #23415f;border-radius:18px;background:#0c1b2e;box-shadow:0 16px 45px #0008}}
+h1{{margin:0 0 8px;font-size:25px}} p{{line-height:1.5;color:#bcd0e5}} .code{{margin:20px 0;padding:16px;text-align:center;border-radius:10px;background:#07111f;color:#7ee0ff;font:700 26px ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:1px}}
+a{{display:block;text-align:center;padding:13px;border-radius:10px;background:#20a5d6;color:#04111e;text-decoration:none;font-weight:700}} small{{display:block;margin-top:18px;color:#88a4bd;text-align:center}}
+</style></head><body><main><h1>Acceso móvil AXIS</h1><p id="estado">Preparando un código privado…</p><div id="codigo" class="code">—</div><a id="telegram" href="#" target="_blank" rel="noopener">Abrir chat privado del bot</a><small>El código vence en 10 minutos. No compartas el token administrativo.</small></main>
+<script>
+const bot = {bot_json}; let pareja = null; let temporizador = null;
+const estado = document.getElementById('estado'), codigo = document.getElementById('codigo'), enlace = document.getElementById('telegram');
+async function iniciar() {{
+  const r = await fetch('/mobile/pair/request', {{method:'POST', headers:{{'Content-Type':'application/json'}}, credentials:'same-origin'}});
+  const d = await r.json();
+  if (!r.ok || !d.ok) {{ estado.textContent = d.error || 'No se pudo iniciar el acceso. Recarga la página.'; codigo.textContent='—'; return; }}
+  pareja = d; codigo.textContent = d.code;
+  estado.textContent = 'Envíale este mensaje al bot por chat privado: /axis ' + d.code;
+  if (d.bot_username) enlace.href = 'https://t.me/' + d.bot_username;
+  else {{ enlace.style.display='none'; }}
+  temporizador = setInterval(verificar, 3000);
+}}
+async function verificar() {{
+  if (!pareja) return;
+  const r = await fetch('/mobile/pair/status', {{method:'POST', headers:{{'Content-Type':'application/json'}}, credentials:'same-origin', body:JSON.stringify({{pair_id:pareja.pair_id, proof:pareja.proof}})}});
+  const d = await r.json();
+  if (d.authorized) {{ clearInterval(temporizador); estado.textContent='Acceso aprobado. Abriendo Derby…'; window.location.replace('/derby'); }}
+  else if (r.status === 410) {{ clearInterval(temporizador); estado.textContent='El código venció. Recarga la página para crear uno nuevo.'; }}
+}}
+iniciar();
+</script></body></html>''', mimetype="text/html")
+
+
+@app.route("/mobile/pair/request", methods=["POST"])
+def mobile_pair_request():
+    if not AXIS_OWNER_TELEGRAM_USER_ID or not TELEGRAM_BOT_USERNAME:
+        return _forbidden("mobile pairing not configured", 503)
+    with _mobile_access_lock:
+        cambio = _limpiar_mobile_access()
+        if len(_mobile_access["pending"]) >= 20:
+            if cambio:
+                _guardar_mobile_access()
+            return _forbidden("too many pending mobile pairings", 429)
+        pair_id = secrets.token_urlsafe(18)
+        proof = secrets.token_urlsafe(32)
+        codigo = secrets.token_hex(4).upper()
+        _mobile_access["pending"][pair_id] = {
+            "proof_hash": _sha256(proof),
+            "code_hash": _sha256(codigo),
+            "expires_at": time.time() + MOBILE_PAIR_SECONDS,
+        }
+        _guardar_mobile_access()
+    return jsonify({
+        "ok": True, "pair_id": pair_id, "proof": proof, "code": codigo,
+        "expires_in": MOBILE_PAIR_SECONDS, "bot_username": TELEGRAM_BOT_USERNAME,
+    }), 201
+
+
+@app.route("/mobile/pair/status", methods=["POST"])
+def mobile_pair_status():
+    cuerpo = request.get_json(silent=True) or {}
+    pair_id = cuerpo.get("pair_id", "")
+    proof = cuerpo.get("proof", "")
+    if not isinstance(pair_id, str) or not isinstance(proof, str):
+        return _forbidden()
+    with _mobile_access_lock:
+        cambio = _limpiar_mobile_access()
+        datos = _mobile_access["pending"].get(pair_id)
+        if not datos:
+            if cambio:
+                _guardar_mobile_access()
+            return jsonify({"ok": False, "authorized": False, "error": "pairing expired"}), 410
+        if not hmac.compare_digest(datos.get("proof_hash", ""), _sha256(proof)):
+            if cambio:
+                _guardar_mobile_access()
+            return _forbidden()
+        if not datos.get("approved_at"):
+            if cambio:
+                _guardar_mobile_access()
+            return jsonify({"ok": True, "authorized": False}), 200
+        sesion = secrets.token_urlsafe(32)
+        _mobile_access["sessions"][_sha256(sesion)] = {
+            "created_at": time.time(),
+            "expires_at": time.time() + MOBILE_SESSION_SECONDS,
+        }
+        _mobile_access["pending"].pop(pair_id, None)
+        _guardar_mobile_access()
+    return _respuesta_mobile_autorizada(sesion)
+
+
+@app.route("/mobile/logout", methods=["POST"])
+def mobile_logout():
+    sesion = request.cookies.get("axis_mobile_session", "")
+    if sesion:
+        with _mobile_access_lock:
+            if _mobile_access["sessions"].pop(_sha256(sesion), None) is not None:
+                _guardar_mobile_access()
+    respuesta = jsonify({"ok": True})
+    respuesta.delete_cookie("axis_mobile_session", path="/")
+    return respuesta
+
 @app.route("/derby", methods=["GET"])
 def serve_derby():
     from flask import Response
@@ -2562,6 +2811,10 @@ def telegram_webhook():
     try:
         data = request.get_json(silent=True)
         if not data:
+            return jsonify({"ok": True}), 200
+        message = data.get("message")
+        if message:
+            _procesar_emparejamiento_movil(message)
             return jsonify({"ok": True}), 200
         callback = data.get("callback_query")
         if not callback:
