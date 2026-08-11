@@ -29,6 +29,15 @@ Solo `{"confirmar": true}` realiza la anulación idempotente. Al corte previo
 al despliegue hay cuatro posiciones abiertas candidatas (2026-08-05) y dos
 registros históricos ya vencidos (2026-08-03).
 
+## Resultado en producción — 2026-08-11 16:41 EST
+
+- v8.97, commit `35deaff`, cinco hilos vivos y mercado cerrado.
+- Cuatro abiertas fantasma anuladas: AAPL, AMZN, GOOG y META del 2026-08-05.
+- Dos cierres del 2026-08-03 marcados como no confirmados y excluidos de
+  métricas; las 25 posiciones abiertas restantes tienen alerta e ID Tradier.
+- La repetición del dry-run no encontró candidatos. Un registro legacy de AMZN
+  (2026-06-12) se preservó por falta de evidencia suficiente para clasificarlo.
+
 ## Validación local
 
 - Matriz simulada: HTTP rechazado, respuesta sin ID, compra confirmada con GTC

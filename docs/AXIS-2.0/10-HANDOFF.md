@@ -7,20 +7,20 @@
 | Campo | Valor |
 |---|---|
 | **Estado** | PRODUCTION ACTIVE — TRACKING VALIDATION |
-| **Versión actual** | v8.97 — pendiente de verificación post-deploy |
-| **Commit producción** | pendiente de publicación AX-FIX-EXEC-001 |
-| **Build producción** | v8.96: 2026-08-11 20:16:23 UTC |
+| **Versión actual** | v8.97 |
+| **Commit producción** | `35deaff` — AX-FIX-EXEC-001 |
+| **Build producción** | 2026-08-11 20:39:37 UTC |
 | **Core** | Frozen |
 | **Backtest** | BT-001 → BT-011 COMPLETED |
 | **Producción** | Running (Railway), `/version` y `/status` OK |
 | **Universo** | 10 activos: SPY, AAPL, BA, GLD, NVDA, AMZN, GOOG, META, MU, SPCX |
 | **Último sprint** | AX-FIX-EXEC-001 — integridad de ejecución Tradier |
 | **Alert Lifecycle** | 191 expedientes: 26 ACTIVE, 87 CLOSED, 78 CANCELLED |
-| **Portfolio observado** | 29 posiciones abiertas: 25 vinculadas y 4 sin confirmación Tradier pendientes de anulación |
+| **Portfolio observado** | 25 posiciones abiertas: todas vinculadas a alerta e ID Tradier; 6 registros anulados/excluidos de métricas |
 | **AX-TUNE-001A** | COMPLETED — reporte diario de señales (`tools/daily_signal_review.py`) |
 | **AX-TUNE-001B** | COMPLETED — automated daily debrief (`axis_debrief.html`, `/daily_debrief/*`, Telegram 16:10) |
 | **AX-TUNE-002A** | COMPLETED — root cause engine v1: anomalías estructuradas (CONFLICTO_DIRECCION, MULTIPLES_ESTRATEGIAS, SIMBOLO_SOBREACTIVO, ESTRATEGIA_DOMINANTE, SEÑAL_TARDIA) con prioridad ALTA/MEDIA/BAJA y accion_recomendada. Telegram filtra solo ALTA+MEDIA. |
-| **Última verificación** | v8.96 verificada 2026-08-11 16:17 EST; v8.97 pendiente |
+| **Última verificación** | 2026-08-11 16:41 EST — v8.97, 5 hilos vivos, mercado cerrado, 25 posiciones vinculadas |
 
 ### Seguridad del plano de control — AX-SEC-001
 
@@ -41,6 +41,9 @@
   auditable solo el incidente documentado desde 2026-08-03, sin `alert_id` ni
   `tradier_orden_id`; deja intacto cualquier legacy ambiguo y excluye los
   anulados de P&L, tasa de acierto y tuning.
+- Post-deploy: se anularon cuatro registros abiertos del 2026-08-05 y se
+  excluyeron dos cierres del 2026-08-03. La segunda vista previa quedó vacía;
+  el registro legacy ambiguo de 2026-06-12 no fue alterado.
 
 ### Estado de reconciliación — 2026-08-08
 
@@ -85,7 +88,7 @@
 | **AX-TRACK-AUDIT-001** | First Internal Reconciliation | COMPLETED — 2026-07-25 |
 | **AX-TRACK-AUDIT-002** | Second Incremental Reconciliation | COMPLETED — 2026-08-05 |
 | **AX-TRACK-AUDIT-003** | Weekly Incremental Reconciliation | COMPLETED — 2026-08-08 |
-| **AX-FIX-EXEC-001** | Prevent positions when Tradier execution fails | IN PROGRESS — código v8.97 validado localmente |
+| **AX-FIX-EXEC-001** | Prevent positions when Tradier execution fails | COMPLETED — v8.97, reconciliación verificada |
 | **AX-STATS-001** | Validate 1VR Lifecycle Statistics | NEXT after P1 fix |
 | **AX-TUNE-002** | Evidence-based Strategy Improvements | BLOCKED until audit/statistics |
 | **AX-ASSET-002** | Add TSLA to Monitoring Universe | PENDING — include in next approved update |
@@ -93,10 +96,10 @@
 
 ### Immediate Objective
 
-AX-FIX-EXEC-001 fue autorizado. El siguiente objetivo inmediato es publicar
-v8.97, ejecutar la reconciliación protegida de cuatro registros abiertos sin
-confirmación Tradier y marcar dos históricos ya vencidos como excluidos de
-métricas. Después se validan estadísticas de ciclo de vida. Strategy rules
+AX-FIX-EXEC-001 está completado: v8.97 impide nuevas posiciones sin
+confirmación Tradier y la reconciliación retiró cuatro abiertas fantasma, con
+dos históricos excluidos de métricas. El próximo objetivo es AX-STATS-001:
+validar estadísticas reales de ciclo de vida, empezando por 1VR. Strategy rules
 remain frozen.
 
 Latest report:
@@ -226,7 +229,7 @@ Run: 2026-05-04 a 2026-06-30.
 | R5 | P1 | 26 posiciones abiertas simultáneamente; no existe evidencia en este handoff de un límite operativo aplicado |
 | R6 | P2 | Crecimiento continuo de `axis_portfolio.json` por snapshots cada cinco minutos; ~2.5 MB al 2026-07-25 |
 | R7 | P3 | Bug visual de líneas manuales al cambiar de activo; no afecta estrategias ni persistencia |
-| R8 | P1 → EN REMEDIACIÓN | `registrar_posicion()` creaba posiciones aunque Tradier fallara; v8.97 exige confirmación e incluye reconciliación de cuatro abiertas y dos históricas |
+| R8 | RESOLVED v8.97 | `registrar_posicion()` exige confirmación Tradier; cuatro abiertas fantasma fueron anuladas y dos cierres se excluyeron de métricas |
 | R9 | RESOLVED v8.96 | Rutas operativas, webhook y datos internos sin autenticación |
 
 ---
