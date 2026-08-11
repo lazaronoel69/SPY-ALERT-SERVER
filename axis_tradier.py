@@ -63,6 +63,34 @@ def get_bid_opcion_tradier(option_symbol):
         return None
 
 
+def _detalle_error_tradier(response, etapa):
+    """Mensaje seguro y accionable cuando Tradier no confirma una orden."""
+    try:
+        cuerpo = response.json()
+        detalle = cuerpo.get("error") or cuerpo.get("errors") or cuerpo.get("fault")
+    except Exception:
+        detalle = None
+    sufijo = f": {detalle}" if detalle else ""
+    return f"{etapa}: HTTP {response.status_code}{sufijo}"
+
+
+def _orden_confirmada(response, etapa):
+    """Devuelve (id, status, error); exige HTTP 2xx e ID de orden de Tradier."""
+    if not (200 <= response.status_code < 300):
+        return None, None, _detalle_error_tradier(response, etapa)
+    try:
+        orden = response.json().get("order") or {}
+    except Exception as e:
+        return None, None, f"{etapa}: respuesta JSON inválida ({e})"
+    orden_id = orden.get("id")
+    status = str(orden.get("status") or "unknown")
+    if not orden_id:
+        return None, status, f"{etapa}: Tradier no devolvió ID de orden"
+    if status.lower() in {"rejected", "cancelled", "canceled", "expired", "error", "failed"}:
+        return None, status, f"{etapa}: Tradier reportó estado {status}"
+    return orden_id, status, None
+
+
 def vender_opcion_tradier(option_symbol, simbolo, contratos, precio_limit):
     try:
         payload = {
@@ -81,9 +109,9 @@ def vender_opcion_tradier(option_symbol, simbolo, contratos, precio_limit):
             data=payload,
             timeout=10
         )
-        data     = r.json()
-        orden_id = data.get("order", {}).get("id")
-        status   = data.get("order", {}).get("status", "unknown")
+        orden_id, status, error = _orden_confirmada(r, "venta")
+        if error:
+            return {"ok": False, "error": error}
         return {"ok": True, "id": orden_id, "status": status}
     except Exception as e:
         print(f"Error vender opcion Tradier: {e}")
@@ -171,14 +199,20 @@ def get_opcion_tradier(simbolo, tipo, precio_actual):
         return None
 
 
-def ejecutar_orden_tradier(opcion):
+def _ejecutar_orden_tradier(opcion, contratos):
+    """Envía compra y GTC, sin confundir una respuesta incompleta con éxito.
+
+    ``ok`` representa una compra aceptada por Tradier (HTTP 2xx + order ID).
+    El GTC se informa por separado: una falla de salida no borra evidencia de
+    una compra real ni permite crear una posición fantasma cuando falló la compra.
+    """
     try:
         payload_compra = {
             "class":         "option",
             "symbol":        opcion["subyacente"],
             "option_symbol": opcion["symbol"],
             "side":          "buy_to_open",
-            "quantity":      "1",
+            "quantity":      str(contratos),
             "type":          "market",
             "duration":      "day",
         }
@@ -188,9 +222,9 @@ def ejecutar_orden_tradier(opcion):
             data=payload_compra,
             timeout=10
         )
-        data     = r.json()
-        orden_id = data.get("order", {}).get("id")
-        status   = data.get("order", {}).get("status", "unknown")
+        orden_id, status, error = _orden_confirmada(r, "compra")
+        if error:
+            return {"ok": False, "error": error}
 
         precio_venta = round(opcion["ask"] * 2, 2)
         payload_venta = {
@@ -198,56 +232,43 @@ def ejecutar_orden_tradier(opcion):
             "symbol":        opcion["subyacente"],
             "option_symbol": opcion["symbol"],
             "side":          "sell_to_close",
-            "quantity":      "1",
+            "quantity":      str(contratos),
             "type":          "limit",
             "price":         str(precio_venta),
             "duration":      "gtc",
         }
-        r2 = requests.post(
-            f"{TRADIER_BASE}/accounts/{TRADIER_ACCOUNT}/orders",
-            headers=TRADIER_HEADERS,
-            data=payload_venta,
-            timeout=10
-        )
-        data2     = r2.json()
-        orden_venta_id = data2.get("order", {}).get("id")
-
-        return {
+        resultado = {
             "ok":            True,
             "id":            orden_id,
             "status":        status,
-            "venta_id":      orden_venta_id,
             "precio_venta":  precio_venta,
+            "venta_ok":      False,
         }
+        try:
+            r2 = requests.post(
+                f"{TRADIER_BASE}/accounts/{TRADIER_ACCOUNT}/orders",
+                headers=TRADIER_HEADERS,
+                data=payload_venta,
+                timeout=10
+            )
+            orden_venta_id, venta_status, venta_error = _orden_confirmada(r2, "GTC de salida")
+            if venta_error:
+                resultado["venta_error"] = venta_error
+            else:
+                resultado["venta_id"] = orden_venta_id
+                resultado["venta_status"] = venta_status
+                resultado["venta_ok"] = True
+        except Exception as e:
+            resultado["venta_error"] = f"GTC de salida: {e}"
+        return resultado
     except Exception as e:
         print(f"Error ejecutar orden Tradier: {e}")
         return {"ok": False, "error": str(e)}
 
 
+def ejecutar_orden_tradier(opcion):
+    return _ejecutar_orden_tradier(opcion, 1)
+
+
 def ejecutar_orden_tradier_contratos(opcion, contratos):
-    try:
-        payload_compra = {
-            "class": "option", "symbol": opcion["subyacente"],
-            "option_symbol": opcion["symbol"], "side": "buy_to_open",
-            "quantity": str(contratos), "type": "market", "duration": "day",
-        }
-        r = requests.post(f"{TRADIER_BASE}/accounts/{TRADIER_ACCOUNT}/orders",
-                          headers=TRADIER_HEADERS, data=payload_compra, timeout=10)
-        data = r.json()
-        orden_id = data.get("order", {}).get("id")
-        status   = data.get("order", {}).get("status", "unknown")
-        precio_venta = round(opcion["ask"] * 2, 2)
-        payload_venta = {
-            "class": "option", "symbol": opcion["subyacente"],
-            "option_symbol": opcion["symbol"], "side": "sell_to_close",
-            "quantity": str(contratos), "type": "limit",
-            "price": str(precio_venta), "duration": "gtc",
-        }
-        r2 = requests.post(f"{TRADIER_BASE}/accounts/{TRADIER_ACCOUNT}/orders",
-                           headers=TRADIER_HEADERS, data=payload_venta, timeout=10)
-        data2 = r2.json()
-        orden_venta_id = data2.get("order", {}).get("id")
-        return {"ok": True, "id": orden_id, "status": status, "venta_id": orden_venta_id, "precio_venta": precio_venta}
-    except Exception as e:
-        print(f"Error ejecutar_orden_tradier_contratos: {e}")
-        return {"ok": False, "error": str(e)}
+    return _ejecutar_orden_tradier(opcion, contratos)

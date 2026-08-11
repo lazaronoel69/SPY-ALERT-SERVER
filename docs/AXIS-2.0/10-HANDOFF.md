@@ -7,20 +7,20 @@
 | Campo | Valor |
 |---|---|
 | **Estado** | PRODUCTION ACTIVE — TRACKING VALIDATION |
-| **Versión actual** | v8.96 |
-| **Commit producción** | pendiente de verificación post-deploy |
-| **Build producción** | 2026-08-09 00:58:31 UTC |
+| **Versión actual** | v8.97 — pendiente de verificación post-deploy |
+| **Commit producción** | pendiente de publicación AX-FIX-EXEC-001 |
+| **Build producción** | v8.96: 2026-08-11 20:16:23 UTC |
 | **Core** | Frozen |
 | **Backtest** | BT-001 → BT-011 COMPLETED |
 | **Producción** | Running (Railway), `/version` y `/status` OK |
 | **Universo** | 10 activos: SPY, AAPL, BA, GLD, NVDA, AMZN, GOOG, META, MU, SPCX |
-| **Último sprint** | AX-SEC-001 — endurecimiento del plano de control interno |
-| **Alert Lifecycle** | 173 expedientes: 23 ACTIVE, 84 CLOSED, 66 CANCELLED |
-| **Portfolio observado** | 29 posiciones abiertas: 23 vinculadas y 6 huérfanas P1 |
+| **Último sprint** | AX-FIX-EXEC-001 — integridad de ejecución Tradier |
+| **Alert Lifecycle** | 191 expedientes: 26 ACTIVE, 87 CLOSED, 78 CANCELLED |
+| **Portfolio observado** | 29 posiciones abiertas: 25 vinculadas y 4 sin confirmación Tradier pendientes de anulación |
 | **AX-TUNE-001A** | COMPLETED — reporte diario de señales (`tools/daily_signal_review.py`) |
 | **AX-TUNE-001B** | COMPLETED — automated daily debrief (`axis_debrief.html`, `/daily_debrief/*`, Telegram 16:10) |
 | **AX-TUNE-002A** | COMPLETED — root cause engine v1: anomalías estructuradas (CONFLICTO_DIRECCION, MULTIPLES_ESTRATEGIAS, SIMBOLO_SOBREACTIVO, ESTRATEGIA_DOMINANTE, SEÑAL_TARDIA) con prioridad ALTA/MEDIA/BAJA y accion_recomendada. Telegram filtra solo ALTA+MEDIA. |
-| **Última verificación** | Pendiente de verificación post-deploy v8.96 |
+| **Última verificación** | v8.96 verificada 2026-08-11 16:17 EST; v8.97 pendiente |
 
 ### Seguridad del plano de control — AX-SEC-001
 
@@ -29,6 +29,17 @@
 - El webhook de Telegram valida su secreto oficial y el chat autorizado.
 - Las mutaciones administrativas usan POST y CORS solo permite el dominio AXIS.
 - Las dashboards internas piden el token una vez por sesión de navegador.
+
+### Integridad de ejecución — AX-FIX-EXEC-001
+
+- Una posición se crea únicamente si la compra de Tradier devuelve HTTP 2xx e
+  ID de orden; errores, rechazos y respuestas sin ID se cancelan sin Portfolio.
+- La confirmación del GTC de salida se registra por separado: una compra real
+  sin GTC queda visible como excepción, nunca se oculta ni se trata como fallo
+  de compra.
+- La reconciliación protegida tiene dry-run por defecto y anula de forma
+  auditable solo registros sin `alert_id` ni `tradier_orden_id`; quedan fuera
+  de P&L, tasa de acierto y tuning.
 
 ### Estado de reconciliación — 2026-08-08
 
@@ -73,7 +84,7 @@
 | **AX-TRACK-AUDIT-001** | First Internal Reconciliation | COMPLETED — 2026-07-25 |
 | **AX-TRACK-AUDIT-002** | Second Incremental Reconciliation | COMPLETED — 2026-08-05 |
 | **AX-TRACK-AUDIT-003** | Weekly Incremental Reconciliation | COMPLETED — 2026-08-08 |
-| **AX-FIX-EXEC-001** | Prevent positions when Tradier execution fails | NEXT — requires authorization |
+| **AX-FIX-EXEC-001** | Prevent positions when Tradier execution fails | IN PROGRESS — código v8.97 validado localmente |
 | **AX-STATS-001** | Validate 1VR Lifecycle Statistics | NEXT after P1 fix |
 | **AX-TUNE-002** | Evidence-based Strategy Improvements | BLOCKED until audit/statistics |
 | **AX-ASSET-002** | Add TSLA to Monitoring Universe | PENDING — include in next approved update |
@@ -81,11 +92,11 @@
 
 ### Immediate Objective
 
-AX-TRACK-AUDIT-003 confirms that the P1 execution-integrity defect now affects
-six open orphan positions (two from 2026-08-03 and four from 2026-08-05).
-The next objective is to correct the defect under an approved sprint, reconcile
-the six records, and then analyze lifecycle statistics. Strategy rules remain
-frozen.
+AX-FIX-EXEC-001 fue autorizado. El siguiente objetivo inmediato es publicar
+v8.97, ejecutar la reconciliación protegida de cuatro registros abiertos sin
+confirmación Tradier y marcar dos históricos ya vencidos como excluidos de
+métricas. Después se validan estadísticas de ciclo de vida. Strategy rules
+remain frozen.
 
 Latest report:
 [`reconciliations/2026-08-08-AX-TRACK-AUDIT-003.md`](reconciliations/2026-08-08-AX-TRACK-AUDIT-003.md)
@@ -214,7 +225,7 @@ Run: 2026-05-04 a 2026-06-30.
 | R5 | P1 | 26 posiciones abiertas simultáneamente; no existe evidencia en este handoff de un límite operativo aplicado |
 | R6 | P2 | Crecimiento continuo de `axis_portfolio.json` por snapshots cada cinco minutos; ~2.5 MB al 2026-07-25 |
 | R7 | P3 | Bug visual de líneas manuales al cambiar de activo; no afecta estrategias ni persistencia |
-| R8 | P1 | `registrar_posicion()` crea posiciones aunque Tradier falle; seis casos históricos detectados, cuatro aún abiertos al 2026-08-11 |
+| R8 | P1 → EN REMEDIACIÓN | `registrar_posicion()` creaba posiciones aunque Tradier fallara; v8.97 exige confirmación e incluye reconciliación de cuatro abiertas y dos históricas |
 | R9 | RESOLVED v8.96 | Rutas operativas, webhook y datos internos sin autenticación |
 
 ---

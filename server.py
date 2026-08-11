@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v8.96
+AXIS Breakout Sentinel v8.97
 Estrategias: 1VR | 1VR+ | RPG | GNA | GBA | RCB/CNF
 Multi-activo: SPY, AAPL, BA, GLD, NVDA, AMZN, GOOG, META, MU, SPCX
 v8.43: Portfolio fix — ejecutar_orden_tradier en webhook exec/reto | Panic Button al bid |
@@ -47,6 +47,7 @@ v8.93: AX-ASSET-001: MU y SPCX agregados al monitoreo, V1-V7, Telegram, canales,
 v8.94: AX-TRACK-004: seguimiento 5 min silencioso; hitos/fallos se registran sin Telegram y se consolidan al cierre diario.
 v8.95: AX-TRACK-NOTIFY-001: cada reconciliación semanal se envía una sola vez por Telegram, con reintentos y estado verificable.
 v8.96: AX-SEC-001: control administrativo autenticado, webhook Telegram validado, CORS restringido y rutas mutables solo POST.
+v8.97: AX-FIX-EXEC-001: una posición solo se registra tras confirmación de compra de Tradier; huérfanas sin confirmación se anulan y excluyen de métricas.
 """
 
 import os
@@ -202,7 +203,7 @@ def loop_limpiar_ordenes():
             print(f"Error loop_limpiar_ordenes: {e}")
 
 # ── VERSIÓN ──────────────────────────────────────────────────────────────────
-AXIS_VERSION = "8.96"
+AXIS_VERSION = "8.97"
 _BUILD_DATE  = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
 
 def _git_commit_short():
@@ -449,10 +450,12 @@ def guardar_portfolio():
 
 def registrar_posicion(opcion, estrategia, simbolo, precio_entrada, es_reto=False, carril_id=None,
                        contratos=1, tradier_orden_id=None, tradier_gtc_id=None,
-                       alert_id=None):
+                       alert_id=None, gtc_confirmada=True, gtc_error=None):
     global _portfolio
     if _portfolio is None:
         cargar_portfolio()
+    if not tradier_orden_id:
+        raise ValueError("No se puede registrar posición sin confirmación de compra de Tradier")
     import uuid
     pos = {
         "id":               str(uuid.uuid4())[:8],
@@ -473,6 +476,8 @@ def registrar_posicion(opcion, estrategia, simbolo, precio_entrada, es_reto=Fals
         "estado":           "abierta",
         "tradier_orden_id": tradier_orden_id,
         "tradier_gtc_id":   tradier_gtc_id,
+        "gtc_confirmada":   bool(gtc_confirmada and tradier_gtc_id),
+        "gtc_error":        gtc_error,
         "historial_precios": [
             {
                 "fecha":   datetime.now(EST).strftime("%Y-%m-%d"),
@@ -511,7 +516,8 @@ def registrar_posicion(opcion, estrategia, simbolo, precio_entrada, es_reto=Fals
         precio_entrada=precio_entrada,
         option_symbol=opcion.get("symbol"), strike=opcion.get("strike"),
         expiration=opcion.get("expiration"), tradier_orden_id=tradier_orden_id,
-        tradier_gtc_id=tradier_gtc_id,
+        tradier_gtc_id=tradier_gtc_id, gtc_confirmada=bool(gtc_confirmada and tradier_gtc_id),
+        gtc_error=gtc_error,
     )
     return pos
 
@@ -656,6 +662,68 @@ def cerrar_posicion(pos_id, precio_cierre, motivo="panic"):
         f"<b>Entrada:</b> ${pos['precio_entrada']:.2f} → <b>Cierre:</b> ${precio_cierre:.2f}"
     )
     return pos
+
+
+def _sin_confirmacion_tradier(pos):
+    """Posición sin evidencia de alerta ni orden aceptada; no es un resultado de trading."""
+    return (
+        not pos.get("alert_id")
+        and not pos.get("tradier_orden_id")
+        and not pos.get("integridad_ejecucion")
+    )
+
+
+def reconciliar_posiciones_sin_confirmacion(confirmar=False):
+    """Anula registros creados por el defecto histórico sin alterar órdenes reales.
+
+    Es idempotente: solo toca registros sin alert_id, sin orden Tradier y sin
+    una marca previa de integridad. Las anulaciones permanecen auditables en
+    historial y quedan fuera de P&L, win rate y tuning.
+    """
+    global _portfolio
+    if _portfolio is None:
+        cargar_portfolio()
+
+    abiertas = [p for p in _portfolio.get("posiciones", []) if _sin_confirmacion_tradier(p)]
+    cerradas = [p for p in _portfolio.get("historial", []) if _sin_confirmacion_tradier(p)]
+    resultado = {
+        "abiertas_candidatas": [p.get("id") for p in abiertas],
+        "cerradas_candidatas": [p.get("id") for p in cerradas],
+        "confirmado": bool(confirmar),
+    }
+    if not confirmar:
+        return resultado
+
+    ahora = datetime.now(EST).isoformat()
+    for pos in abiertas:
+        pos["estado"] = "anulada"
+        pos["motivo_cierre"] = "tradier_ejecucion_no_confirmada"
+        pos["ts_cierre"] = ahora
+        pos["ts_anulacion"] = ahora
+        pos["integridad_ejecucion"] = "NO_CONFIRMADA"
+        pos["excluida_metricas"] = True
+        pos["precio_cierre"] = None
+        pos["pl_pct"] = None
+        pos["pl_usd"] = None
+        if pos.get("es_reto") and pos.get("carril_id"):
+            for caballo in _portfolio.get("derby", {}).get("caballos", []):
+                if caballo.get("id") == pos["carril_id"] and caballo.get("posicion") == pos["id"]:
+                    caballo["posicion"] = None
+                    break
+    for pos in cerradas:
+        pos["integridad_ejecucion"] = "NO_CONFIRMADA"
+        pos["excluida_metricas"] = True
+        pos["motivo_anulacion"] = "tradier_ejecucion_no_confirmada"
+        pos["ts_anulacion"] = ahora
+
+    if abiertas:
+        ids_abiertas = {p["id"] for p in abiertas}
+        _portfolio["posiciones"] = [p for p in _portfolio["posiciones"] if p.get("id") not in ids_abiertas]
+        _portfolio["historial"].extend(abiertas)
+    guardar_portfolio()
+    resultado["abiertas_anuladas"] = len(abiertas)
+    resultado["cerradas_marcadas"] = len(cerradas)
+    return resultado
 
 # AX-009: CANALES_DEFAULT, guardar_canales y cargar_canales movidas a
 # axis_channels.py. guardar_canales/cargar_canales reciben canal y ACTIVOS
@@ -2301,6 +2369,15 @@ def portfolio_data():
         "reto":       _portfolio.get("derby", {}),  # compatibilidad
     }), 200
 
+
+@app.route("/portfolio/reconciliar_ejecuciones", methods=["POST"])
+@require_admin
+def portfolio_reconciliar_ejecuciones():
+    """Dry-run por defecto; confirmar=true anula solo registros sin prueba Tradier."""
+    payload = request.get_json(silent=True) or {}
+    confirmar = payload.get("confirmar") is True
+    return jsonify(reconciliar_posiciones_sin_confirmacion(confirmar=confirmar)), 200
+
 @app.route("/portfolio/cerrar", methods=["POST"])
 @require_admin
 def portfolio_cerrar():
@@ -2445,6 +2522,31 @@ def serve_app():
             return Response(f.read(), mimetype="text/html")
     return Response("<h1>App no encontrada</h1>", mimetype="text/html"), 404
 
+def registrar_ejecucion_confirmada(resultado, opcion, estrategia, alert_id, decision,
+                                   contratos=1, es_reto=False, carril_id=None):
+    """Único punto de alta: solo después de que Tradier confirmó la compra."""
+    if not resultado.get("ok"):
+        actualizar_alerta(
+            alert_id, "CANCELLED", "TRADIER_EXECUTION_FAILED", decision=decision,
+            motivo_cancelacion=resultado.get("error", "Tradier no confirmó compra"),
+        )
+        return None
+    venta_confirmada = bool(resultado.get("venta_ok", resultado.get("venta_id")))
+    pos = registrar_posicion(
+        opcion, estrategia, opcion["subyacente"], opcion["ask"],
+        es_reto=es_reto, carril_id=carril_id, contratos=contratos,
+        tradier_orden_id=resultado.get("id"), tradier_gtc_id=resultado.get("venta_id"),
+        alert_id=alert_id, gtc_confirmada=venta_confirmada,
+        gtc_error=resultado.get("venta_error"),
+    )
+    if not venta_confirmada:
+        actualizar_alerta(
+            alert_id, "ACTIVE", "GTC_SUBMISSION_FAILED",
+            motivo_gtc=resultado.get("venta_error", "Tradier no confirmó GTC de salida"),
+        )
+    return pos
+
+
 @app.route("/telegram_webhook", methods=["POST"])
 @require_telegram_webhook
 def telegram_webhook():
@@ -2506,20 +2608,22 @@ def telegram_webhook():
             estrategia = datos.get("estrategia", "AXIS")
             alert_id   = datos.get("alert_id")
             resultado_tradier = ejecutar_orden_tradier_contratos(opcion, contratos)
-            tradier_orden_id = resultado_tradier.get("id") if resultado_tradier["ok"] else None
-            tradier_gtc_id   = resultado_tradier.get("venta_id") if resultado_tradier["ok"] else None
             costo_total = round(opcion["ask"] * 100 * contratos, 2)
-            registrar_posicion(opcion, estrategia, opcion["subyacente"], opcion["ask"],
-                               contratos=contratos,
-                               tradier_orden_id=tradier_orden_id, tradier_gtc_id=tradier_gtc_id,
-                               alert_id=alert_id if resultado_tradier["ok"] else None)
-            if not resultado_tradier["ok"]:
-                actualizar_alerta(alert_id, "CANCELLED", "TRADIER_EXECUTION_FAILED",
-                                  decision="EXECUTE", motivo_cancelacion=resultado_tradier.get("error", "unknown"))
-            estado_tradier = "✅ Orden enviada a sandbox" if resultado_tradier["ok"] else f"⚠️ Error Tradier: {resultado_tradier.get('error','')}"
+            pos = registrar_ejecucion_confirmada(
+                resultado_tradier, opcion, estrategia, alert_id, "EXECUTE", contratos=contratos,
+            )
+            if not pos:
+                estado_tradier = f"⚠️ Compra no confirmada: {resultado_tradier.get('error', '')}"
+                encabezado = "⚠️ <b>NO EJECUTADA</b> — no registrada en Portfolio"
+            elif resultado_tradier.get("venta_ok"):
+                estado_tradier = "✅ Compra y GTC confirmados por Tradier"
+                encabezado = f"✅ <b>EJECUTADA</b> — {contratos} contrato{'s' if contratos > 1 else ''}"
+            else:
+                estado_tradier = f"⚠️ Compra confirmada; GTC no confirmado: {resultado_tradier.get('venta_error', '')}"
+                encabezado = "⚠️ <b>COMPRA CONFIRMADA</b> — GTC pendiente"
             agregar_recibo(
                 f"━━━━━━━━━━━━━━━━━━\n"
-                f"✅ <b>EJECUTADA</b> — {contratos} contrato{'s' if contratos > 1 else ''}\n"
+                f"{encabezado}\n"
                 f"📋 <b>Opción:</b> {opcion['symbol']}\n"
                 f"📊 <b>Contratos:</b> {contratos} × ${opcion['ask']:.2f} = ${costo_total:.2f}\n"
                 f"🎯 <b>GTC:</b> ${opcion['ask']*2:.2f} (+100%)\n"
@@ -2536,18 +2640,19 @@ def telegram_webhook():
             estrategia = datos.get("estrategia", "AXIS")
             alert_id   = datos.get("alert_id")
             resultado_tradier = ejecutar_orden_tradier(opcion)
-            tradier_orden_id = resultado_tradier.get("id") if resultado_tradier["ok"] else None
-            tradier_gtc_id   = resultado_tradier.get("venta_id") if resultado_tradier["ok"] else None
-            registrar_posicion(opcion, estrategia, opcion["subyacente"], opcion["ask"],
-                               tradier_orden_id=tradier_orden_id, tradier_gtc_id=tradier_gtc_id,
-                               alert_id=alert_id if resultado_tradier["ok"] else None)
-            if not resultado_tradier["ok"]:
-                actualizar_alerta(alert_id, "CANCELLED", "TRADIER_EXECUTION_FAILED",
-                                  decision="EXECUTE", motivo_cancelacion=resultado_tradier.get("error", "unknown"))
-            estado_tradier = "✅ Orden enviada a sandbox" if resultado_tradier["ok"] else f"⚠️ Error Tradier: {resultado_tradier.get('error','')}"
+            pos = registrar_ejecucion_confirmada(resultado_tradier, opcion, estrategia, alert_id, "EXECUTE")
+            if not pos:
+                estado_tradier = f"⚠️ Compra no confirmada: {resultado_tradier.get('error', '')}"
+                encabezado = "⚠️ <b>NO EJECUTADA</b> — no registrada en Portfolio"
+            elif resultado_tradier.get("venta_ok"):
+                estado_tradier = "✅ Compra y GTC confirmados por Tradier"
+                encabezado = "✅ <b>EJECUTADA</b> — registrada en Portfolio"
+            else:
+                estado_tradier = f"⚠️ Compra confirmada; GTC no confirmado: {resultado_tradier.get('venta_error', '')}"
+                encabezado = "⚠️ <b>COMPRA CONFIRMADA</b> — GTC pendiente"
             agregar_recibo(
                 f"━━━━━━━━━━━━━━━━━━\n"
-                f"✅ <b>EJECUTADA</b> — registrada en Portfolio\n"
+                f"{encabezado}\n"
                 f"📋 <b>Opción:</b> {opcion['symbol']}\n"
                 f"💰 <b>Costo:</b> ${opcion['ask']*100:.2f} | <b>GTC:</b> ${opcion['ask']*2:.2f}\n"
                 f"🏦 <b>Tradier:</b> {estado_tradier}"
@@ -2593,6 +2698,12 @@ def telegram_webhook():
                     return jsonify({"ok": True}), 200
                 caballo_id = nuevo_id
                 caballo    = next((c for c in derby["caballos"] if c["id"] == caballo_id), None)
+            estado_caballo_previo = {
+                "capital": caballo["capital"],
+                "capital_inicial": caballo["capital_inicial"],
+                "ronda": caballo["ronda"],
+                "posicion": caballo["posicion"],
+            }
             costo_1cont = round(opcion["ask"] * 100, 2)
             if caballo["capital"] == 0:
                 # Primera carrera — sin límite de capital
@@ -2619,30 +2730,31 @@ def telegram_webhook():
                     opcion = opcion_reto
                     costo_1cont = round(opcion["ask"] * 100, 2)
                 contratos = max(1, int(presupuesto // costo_1cont))
-            # Actualizar turno al siguiente caballo disponible
-            siguiente = None
-            for c in derby["caballos"]:
-                if not c.get("eliminado") and c["posicion"] is None and c["id"] != caballo_id:
-                    siguiente = c["id"]
-                    break
-            derby["turno_actual"] = siguiente if siguiente else caballo_id
             resultado_tradier = ejecutar_orden_tradier_contratos(opcion, contratos)
-            tradier_orden_id = resultado_tradier.get("id")    if resultado_tradier["ok"] else None
-            tradier_gtc_id   = resultado_tradier.get("venta_id") if resultado_tradier["ok"] else None
             costo_total = round(opcion["ask"] * 100 * contratos, 2)
-            registrar_posicion(opcion, estrategia, opcion["subyacente"], opcion["ask"],
-                               es_reto=True, carril_id=caballo_id, contratos=contratos,
-                               tradier_orden_id=tradier_orden_id, tradier_gtc_id=tradier_gtc_id,
-                               alert_id=alert_id if resultado_tradier["ok"] else None)
-            if not resultado_tradier["ok"]:
-                actualizar_alerta(alert_id, "CANCELLED", "TRADIER_EXECUTION_FAILED",
-                                  decision="DERBY", motivo_cancelacion=resultado_tradier.get("error", "unknown"))
-            caballo["ronda"] += 1
-            estado_tradier = "✅ Orden enviada a sandbox" if resultado_tradier["ok"] else f"⚠️ Error: {resultado_tradier.get('error','')}"
-            es_primera = caballo["ronda"] == 1
+            pos = registrar_ejecucion_confirmada(
+                resultado_tradier, opcion, estrategia, alert_id, "DERBY", contratos=contratos,
+                es_reto=True, carril_id=caballo_id,
+            )
+            if not pos:
+                caballo.update(estado_caballo_previo)
+                guardar_portfolio()
+                estado_tradier = f"⚠️ Compra no confirmada: {resultado_tradier.get('error', '')}"
+                encabezado = "⚠️ <b>NO EJECUTADA</b> — carril sin cambios"
+            else:
+                siguiente = next((c["id"] for c in derby["caballos"]
+                                  if not c.get("eliminado") and c["posicion"] is None and c["id"] != caballo_id), None)
+                derby["turno_actual"] = siguiente if siguiente else caballo_id
+                guardar_portfolio()
+                if resultado_tradier.get("venta_ok"):
+                    estado_tradier = "✅ Compra y GTC confirmados por Tradier"
+                    encabezado = f"🏇 <b>{caballo['nombre']} — {'PRIMERA CARRERA' if caballo['ronda'] == 1 else f'CARRERA #{caballo[chr(114)+chr(111)+chr(110)+chr(100)+chr(97)]}'}</b>"
+                else:
+                    estado_tradier = f"⚠️ Compra confirmada; GTC no confirmado: {resultado_tradier.get('venta_error', '')}"
+                    encabezado = f"⚠️ <b>{caballo['nombre']} — COMPRA CONFIRMADA, GTC PENDIENTE</b>"
             agregar_recibo(
                 f"━━━━━━━━━━━━━━━━━━\n"
-                f"🏇 <b>{caballo['nombre']} — {'PRIMERA CARRERA' if es_primera else f'CARRERA #{caballo[chr(114)+chr(111)+chr(110)+chr(100)+chr(97)]}'}</b>\n"
+                f"{encabezado}\n"
                 f"📋 <b>Opción:</b> {opcion['symbol']}\n"
                 f"📊 <b>Contratos:</b> {contratos} × ${opcion['ask']:.2f} = ${costo_total:.2f}\n"
                 f"💰 <b>Capital:</b> ${caballo['capital']:.2f}\n"
@@ -3176,7 +3288,9 @@ def system_status():
 def estadisticas():
     if _portfolio is None:
         cargar_portfolio()
-    historial = _portfolio.get("historial", [])
+    historial_total = _portfolio.get("historial", [])
+    historial = [p for p in historial_total if not p.get("excluida_metricas")]
+    excluidas_integridad = len(historial_total) - len(historial)
     if not historial:
         return jsonify({"mensaje": "Sin historial aún"}), 200
     from collections import defaultdict
@@ -3205,7 +3319,8 @@ def estadisticas():
     return jsonify({
         "resumen_general": {"total_operaciones": total, "wins": wins_total, "losses": total - wins_total,
                             "win_rate": f"{round(wins_total/total*100, 1)}%" if total else "—",
-                            "pl_total_usd": round(pl_total, 2), "mejor_racha": mejor_racha},
+                            "pl_total_usd": round(pl_total, 2), "mejor_racha": mejor_racha,
+                            "excluidas_integridad": excluidas_integridad},
         "por_estrategia": {k: resumen(v) for k, v in sorted(por_estrategia.items())},
         "por_activo": {k: resumen(v) for k, v in sorted(por_activo.items())},
     }), 200
@@ -3228,7 +3343,8 @@ def analisis_data():
         "posiciones_abiertas": _portfolio["posiciones"],
         "historial": _portfolio["historial"],
         "total_abiertas": len(_portfolio["posiciones"]),
-        "total_cerradas": len(_portfolio["historial"]),
+        "total_cerradas": len([p for p in _portfolio["historial"] if not p.get("excluida_metricas")]),
+        "total_anuladas_integridad": len([p for p in _portfolio["historial"] if p.get("excluida_metricas")]),
     }), 200
 
 @app.route("/cotizar_opciones", methods=["GET"])
@@ -3632,14 +3748,16 @@ def enviar_resumen_diario(ahora):
             disparadas = ed.get("señales_disparadas", [])
             if disparadas:
                 señales_lineas.append(f"  • {activo_s}: {', '.join(disparadas)}")
-        cerradas_hoy = [p for p in _portfolio["historial"] if str(p.get("ts_cierre", "")).startswith(fecha_hoy)]
+        cerradas_hoy = [p for p in _portfolio["historial"]
+                         if not p.get("excluida_metricas") and str(p.get("ts_cierre", "")).startswith(fecha_hoy)]
         pl_dia = sum(p.get("pl_usd", 0) or 0 for p in cerradas_hoy)
         wins   = sum(1 for p in cerradas_hoy if (p.get("pl_usd", 0) or 0) > 0)
         reto   = _portfolio.get("derby", _portfolio.get("reto", {}))
         cap_reto = sum(c["capital"] for c in reto.get("caballos", []) if not c.get("eliminado"))
         vivos  = sum(1 for c in reto.get("caballos", []) if not c.get("eliminado"))
-        hist_total = len(_portfolio["historial"])
-        hist_wins  = sum(1 for p in _portfolio["historial"] if (p.get("pl_usd", 0) or 0) > 0)
+        historial_confirmado = [p for p in _portfolio["historial"] if not p.get("excluida_metricas")]
+        hist_total = len(historial_confirmado)
+        hist_wins  = sum(1 for p in historial_confirmado if (p.get("pl_usd", 0) or 0) > 0)
         wr = f"{round(hist_wins/hist_total*100,1)}%" if hist_total else "—"
         emoji_pl = "✅" if pl_dia >= 0 else "🔴"
         seguimiento_lineas = []
@@ -4343,24 +4461,25 @@ def evaluar_hed(simbolo):
         opcion["subyacente"] = simbolo
         resultado = ejecutar_orden_tradier(opcion)
         cond_str = "RCB 30%" if cond_b else f"SMA20({sma20:.2f})>SMA40({sma40:.2f})"
-        if resultado["ok"]:
+        pos = registrar_ejecucion_confirmada(
+            resultado, opcion, "HED — SHOOTING STAR DIARIA", alert_id, "AUTO",
+        )
+        if pos:
             registrar_senal_disparada(simbolo, "HED — SHOOTING STAR DIARIA")
-            registrar_posicion(
-                opcion, "HED — SHOOTING STAR DIARIA", simbolo, opcion["ask"],
-                tradier_orden_id=resultado.get("id"),
-                tradier_gtc_id=resultado.get("venta_id"), alert_id=alert_id,
+            gtc_texto = (
+                f"GTC: ${resultado['precio_venta']:.2f}"
+                if resultado.get("venta_ok")
+                else f"GTC PENDIENTE — {resultado.get('venta_error', 'sin confirmación')}"
             )
             enviar_telegram(
                 f"🕯 <b>HED — SHOOTING STAR DIARIA</b>\n"
                 f"<b>Activo:</b> {simbolo} | <b>Condición:</b> {cond_str}\n"
                 f"<b>Alert ID:</b> {alert_id}\n"
                 f"<b>Mecha:</b> {mecha_sup:.2f} / <b>Cuerpo:</b> {cuerpo:.2f} = {mecha_sup/cuerpo:.2f}×\n"
-                f"✅ <b>EJECUTADA</b> | ID: {resultado['id']} | GTC: ${resultado['precio_venta']:.2f}"
+                f"✅ <b>COMPRA CONFIRMADA</b> | ID: {resultado['id']} | {gtc_texto}"
             )
         else:
-            enviar_telegram(f"⚠️ <b>HED {simbolo}</b> — Shooting star, error al ejecutar: {resultado.get('error','?')}")
-            actualizar_alerta(alert_id, "CANCELLED", "TRADIER_EXECUTION_FAILED",
-                              decision="AUTO", motivo_cancelacion=resultado.get("error", "unknown"))
+            enviar_telegram(f"⚠️ <b>HED {simbolo}</b> — compra no confirmada: {resultado.get('error','?')}")
     except Exception as e:
         print(f"Error evaluar_hed {simbolo}: {e}")
 
