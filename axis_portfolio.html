@@ -407,7 +407,7 @@ function renderHistorial(historial) {
 
 async function cargarDatos() {
   try {
-    const r = await fetch(`${RAILWAY}/portfolio/data`);
+    const r = await adminFetch(`${RAILWAY}/portfolio/data`);
     const d = await r.json();
     _datos = d;
     renderPosiciones(d.posiciones || []);
@@ -418,7 +418,7 @@ async function cargarDatos() {
 
 async function confirmarPanic(posId) {
   try {
-    const r = await fetch(`${RAILWAY}/portfolio/cerrar?id=${posId}&motivo=panic`);
+    const r = await adminFetch(`${RAILWAY}/portfolio/cerrar?id=${posId}&motivo=panic`, { method: 'POST' });
     const d = await r.json();
     if (d.ok) { toast(`Posición cerrada · bid $${(d.bid_usado||0).toFixed(2)}`); cargarDatos(); }
     else toast('Error cerrando posición');
@@ -428,17 +428,34 @@ async function confirmarPanic(posId) {
 async function toggleReto() {
   const activo = _datos?.reto?.activo;
   const url = activo ? `${RAILWAY}/portfolio/reto/desactivar` : `${RAILWAY}/portfolio/reto/activar`;
-  try { await fetch(url); cargarDatos(); } catch(e) { toast('Error'); }
+  try { await adminFetch(url, { method: 'POST' }); cargarDatos(); } catch(e) { toast('Error'); }
 }
 
 async function cargarClaude() {
   const el = document.getElementById('claude-msg');
   el.innerHTML = '<span class="claude-empty">Analizando...</span>';
   try {
-    const r = await fetch(`${RAILWAY}/portfolio/claude`);
+    const r = await adminFetch(`${RAILWAY}/portfolio/claude`, { method: 'POST' });
     const d = await r.json();
     el.innerHTML = `<span class="claude-text">${d.analisis || 'Sin análisis disponible.'}</span>`;
   } catch(e) { el.innerHTML = '<span class="claude-empty">Error obteniendo análisis.</span>'; }
+}
+
+function adminToken() {
+  let token = sessionStorage.getItem('axis_admin_token');
+  if (!token) {
+    token = window.prompt('Token administrativo de AXIS');
+    if (token) sessionStorage.setItem('axis_admin_token', token.trim());
+  }
+  return token;
+}
+
+async function adminFetch(url, options = {}) {
+  const token = adminToken();
+  if (!token) throw new Error('Token administrativo requerido');
+  const headers = new Headers(options.headers || {});
+  headers.set('X-AXIS-Admin-Token', token);
+  return fetch(url, { ...options, headers });
 }
 
 cargarDatos();

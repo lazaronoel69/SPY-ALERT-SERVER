@@ -13,12 +13,23 @@ Uso:
 
 import argparse
 import json
+import os
 import sys
 from datetime import datetime
+from pathlib import Path
 
 import requests
 
 SYMBOLS = ["SPY", "AAPL", "BA", "GLD", "NVDA", "AMZN", "GOOG", "META", "MU", "SPCX"]
+
+
+def admin_headers():
+    token = os.environ.get("AXIS_ADMIN_TOKEN", "")
+    if not token:
+        token_file = Path(__file__).resolve().parent / ".axis-admin-token"
+        if token_file.exists():
+            token = token_file.read_text(encoding="utf-8").strip()
+    return {"X-AXIS-Admin-Token": token} if token else {}
 
 # ── 1. Importar server (el motor real) ──────────────────────────────────────
 import server
@@ -57,6 +68,7 @@ def cargar_canal_snapshot(symbol):
         try:
             r = requests.get(
                 "https://web-production-bf9d0.up.railway.app/canal_estado",
+                headers=admin_headers(),
                 timeout=5
             )
             _canal_raw = r.json()

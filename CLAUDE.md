@@ -38,10 +38,10 @@ diagnostic routes (see below) rather than writing unit tests for this codebase.
 - `TRADIER_TOKEN`, `TRADIER_ACCOUNT` — Tradier **sandbox** (paper trading orders)
 - `TRADIER_TOKEN_REAL` — Tradier **production** (read-only market data: quotes, history, timesales)
 - `ANTHROPIC_API_KEY` — powers `/portfolio/claude` and Reto fallback recommendations
-- `AXIS_PASSWORD` — gates `/source/<filename>` (defaults to `axis2026` if unset)
-- Telegram bot token / chat ID and TwelveData/Finnhub keys are currently hardcoded constants near the
-  top of `server.py` (`TELEGRAM_TOKEN`, `TELEGRAM_CHAT_ID`, `TWELVEDATA_KEY`, `FINNHUB_KEY`) rather than
-  env vars — TwelveData/Finnhub are vestigial (TwelveData was migrated off in v8.17; see file header).
+- `AXIS_ADMIN_TOKEN` — required for all internal API routes via `X-AXIS-Admin-Token`
+- `TELEGRAM_WEBHOOK_SECRET` — validates Telegram's `X-Telegram-Bot-Api-Secret-Token`
+- `TELEGRAM_TOKEN`, `TELEGRAM_CHAT_ID` — bot delivery and authorized callback chat
+- TwelveData/Finnhub remain vestigial; their values are read only from environment and are unused.
 
 ## Persistence
 
@@ -132,9 +132,9 @@ and gets `eliminado` (eliminated) below a $280 capital floor. Lane assignment ro
 
 ## HTTP surface
 
-All state-mutating/diagnostic routes are plain `GET` query-param endpoints (no auth except `/source`),
-designed to be hit by hand, by the dashboards, or by an AI agent reading `/bitacora/data`. Notable ones
-beyond the obvious CRUD-ish routes:
+All internal API routes require `X-AXIS-Admin-Token`; state mutations also require `POST`.
+The Telegram webhook validates Telegram's secret header and the configured chat. Dashboards prompt once
+per browser session and store the token only in `sessionStorage`. Notable routes:
 
 - `/status` — single largest diagnostic payload: threads alive, channel state, today's fired signals,
   open positions, Reto summary, local file sizes, candle-cache health per symbol. Check this first
@@ -143,8 +143,8 @@ beyond the obvious CRUD-ish routes:
   strategy conditions were/weren't met, without sending any Telegram alert or placing orders.
 - `/canal_lineas?activo=` / `/canal_estado` — what the dashboards poll to draw the channel ceiling/mid/
   floor lines; computed server-side so the chart always matches what the evaluator actually used.
-- `/source/<filename>?key=...` — serves raw source of `server.py` and the HTML dashboards for AI
-  agents to read directly from the deployed instance (password gated via `AXIS_PASSWORD`).
+- `/source/<filename>` — serves approved source files only to an authenticated administrator; never
+  put an admin token in a URL.
 - `/bitacora/*` — a JSON-backed changelog/task log (`axis_bitacora.json`) read by `axis_bitacora.html`
   and by `/bitacora/data`, which embeds `instrucciones_ai` telling any connecting AI: **converse and
   get Noel's approval before making changes, one change at a time, verify via `/status` after each

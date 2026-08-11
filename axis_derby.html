@@ -100,7 +100,7 @@ const EMOJIS  = ['🏇', '🐴', '🎠', '🦄'];
 
 async function cargarDerby() {
   try {
-    const r = await fetch('/derby/status');
+    const r = await adminFetch('/derby/status');
     const d = await r.json();
     renderDerby(d);
   } catch(e) {
@@ -213,7 +213,7 @@ function renderDerby(d) {
 async function activarDerby() {
   if (!confirm('¿Activar nuevo derby REAL LAZARO-PALMA? Esto reiniciará todos los caballos.')) return;
   try {
-    const r = await fetch('/derby/activar');
+    const r = await adminFetch('/derby/activar', { method: 'POST' });
     const d = await r.json();
     if (d.ok) { cargarDerby(); }
     else { alert('Error: ' + JSON.stringify(d)); }
@@ -222,10 +222,27 @@ async function activarDerby() {
 
 async function desactivarDerby() {
   try {
-    const r = await fetch('/derby/desactivar');
+    const r = await adminFetch('/derby/desactivar', { method: 'POST' });
     await r.json();
     cargarDerby();
   } catch(e) { alert('Error de conexión'); }
+}
+
+function adminToken() {
+  let token = sessionStorage.getItem('axis_admin_token');
+  if (!token) {
+    token = window.prompt('Token administrativo de AXIS');
+    if (token) sessionStorage.setItem('axis_admin_token', token.trim());
+  }
+  return token;
+}
+
+async function adminFetch(url, options = {}) {
+  const token = adminToken();
+  if (!token) throw new Error('Token administrativo requerido');
+  const headers = new Headers(options.headers || {});
+  headers.set('X-AXIS-Admin-Token', token);
+  return fetch(url, { ...options, headers });
 }
 
 // Cargar al inicio y refrescar cada 30s

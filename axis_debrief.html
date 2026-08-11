@@ -232,7 +232,7 @@ fechaInput.value = hoy;
 async function cargar(fecha) {
   document.getElementById('statusBar').textContent = 'Cargando…';
   try {
-    const r = await fetch(`${RAILWAY}/daily_debrief/data?fecha=${fecha}`);
+    const r = await adminFetch(`${RAILWAY}/daily_debrief/data?fecha=${fecha}`);
     const d = await r.json();
     render(d);
   } catch(e) {
@@ -409,7 +409,7 @@ async function enviarTelegram() {
   btn.disabled = true;
   btn.textContent = 'Enviando…';
   try {
-    const r = await fetch(`${RAILWAY}/daily_debrief/send?force=1`);
+    const r = await adminFetch(`${RAILWAY}/daily_debrief/send?force=1`, { method: 'POST' });
     const d = await r.json();
     showToast(d.ok ? '✓ Enviado a Telegram' : 'Error: ' + d.mensaje);
   } catch(e) {
@@ -425,6 +425,23 @@ function showToast(msg) {
   t.textContent = msg;
   t.classList.add('show');
   setTimeout(() => t.classList.remove('show'), 3000);
+}
+
+function adminToken() {
+  let token = sessionStorage.getItem('axis_admin_token');
+  if (!token) {
+    token = window.prompt('Token administrativo de AXIS');
+    if (token) sessionStorage.setItem('axis_admin_token', token.trim());
+  }
+  return token;
+}
+
+async function adminFetch(url, options = {}) {
+  const token = adminToken();
+  if (!token) throw new Error('Token administrativo requerido');
+  const headers = new Headers(options.headers || {});
+  headers.set('X-AXIS-Admin-Token', token);
+  return fetch(url, { ...options, headers });
 }
 
 // ── Auto-refresh (5 min si hoy) ───────────────────────────────────────────

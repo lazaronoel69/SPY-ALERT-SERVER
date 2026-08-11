@@ -181,6 +181,23 @@
 <script>
 const RAILWAY = 'https://web-production-bf9d0.up.railway.app';
 
+function adminToken() {
+  let token = sessionStorage.getItem('axis_admin_token');
+  if (!token) {
+    token = window.prompt('Token administrativo de AXIS');
+    if (token) sessionStorage.setItem('axis_admin_token', token.trim());
+  }
+  return token;
+}
+
+async function adminFetch(url, options = {}) {
+  const token = adminToken();
+  if (!token) throw new Error('Token administrativo requerido');
+  const headers = new Headers(options.headers || {});
+  headers.set('X-AXIS-Admin-Token', token);
+  return fetch(url, { ...options, headers });
+}
+
 function plColor(pct) {
   if (pct === null || pct === undefined) return 'var(--muted)';
   return pct >= 0 ? 'var(--green)' : 'var(--red)';
@@ -394,8 +411,8 @@ async function cargarTodo() {
   try {
     // Cargar análisis data y estadísticas en paralelo
     const [rAnalisis, rStats] = await Promise.all([
-      fetch(`${RAILWAY}/analisis/data`),
-      fetch(`${RAILWAY}/estadisticas`)
+      adminFetch(`${RAILWAY}/analisis/data`),
+      adminFetch(`${RAILWAY}/estadisticas`)
     ]);
     const analisis = await rAnalisis.json();
     const stats    = await rStats.json();

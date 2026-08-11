@@ -25,7 +25,15 @@ OUT=$(mktemp)
     echo ""
   fi
   echo "=== curl /status Railway ==="
-  curl -s "https://web-production-bf9d0.up.railway.app/status?t=$(date +%s)"
+  AXIS_ADMIN_TOKEN="${AXIS_ADMIN_TOKEN:-}"
+  if [ -z "$AXIS_ADMIN_TOKEN" ] && [ -r .axis-admin-token ]; then
+    AXIS_ADMIN_TOKEN=$(<.axis-admin-token)
+  fi
+  if [ -z "$AXIS_ADMIN_TOKEN" ]; then
+    echo "AXIS_ADMIN_TOKEN requerido para /status"
+  else
+    curl -s -H "X-AXIS-Admin-Token: $AXIS_ADMIN_TOKEN" "https://web-production-bf9d0.up.railway.app/status?t=$(date +%s)"
+  fi
   echo ""
   echo ""
   echo "=== git show --stat --oneline HEAD ==="

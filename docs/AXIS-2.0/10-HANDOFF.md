@@ -7,20 +7,28 @@
 | Campo | Valor |
 |---|---|
 | **Estado** | PRODUCTION ACTIVE — TRACKING VALIDATION |
-| **Versión actual** | v8.95 |
-| **Commit producción** | `f42df7d` |
+| **Versión actual** | v8.96 |
+| **Commit producción** | pendiente de verificación post-deploy |
 | **Build producción** | 2026-08-09 00:58:31 UTC |
 | **Core** | Frozen |
 | **Backtest** | BT-001 → BT-011 COMPLETED |
 | **Producción** | Running (Railway), `/version` y `/status` OK |
 | **Universo** | 10 activos: SPY, AAPL, BA, GLD, NVDA, AMZN, GOOG, META, MU, SPCX |
-| **Último sprint** | AX-TRACK-NOTIFY-001 — entrega automática de reconciliaciones por Telegram |
+| **Último sprint** | AX-SEC-001 — endurecimiento del plano de control interno |
 | **Alert Lifecycle** | 173 expedientes: 23 ACTIVE, 84 CLOSED, 66 CANCELLED |
 | **Portfolio observado** | 29 posiciones abiertas: 23 vinculadas y 6 huérfanas P1 |
 | **AX-TUNE-001A** | COMPLETED — reporte diario de señales (`tools/daily_signal_review.py`) |
 | **AX-TUNE-001B** | COMPLETED — automated daily debrief (`axis_debrief.html`, `/daily_debrief/*`, Telegram 16:10) |
 | **AX-TUNE-002A** | COMPLETED — root cause engine v1: anomalías estructuradas (CONFLICTO_DIRECCION, MULTIPLES_ESTRATEGIAS, SIMBOLO_SOBREACTIVO, ESTRATEGIA_DOMINANTE, SEÑAL_TARDIA) con prioridad ALTA/MEDIA/BAJA y accion_recomendada. Telegram filtra solo ALTA+MEDIA. |
-| **Última verificación** | 2026-08-08 20:58 EST; mercado cerrado; producción v8.95 OK; AX-TRACK-AUDIT-003 enviado por Telegram |
+| **Última verificación** | Pendiente de verificación post-deploy v8.96 |
+
+### Seguridad del plano de control — AX-SEC-001
+
+- Todas las APIs internas requieren `X-AXIS-Admin-Token`; no existen claves por
+  defecto ni secretos en query strings.
+- El webhook de Telegram valida su secreto oficial y el chat autorizado.
+- Las mutaciones administrativas usan POST y CORS solo permite el dominio AXIS.
+- Las dashboards internas piden el token una vez por sesión de navegador.
 
 ### Estado de reconciliación — 2026-08-08
 
@@ -61,6 +69,7 @@
 | **AX-ASSET-001** | Add MU and SPCX | COMPLETED — v8.93 |
 | **AX-TRACK-004** | Silent Intraday Tracking | COMPLETED — v8.94 |
 | **AX-TRACK-NOTIFY-001** | Weekly Reconciliation Telegram Delivery | COMPLETED — v8.95 |
+| **AX-SEC-001** | Control Plane Hardening | COMPLETED — v8.96 |
 | **AX-TRACK-AUDIT-001** | First Internal Reconciliation | COMPLETED — 2026-07-25 |
 | **AX-TRACK-AUDIT-002** | Second Incremental Reconciliation | COMPLETED — 2026-08-05 |
 | **AX-TRACK-AUDIT-003** | Weekly Incremental Reconciliation | COMPLETED — 2026-08-08 |
@@ -205,7 +214,8 @@ Run: 2026-05-04 a 2026-06-30.
 | R5 | P1 | 26 posiciones abiertas simultáneamente; no existe evidencia en este handoff de un límite operativo aplicado |
 | R6 | P2 | Crecimiento continuo de `axis_portfolio.json` por snapshots cada cinco minutos; ~2.5 MB al 2026-07-25 |
 | R7 | P3 | Bug visual de líneas manuales al cambiar de activo; no afecta estrategias ni persistencia |
-| R8 | P1 | `registrar_posicion()` crea posiciones aunque Tradier falle; dos posiciones huérfanas detectadas el 2026-08-03 |
+| R8 | P1 | `registrar_posicion()` crea posiciones aunque Tradier falle; seis casos históricos detectados, cuatro aún abiertos al 2026-08-11 |
+| R9 | RESOLVED v8.96 | Rutas operativas, webhook y datos internos sin autenticación |
 
 ---
 
@@ -214,7 +224,7 @@ Run: 2026-05-04 a 2026-06-30.
 - `python3 backtest.py --all-symbols` — run completo de referencia
 - Los `data/bt_velas_*.json` no están en git — descargar del endpoint `/velas` si se necesitan
 - El Core Strategy Engine está completo y sin tocar
-- Tras cada deploy: verificar `/status` al menos 2 veces
+- Tras cada deploy: verificar `/status` al menos 2 veces con `X-AXIS-Admin-Token`
 - `--workers 1` en gunicorn es load-bearing — no cambiar sin rediseñar persistencia de estado
 - `axis_bitacora.html` fetch usa paths relativos — solo funciona servida por Flask
 - La comunicación operativa para el propietario se realiza por Telegram.

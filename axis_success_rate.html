@@ -133,6 +133,23 @@
 <script>
 const RAILWAY = 'https://web-production-bf9d0.up.railway.app';
 
+function adminToken() {
+  let token = sessionStorage.getItem('axis_admin_token');
+  if (!token) {
+    token = window.prompt('Token administrativo de AXIS');
+    if (token) sessionStorage.setItem('axis_admin_token', token.trim());
+  }
+  return token;
+}
+
+async function adminFetch(url, options = {}) {
+  const token = adminToken();
+  if (!token) throw new Error('Token administrativo requerido');
+  const headers = new Headers(options.headers || {});
+  headers.set('X-AXIS-Admin-Token', token);
+  return fetch(url, { ...options, headers });
+}
+
 function stars(avg) {
   const full  = Math.round(avg);
   return '★'.repeat(Math.min(full, 5)) + '☆'.repeat(Math.max(0, 5 - full));
@@ -142,7 +159,7 @@ function fmt1(n) { return typeof n === 'number' ? n.toFixed(1) : '—'; }
 
 async function cargar() {
   try {
-    const r = await fetch(`${RAILWAY}/success_rate/data`);
+    const r = await adminFetch(`${RAILWAY}/success_rate/data`);
     const d = await r.json();
     render(d);
   } catch(e) {

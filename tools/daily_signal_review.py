@@ -15,14 +15,27 @@ Uso:
 """
 
 import argparse
+import os
 import sys
 from datetime import date, timedelta
+from pathlib import Path
 from typing import Optional
 
 import requests
 
 RAILWAY = "https://web-production-bf9d0.up.railway.app"
 SYMBOLS = ["SPY", "AAPL", "BA", "GLD", "NVDA", "AMZN", "GOOG", "META", "MU", "SPCX"]
+
+
+def admin_headers() -> dict:
+    token = os.environ.get("AXIS_ADMIN_TOKEN", "")
+    if not token:
+        token_file = Path(__file__).resolve().parents[1] / ".axis-admin-token"
+        if token_file.exists():
+            token = token_file.read_text(encoding="utf-8").strip()
+    if not token:
+        raise RuntimeError("AXIS_ADMIN_TOKEN no configurado")
+    return {"X-AXIS-Admin-Token": token}
 
 TIPO_DESCRIPCION = {
     "1VR":  "PRIMERA VELA ROJA",
@@ -47,20 +60,20 @@ def tipo_a_dir(tipo: str) -> str:
 # ── Fetchers ────────────────────────────────────────────────────────────────
 
 def fetch_status() -> dict:
-    r = requests.get(f"{RAILWAY}/status", timeout=8)
+    r = requests.get(f"{RAILWAY}/status", headers=admin_headers(), timeout=8)
     r.raise_for_status()
     return r.json()
 
 
 def fetch_historial() -> dict:
-    r = requests.get(f"{RAILWAY}/señales_historicas", timeout=8)
+    r = requests.get(f"{RAILWAY}/señales_historicas", headers=admin_headers(), timeout=8)
     r.raise_for_status()
     return r.json().get("historial", {})
 
 
 def fetch_velas_simbolo(simbolo: str) -> tuple:
     """Retorna (velas: list, senales_hoy: list)."""
-    r = requests.get(f"{RAILWAY}/velas", params={"simbolo": simbolo, "outputsize": 7}, timeout=8)
+    r = requests.get(f"{RAILWAY}/velas", headers=admin_headers(), params={"simbolo": simbolo, "outputsize": 7}, timeout=8)
     r.raise_for_status()
     d = r.json()
     return d.get("velas", []), d.get("senales_hoy", [])

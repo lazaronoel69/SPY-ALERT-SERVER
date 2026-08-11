@@ -350,6 +350,23 @@
 const RAILWAY = 'https://web-production-bf9d0.up.railway.app';
 const ACTIVOS = ['SPY','AAPL','BA','GLD','NVDA','AMZN','GOOG','META','MU','SPCX'];
 
+function adminToken() {
+  let token = sessionStorage.getItem('axis_admin_token');
+  if (!token) {
+    token = window.prompt('Token administrativo de AXIS');
+    if (token) sessionStorage.setItem('axis_admin_token', token.trim());
+  }
+  return token;
+}
+
+async function adminFetch(url, options = {}) {
+  const token = adminToken();
+  if (!token) throw new Error('Token administrativo requerido');
+  const headers = new Headers(options.headers || {});
+  headers.set('X-AXIS-Admin-Token', token);
+  return fetch(url, { ...options, headers });
+}
+
 // Colores
 const C = {
   up:'#3fb950', dn:'#f85149', wick:'#8b949e',
@@ -445,7 +462,7 @@ function resize() {
 async function borrarCanalClick() {
   document.getElementById('canal-delete-btn').style.display = 'none';
   try {
-    await fetch(`${RAILWAY}/desactivar?activo=${activo}`);
+    await adminFetch(`${RAILWAY}/desactivar?activo=${activo}`, { method: 'POST' });
     invalidarCanal(activo);
     window.canalRailway = { on: false };
     window.canalLineas  = null;
@@ -571,7 +588,7 @@ async function establecerP(punto) {
     // Guardar P1 localmente y en servidor
     _p1Local = { high: v.h, fecha: v.fecha, hora_est: v.hora };
     try {
-      const r = await fetch(`${RAILWAY}/establecer_p1?activo=${activo}&p1_high=${v.h}&p1_fecha=${v.fecha}&p1_hora=${v.hora}`);
+      const r = await adminFetch(`${RAILWAY}/establecer_p1?activo=${activo}&p1_high=${v.h}&p1_fecha=${v.fecha}&p1_hora=${v.hora}`, { method: 'POST' });
       if (r.ok) {
         invalidarCanal(activo);
         await cargarEstadoCanal(activo);
@@ -585,7 +602,7 @@ async function establecerP(punto) {
       // Canal activo → actualizar P2 dinámico
       try {
         const url = `${RAILWAY}/actualizar_p2?activo=${activo}&p2_high=${v.h}&p2_fecha=${v.fecha}&p2_hora=${v.hora}`;
-        const r = await fetch(url);
+        const r = await adminFetch(url, { method: 'POST' });
         if (r.ok) {
           invalidarCanal(activo);
           await cargarEstadoCanal(activo);
@@ -601,7 +618,7 @@ async function establecerP(punto) {
         const url = `${RAILWAY}/activar?activo=${activo}`
           + `&p1_high=${p1.high}&p1_fecha=${p1.fecha}&p1_hora=${p1.hora_est}`
           + `&p2_high=${v.h}&p2_fecha=${v.fecha}&p2_hora=${v.hora}`;
-        const r = await fetch(url);
+        const r = await adminFetch(url, { method: 'POST' });
         if (r.ok) {
           _p1Local = null;
           invalidarCanal(activo);
@@ -622,7 +639,7 @@ async function establecerP(punto) {
         + `&p1_high=${p1.high}&p1_fecha=${p1.fecha}&p1_hora=${p1.hora_est}`
         + `&p2_high=${p2.high}&p2_fecha=${p2.fecha}&p2_hora=${p2.hora_est}`
         + `&piso_low=${v.l}&piso_fecha=${v.fecha}&piso_hora=${v.hora}`;
-      const r = await fetch(url);
+      const r = await adminFetch(url, { method: 'POST' });
       if (r.ok) {
         invalidarCanal(activo);
         await cargarEstadoCanal(activo);
@@ -653,7 +670,7 @@ function toggleStrat(strat) {
 
 async function cargarSenalesHistoricas(sym) {
   try {
-    const res  = await fetch(`${RAILWAY}/señales_historicas?simbolo=${sym}&t=${Date.now()}`);
+    const res  = await adminFetch(`${RAILWAY}/señales_historicas?simbolo=${sym}&t=${Date.now()}`);
     const data = await res.json();
     señalesHistoricas = data.señales || {};
     _señalesCache[sym] = señalesHistoricas;  // guardar en cache
@@ -670,7 +687,7 @@ async function cargarDatos(sym, silencioso=false) {
     if (timeframe === '1H' || timeframe === '15min') {
       // Velas AXIS horarias desde base local del servidor
       const url  = `${RAILWAY}/velas?simbolo=${sym}&t=${Date.now()}`;
-      const res  = await fetch(url);
+      const res  = await adminFetch(url);
       const data = await res.json();
       if (!data.velas || !data.velas.length) throw new Error(data.error || 'Sin datos');
 
@@ -695,7 +712,7 @@ async function cargarDatos(sym, silencioso=false) {
     } else {
       // Diario / semanal / mensual
       const url  = `${RAILWAY}/velas_daily?simbolo=${sym}&tf=${timeframe}&t=${Date.now()}`;
-      const res  = await fetch(url);
+      const res  = await adminFetch(url);
       const data = await res.json();
       if (!data.velas || !data.velas.length) throw new Error(data.error || 'Sin datos diarios');
 
@@ -747,7 +764,7 @@ function iniciarRefreshGlobal() {
     for (const sym of ACTIVOS) {
       try {
         const url  = `${RAILWAY}/velas?simbolo=${sym}&t=${Date.now()}`;
-        const res  = await fetch(url);
+        const res  = await adminFetch(url);
         const data = await res.json();
         if (!data.velas || !data.velas.length) continue;
         const estN      = new Date(new Date().toLocaleString('en-US',{timeZone:'America/New_York'}));
@@ -774,7 +791,7 @@ function iniciarRefreshGlobal() {
 
 async function actualizarLucesCanal() {
   try {
-    const r = await fetch(`${RAILWAY}/canal_estado`);
+    const r = await adminFetch(`${RAILWAY}/canal_estado`);
     const d = await r.json();
     document.querySelectorAll('.tab[data-activo]').forEach(btn => {
       const sym = btn.getAttribute('data-activo');
@@ -1213,7 +1230,7 @@ const VELA_HORA = { V1:9, V2:10, V3:11, V4:12, V5:13, V6:14, V7:15 };
 async function cargarEstadoCanal(sym) {
   try {
     // Cargar estado del canal
-    const r = await fetch(`${RAILWAY}/canal_estado?activo=${sym}`);
+    const r = await adminFetch(`${RAILWAY}/canal_estado?activo=${sym}`);
     const data = await r.json();
     const c = data[sym];
     if (!c) return;
@@ -1224,7 +1241,7 @@ async function cargarEstadoCanal(sym) {
 
     // Si hay canal activo cargar líneas calculadas por Railway
     if (c.on && c.p1 && c.p2) {
-      const r2 = await fetch(`${RAILWAY}/canal_lineas?activo=${sym}`);
+      const r2 = await adminFetch(`${RAILWAY}/canal_lineas?activo=${sym}`);
       const d2 = await r2.json();
       if (d2.on && d2.lineas) {
         window.canalLineas = d2.lineas;
@@ -1349,7 +1366,7 @@ async function activarCanal() {
 
   try {
     document.getElementById('ps-status').textContent = '⏳ Activando...';
-    const r = await fetch(url);
+    const r = await adminFetch(url, { method: 'POST' });
     const data = await r.json();
     if (r.ok) {
       showToast(`✅ Canal ${data.status}`);
@@ -1375,7 +1392,7 @@ async function actualizarP2() {
   try {
     document.getElementById('ps-status').textContent = '⏳ Actualizando P2...';
     const url = `${RAILWAY}/actualizar_p2?activo=${activo}&p2_high=${p2h}&p2_fecha=${p2f}&p2_hora=${p2hora}`;
-    const r   = await fetch(url);
+    const r   = await adminFetch(url, { method: 'POST' });
     const d   = await r.json();
     if (r.ok) {
       showToast(`✅ P2 actualizado — techo $${d.techo ?? '—'}`);
@@ -1391,7 +1408,7 @@ async function actualizarP2() {
 async function desactivarCanal() {
   try {
     document.getElementById('ps-status').textContent = '⏳ Desactivando...';
-    const r = await fetch(`${RAILWAY}/desactivar?activo=${activo}`);
+    const r = await adminFetch(`${RAILWAY}/desactivar?activo=${activo}`, { method: 'POST' });
     if (r.ok) {
       showToast(`✅ Canal desactivado`);
       invalidarCanal(activo);  // limpiar cache
@@ -2098,7 +2115,7 @@ function updatePrecio(velas) {
 async function actualizarPrecioRT() {
   if (!esMercadoAbierto()) return;
   try {
-    const r = await fetch(`${RAILWAY}/precio?simbolo=${activo}`);
+    const r = await adminFetch(`${RAILWAY}/precio?simbolo=${activo}`);
     const d = await r.json();
     if (d.precio) {
       document.getElementById('pval').textContent = '$'+d.precio.toFixed(2);

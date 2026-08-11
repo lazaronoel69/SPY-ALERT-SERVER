@@ -377,7 +377,7 @@ async function guardar() {
   };
 
   try {
-    const r = await fetch(`${RAILWAY}/journal/save`, {
+    const r = await adminFetch(`${RAILWAY}/journal/save`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify(body),
@@ -418,6 +418,23 @@ function limpiarForm() {
   if (decTune) decTune.checked = true;
 }
 
+function adminToken() {
+  let token = sessionStorage.getItem('axis_admin_token');
+  if (!token) {
+    token = window.prompt('Token administrativo de AXIS');
+    if (token) sessionStorage.setItem('axis_admin_token', token.trim());
+  }
+  return token;
+}
+
+async function adminFetch(url, options = {}) {
+  const token = adminToken();
+  if (!token) throw new Error('Token administrativo requerido');
+  const headers = new Headers(options.headers || {});
+  headers.set('X-AXIS-Admin-Token', token);
+  return fetch(url, { ...options, headers });
+}
+
 // ── Cargar entradas ────────────────────────────────────────
 async function cargarEntries() {
   const sim = document.getElementById('filtroSim').value;
@@ -429,7 +446,7 @@ async function cargarEntries() {
   if (dec) params.set('decision', dec);
 
   try {
-    const r = await fetch(`${RAILWAY}/journal/data?${params}`);
+    const r = await adminFetch(`${RAILWAY}/journal/data?${params}`);
     const d = await r.json();
     renderEntries(d.entries || [], d.total || 0);
   } catch(e) {

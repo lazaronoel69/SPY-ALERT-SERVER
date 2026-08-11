@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v8.95
+AXIS Breakout Sentinel v8.96
 Estrategias: 1VR | 1VR+ | RPG | GNA | GBA | RCB/CNF
 Multi-activo: SPY, AAPL, BA, GLD, NVDA, AMZN, GOOG, META, MU, SPCX
 v8.43: Portfolio fix — ejecutar_orden_tradier en webhook exec/reto | Panic Button al bid |
@@ -46,24 +46,37 @@ v8.92: AX-TRACK-003: updates operativos por Telegram: hitos P&L, fallos/reanudac
 v8.93: AX-ASSET-001: MU y SPCX agregados al monitoreo, V1-V7, Telegram, canales, dashboards, backtest y revisión diaria.
 v8.94: AX-TRACK-004: seguimiento 5 min silencioso; hitos/fallos se registran sin Telegram y se consolidan al cierre diario.
 v8.95: AX-TRACK-NOTIFY-001: cada reconciliación semanal se envía una sola vez por Telegram, con reintentos y estado verificable.
+v8.96: AX-SEC-001: control administrativo autenticado, webhook Telegram validado, CORS restringido y rutas mutables solo POST.
 """
 
 import os
 import requests
 import threading
 import time
+import hmac
+from functools import wraps
 from datetime import datetime, timedelta, date
 import pytz
 from flask import Flask, jsonify, request
 
 app = Flask(__name__)
 
-# ── CORS — permite llamadas desde la app web ──
+# ── CORS — solo el dashboard servido por AXIS puede llamar al API ──
+AXIS_ALLOWED_ORIGIN = os.environ.get(
+    "AXIS_ALLOWED_ORIGIN", "https://web-production-bf9d0.up.railway.app"
+).rstrip("/")
+
 @app.after_request
 def add_cors_headers(response):
-    response.headers['Access-Control-Allow-Origin']  = '*'
-    response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
-    response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
+    origin = request.headers.get("Origin", "").rstrip("/")
+    if origin == AXIS_ALLOWED_ORIGIN:
+        response.headers['Access-Control-Allow-Origin']  = AXIS_ALLOWED_ORIGIN
+        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-AXIS-Admin-Token'
+        response.headers['Vary'] = 'Origin'
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['X-Frame-Options'] = 'SAMEORIGIN'
+    response.headers['Referrer-Policy'] = 'same-origin'
     return response
 
 @app.route('/', defaults={'path': ''}, methods=['OPTIONS'])
@@ -72,13 +85,48 @@ def handle_options(path):
     from flask import Response
     return Response(status=200)
 
+
+AXIS_ADMIN_TOKEN = os.environ.get("AXIS_ADMIN_TOKEN", "")
+TELEGRAM_WEBHOOK_SECRET = os.environ.get("TELEGRAM_WEBHOOK_SECRET", "")
+
+
+def _forbidden(message="unauthorized", status=401):
+    return jsonify({"error": message}), status
+
+
+def require_admin(view):
+    """Protege operaciones internas sin exponer secretos en URLs o frontends."""
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        if not AXIS_ADMIN_TOKEN:
+            return _forbidden("admin security not configured", 503)
+        supplied = request.headers.get("X-AXIS-Admin-Token", "")
+        if not supplied or not hmac.compare_digest(supplied, AXIS_ADMIN_TOKEN):
+            return _forbidden()
+        return view(*args, **kwargs)
+    return wrapped
+
+
+def require_telegram_webhook(view):
+    """Acepta callbacks solo cuando Telegram entrega el secreto configurado."""
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        if not TELEGRAM_WEBHOOK_SECRET:
+            return _forbidden("telegram webhook security not configured", 503)
+        supplied = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+        if not supplied or not hmac.compare_digest(supplied, TELEGRAM_WEBHOOK_SECRET):
+            return _forbidden("invalid telegram webhook", 403)
+        return view(*args, **kwargs)
+    return wrapped
+
 # ═══════════════════════════════════════════════════════════
 # CONFIGURACION
 # ═══════════════════════════════════════════════════════════
 TELEGRAM_TOKEN   = os.environ.get("TELEGRAM_TOKEN", "")
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "-5010153427")
-TWELVEDATA_KEY   = "66dd71373a884f7bb7da8e6e5e469571"
-FINNHUB_KEY      = "d71aocpr01qot5jcnohgd71aocpr01qot5jcnoi0"
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
+# Servicios vestigiales: no se usan desde v8.17; nunca conservar claves en código.
+TWELVEDATA_KEY   = os.environ.get("TWELVEDATA_KEY", "")
+FINNHUB_KEY       = os.environ.get("FINNHUB_KEY", "")
 from axis_config import EST  # AX-003: movido a axis_config.py, mismo valor
 
 # ── TRADIER SANDBOX (ordenes paper trading) ──
@@ -154,7 +202,7 @@ def loop_limpiar_ordenes():
             print(f"Error loop_limpiar_ordenes: {e}")
 
 # ── VERSIÓN ──────────────────────────────────────────────────────────────────
-AXIS_VERSION = "8.95"
+AXIS_VERSION = "8.96"
 _BUILD_DATE  = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
 
 def _git_commit_short():
@@ -1932,7 +1980,8 @@ def home(path=""):
     from flask import Response
     return Response(html, mimetype="text/html")
 
-@app.route("/test", methods=["GET"])
+@app.route("/test", methods=["POST"])
+@require_admin
 def test():
     ahora = datetime.now(EST)
     lineas_canal = []
@@ -1957,12 +2006,14 @@ def test():
     )
     return jsonify({"status": "ok"}), 200
 
-@app.route("/reporte", methods=["GET"])
+@app.route("/reporte", methods=["POST"])
+@require_admin
 def reporte_manual():
     reporte_horario()
     return jsonify({"status": "reporte enviado"}), 200
 
-@app.route("/activar", methods=["GET"])
+@app.route("/activar", methods=["POST"])
+@require_admin
 def activar():
     simbolo = request.args.get("activo", "SPY").upper()
     if simbolo not in ACTIVOS:
@@ -2012,7 +2063,8 @@ def activar():
     except Exception as e:
         return jsonify({"error": str(e)}), 400
 
-@app.route("/actualizar_p2", methods=["GET"])
+@app.route("/actualizar_p2", methods=["POST"])
+@require_admin
 def actualizar_p2():
     simbolo = request.args.get("activo", "SPY").upper()
     if simbolo not in ACTIVOS:
@@ -2059,7 +2111,8 @@ def actualizar_p2():
     except Exception as e:
         return jsonify({"error": str(e)}), 400
 
-@app.route("/desactivar", methods=["GET"])
+@app.route("/desactivar", methods=["POST"])
+@require_admin
 def desactivar():
     simbolo = request.args.get("activo", "SPY").upper()
     if simbolo not in ACTIVOS:
@@ -2069,14 +2122,16 @@ def desactivar():
     enviar_telegram(f"🔕 <b>Canal desactivado manualmente — {simbolo}</b>")
     return jsonify({"status": "canal desactivado", "activo": simbolo}), 200
 
-@app.route("/apagar", methods=["GET"])
+@app.route("/apagar", methods=["POST"])
+@require_admin
 def apagar():
     global SISTEMA_ACTIVO
     SISTEMA_ACTIVO = False
     enviar_telegram("🏁 <b>Sistema apagado manualmente.</b>")
     return jsonify({"status": "apagado"}), 200
 
-@app.route("/estrategia", methods=["GET"])
+@app.route("/estrategia", methods=["POST"])
+@require_admin
 def estrategia():
     global VR1_ON, RPG_ON, GNA_ON, GBA_ON
     if "vr1" in request.args: VR1_ON = request.args["vr1"].lower() == "true"
@@ -2090,7 +2145,8 @@ def estrategia():
     )
     return jsonify({"VR1": VR1_ON, "RPG": RPG_ON, "GNA": GNA_ON, "GBA": GBA_ON}), 200
 
-@app.route("/tradier_test", methods=["GET"])
+@app.route("/tradier_test", methods=["POST"])
+@require_admin
 def tradier_test():
     resultados = {}
     try:
@@ -2214,7 +2270,8 @@ def recomendar_opcion_claude(opcion_original, capital_carril, presupuesto):
     except Exception as e:
         return f"Error Claude: {str(e)}"
 
-@app.route("/portfolio/reset", methods=["GET"])
+@app.route("/portfolio/reset", methods=["POST"])
+@require_admin
 def portfolio_reset():
     global _portfolio
     _portfolio = portfolio_vacio()
@@ -2232,6 +2289,7 @@ def serve_portfolio():
     return Response("<h1>axis_portfolio.html no encontrado</h1>", mimetype="text/html"), 404
 
 @app.route("/portfolio/data", methods=["GET"])
+@require_admin
 def portfolio_data():
     global _portfolio
     if _portfolio is None:
@@ -2243,7 +2301,8 @@ def portfolio_data():
         "reto":       _portfolio.get("derby", {}),  # compatibilidad
     }), 200
 
-@app.route("/portfolio/cerrar", methods=["GET", "POST"])
+@app.route("/portfolio/cerrar", methods=["POST"])
+@require_admin
 def portfolio_cerrar():
     global _portfolio
     if _portfolio is None:
@@ -2266,7 +2325,8 @@ def portfolio_cerrar():
         return jsonify({"error": "Error cerrando posición"}), 500
     return jsonify({"ok": True, "bid_usado": precio_cierre, "posicion": pos_cerrada}), 200
 
-@app.route("/portfolio/claude", methods=["GET"])
+@app.route("/portfolio/claude", methods=["POST"])
+@require_admin
 def portfolio_claude():
     global _portfolio
     if _portfolio is None:
@@ -2274,7 +2334,8 @@ def portfolio_claude():
     analisis = analizar_portfolio_claude(_portfolio["posiciones"], _portfolio["reto"])
     return jsonify({"analisis": analisis}), 200
 
-@app.route("/derby/activar", methods=["GET"])
+@app.route("/derby/activar", methods=["POST"])
+@require_admin
 def derby_activar():
     global _portfolio
     if _portfolio is None:
@@ -2305,7 +2366,8 @@ def derby_activar():
     )
     return jsonify({"ok": True, "derby": _portfolio["derby"]}), 200
 
-@app.route("/derby/desactivar", methods=["GET"])
+@app.route("/derby/desactivar", methods=["POST"])
+@require_admin
 def derby_desactivar():
     global _portfolio
     if _portfolio is None:
@@ -2316,6 +2378,7 @@ def derby_desactivar():
     return jsonify({"ok": True}), 200
 
 @app.route("/derby/status", methods=["GET"])
+@require_admin
 def derby_status():
     global _portfolio
     if _portfolio is None:
@@ -2342,11 +2405,13 @@ def derby_status():
     }), 200
 
 # Mantener compatibilidad con rutas antiguas
-@app.route("/portfolio/reto/activar", methods=["GET"])
+@app.route("/portfolio/reto/activar", methods=["POST"])
+@require_admin
 def reto_activar():
     return derby_activar()
 
-@app.route("/portfolio/reto/desactivar", methods=["GET"])
+@app.route("/portfolio/reto/desactivar", methods=["POST"])
+@require_admin
 def reto_desactivar():
     return derby_desactivar()
 
@@ -2381,6 +2446,7 @@ def serve_app():
     return Response("<h1>App no encontrada</h1>", mimetype="text/html"), 404
 
 @app.route("/telegram_webhook", methods=["POST"])
+@require_telegram_webhook
 def telegram_webhook():
     try:
         data = request.get_json(silent=True)
@@ -2393,6 +2459,8 @@ def telegram_webhook():
         callback_data = callback.get("data", "")
         message_id    = callback.get("message", {}).get("message_id")
         chat_id       = callback.get("message", {}).get("chat", {}).get("id")
+        if str(chat_id) != str(TELEGRAM_CHAT_ID):
+            return _forbidden("unauthorized telegram chat", 403)
         partes = callback_data.split(":")
         if len(partes) < 2:
             return jsonify({"ok": True}), 200
@@ -2596,6 +2664,7 @@ def telegram_webhook():
     return jsonify({"ok": True}), 200
 
 @app.route("/tradier_history_test", methods=["GET"])
+@require_admin
 def tradier_history_test():
     if not TRADIER_TOKEN_REAL:
         return jsonify({"error": "TRADIER_TOKEN_REAL no configurado en Railway"}), 400
@@ -2612,6 +2681,7 @@ def tradier_history_test():
     return jsonify(resultados), 200
 
 @app.route("/tradier_raw", methods=["GET"])
+@require_admin
 def tradier_raw():
     """Endpoint permanente de SOLO LECTURA. Llama Tradier directo (sin pasar
     por la base de datos local de AXIS) para verificar datos crudos contra
@@ -2706,6 +2776,7 @@ def velas_status():
     return jsonify({"fecha": _dt.now().strftime("%Y-%m-%d %H:%M EST"), "activos": resultado}), 200
 
 @app.route("/tradier_hoy", methods=["GET"])
+@require_admin
 def tradier_hoy():
     from datetime import date
     hoy = date.today().strftime("%Y-%m-%d")
@@ -2733,7 +2804,8 @@ def tradier_hoy():
             resultado[simbolo] = {"total_barras": 0, "ultima_barra": None, "status": f"❌ ERROR: {e}"}
     return jsonify({"fecha": hoy, "activos": resultado}), 200
 
-@app.route("/rellenar_velas", methods=["GET"])
+@app.route("/rellenar_velas", methods=["POST"])
+@require_admin
 def rellenar_velas():
     from datetime import date as _date, timedelta as _td
     resultado = {}
@@ -2784,7 +2856,8 @@ def rellenar_velas():
             resultado[simbolo] = f"❌ Error: {e}"
     return jsonify({"fecha": str(hoy), "resultado": resultado}), 200
 
-@app.route("/establecer_p1", methods=["GET"])
+@app.route("/establecer_p1", methods=["POST"])
+@require_admin
 def establecer_p1():
     simbolo = request.args.get("activo", "SPY").upper()
     if simbolo not in ACTIVOS:
@@ -2807,14 +2880,16 @@ def establecer_p1():
     except Exception as e:
         return jsonify({"error": str(e)}), 400
 
-@app.route("/reset_canales", methods=["GET"])
+@app.route("/reset_canales", methods=["POST"])
+@require_admin
 def reset_canales():
     for simbolo in ACTIVOS:
         canal[simbolo] = canal_vacio()
     guardar_canales()
     return jsonify({"ok": True, "mensaje": "Todos los canales reseteados a cero"}), 200
 
-@app.route("/archivar_hoy", methods=["GET"])
+@app.route("/archivar_hoy", methods=["POST"])
+@require_admin
 def archivar_hoy():
     fecha = datetime.now(EST).strftime("%Y-%m-%d")
     archivar_señales_dia(fecha)
@@ -2822,6 +2897,7 @@ def archivar_hoy():
     return jsonify({"ok": True, "fecha": fecha, "señales": historial.get(fecha, {})}), 200
 
 @app.route("/señales_historicas", methods=["GET"])
+@require_admin
 def ruta_señales_historicas():
     simbolo = request.args.get("simbolo", "").upper()
     historial = cargar_señales_historicas()
@@ -2840,7 +2916,8 @@ def ruta_bitacora():
     with open(os.path.join(os.path.dirname(__file__), "axis_bitacora.html"), "r") as f:
         return f.read(), 200, {"Content-Type": "text/html"}
 
-@app.route("/bitacora/seed", methods=["GET"])
+@app.route("/bitacora/seed", methods=["POST"])
+@require_admin
 def ruta_bitacora_seed():
     force = request.args.get("force", "0") == "1"
     if os.path.exists(BITACORA_FILE) and not force:
@@ -2867,6 +2944,7 @@ def ruta_bitacora_seed():
     return jsonify({"ok": True, "msg": "Bitácora inicializada"}), 200
 
 @app.route("/bitacora/resolver", methods=["POST"])
+@require_admin
 def ruta_bitacora_resolver():
     try:
         body = request.get_json()
@@ -2887,6 +2965,7 @@ def ruta_bitacora_resolver():
         return jsonify({"error": str(e)}), 500
 
 @app.route("/bitacora/data", methods=["GET"])
+@require_admin
 def ruta_bitacora_data():
     """Devuelve todas las entradas de la bitácora en JSON — para uso de AI."""
     try:
@@ -2897,16 +2976,18 @@ def ruta_bitacora_data():
         # v8.63 — timestamp para que AI sepa hora/día al conectarse
         data["ahora_est"] = datetime.now(EST).strftime("%Y-%m-%d %H:%M EST")
         data["fuentes"] = {
-            "server_py":   "https://web-production-bf9d0.up.railway.app/source/server.py?key=axis2026",
-            "charts_html": "https://web-production-bf9d0.up.railway.app/source/axis_charts.html?key=axis2026",
+            "server_py":   "https://web-production-bf9d0.up.railway.app/source/server.py",
+            "charts_html": "https://web-production-bf9d0.up.railway.app/source/axis_charts.html",
             "status":      "https://web-production-bf9d0.up.railway.app/status",
             "diagnostico": "https://web-production-bf9d0.up.railway.app/diagnostico",
+            "auth":        "Todas las fuentes requieren X-AXIS-Admin-Token; no usar secretos en URLs.",
         }
         return jsonify(data), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 @app.route("/bitacora/agregar", methods=["POST"])
+@require_admin
 def ruta_bitacora_agregar():
     try:
         body = request.get_json()
@@ -2934,6 +3015,7 @@ def ruta_bitacora_agregar():
         return jsonify({"error": str(e)}), 500
 
 @app.route("/velas_daily", methods=["GET"])
+@require_admin
 def ruta_velas_daily():
     simbolo   = request.args.get("simbolo", "SPY").upper()
     timeframe = request.args.get("tf", "daily")
@@ -2980,6 +3062,7 @@ def ruta_velas_daily():
     return jsonify({"simbolo": simbolo, "timeframe": timeframe, "total": len(resultado), "velas": resultado}), 200
 
 @app.route("/velas", methods=["GET"])
+@require_admin
 def ruta_velas():
     simbolo = request.args.get("simbolo", "SPY").upper()
     velas   = get_velas(simbolo, outputsize=280)
@@ -3004,6 +3087,7 @@ def ruta_velas():
                     "total": len(velas), "velas": velas, "senales_hoy": senales_hoy}), 200
 
 @app.route("/status", methods=["GET"])
+@require_admin
 def system_status():
     ahora    = datetime.now(EST)
     hoy      = ahora.date()  # EST date — avoids UTC-off-by-one after midnight
@@ -3088,6 +3172,7 @@ def system_status():
     }), 200
 
 @app.route("/estadisticas", methods=["GET"])
+@require_admin
 def estadisticas():
     if _portfolio is None:
         cargar_portfolio()
@@ -3135,6 +3220,7 @@ def serve_analisis():
     return Response("<h1>axis_analisis.html no encontrado</h1>", mimetype="text/html"), 404
 
 @app.route("/analisis/data", methods=["GET"])
+@require_admin
 def analisis_data():
     if _portfolio is None:
         cargar_portfolio()
@@ -3146,6 +3232,7 @@ def analisis_data():
     }), 200
 
 @app.route("/cotizar_opciones", methods=["GET"])
+@require_admin
 def cotizar_opciones():
     from datetime import date, timedelta
     hoy = date.today()
@@ -3178,6 +3265,7 @@ def cotizar_opciones():
     return jsonify(resultado), 200
 
 @app.route("/diagnostico", methods=["GET"])
+@require_admin
 def diagnostico():
     from datetime import date as date_cls, datetime as dt2, timedelta
     from collections import defaultdict
@@ -3249,6 +3337,7 @@ def diagnostico():
     return jsonify(reporte), 200
 
 @app.route("/precio", methods=["GET"])
+@require_admin
 def precio_rt():
     simbolo = request.args.get("simbolo", "SPY").upper()
     precio  = get_precio_tradier(simbolo)
@@ -3257,6 +3346,7 @@ def precio_rt():
     return jsonify({"error": "No disponible"}), 500
 
 @app.route("/canal_estado", methods=["GET"])
+@require_admin
 def canal_estado():
     simbolo = request.args.get("activo", "").upper()
     activos = [simbolo] if simbolo in ACTIVOS else ACTIVOS
@@ -3278,6 +3368,7 @@ def canal_estado():
     return jsonify(resultado), 200
 
 @app.route("/canal_lineas", methods=["GET"])
+@require_admin
 def canal_lineas():
     simbolo = request.args.get("activo", "SPY").upper()
     if simbolo not in ACTIVOS:
@@ -4286,11 +4377,13 @@ def serve_daily_debrief():
     return Response("<h1>axis_debrief.html no encontrado</h1>", mimetype="text/html"), 404
 
 @app.route("/daily_debrief/data", methods=["GET"])
+@require_admin
 def daily_debrief_data():
     fecha = request.args.get("fecha", datetime.now(EST).strftime("%Y-%m-%d"))
     return jsonify(construir_debrief_data(fecha)), 200
 
-@app.route("/daily_debrief/send", methods=["GET"])
+@app.route("/daily_debrief/send", methods=["POST"])
+@require_admin
 def daily_debrief_send():
     force = request.args.get("force", "0") == "1"
     if force:
@@ -4328,6 +4421,7 @@ def serve_journal():
     return Response("<h1>axis_journal.html no encontrado</h1>", mimetype="text/html"), 404
 
 @app.route("/alerts/data", methods=["GET"])
+@require_admin
 def alerts_data():
     """AX-TRACK-001: consulta de solo lectura del ciclo de alertas."""
     alertas = listar_alertas(
@@ -4341,6 +4435,7 @@ def alerts_data():
     return jsonify({"alertas": list(reversed(alertas[-limite:])), "total": len(alertas)}), 200
 
 @app.route("/journal/data", methods=["GET"])
+@require_admin
 def journal_data():
     data = cargar_journal()
     entries = data.get("entries", [])
@@ -4359,6 +4454,7 @@ def journal_data():
     return jsonify({"entries": list(reversed(entries)), "total": len(entries)}), 200
 
 @app.route("/journal/save", methods=["POST"])
+@require_admin
 def journal_save():
     try:
         body = request.get_json(force=True)
@@ -4401,6 +4497,7 @@ def serve_success_rate():
     return Response("<h1>axis_success_rate.html no encontrado</h1>", mimetype="text/html"), 404
 
 @app.route("/success_rate/data", methods=["GET"])
+@require_admin
 def success_rate_data():
     entries = cargar_journal().get("entries", [])
     total   = len(entries)
@@ -4472,21 +4569,20 @@ def version_endpoint():
     }), 200
 
 @app.route("/reconciliation/notification-status", methods=["GET"])
+@require_admin
 def reconciliation_notification_status_endpoint():
     """Estado de entrega Telegram; nunca expone token ni chat_id."""
     return jsonify(notification_status()), 200
 
 # ═══════════════════════════════════════════════════════════
 # SOURCE — expone archivos para lectura de AI
-# GET /source/<filename>?key=AXIS_PASSWORD
+# GET /source/<filename> con encabezado X-AXIS-Admin-Token
 # ═══════════════════════════════════════════════════════════
 ARCHIVOS_FUENTE = ['server.py', 'axis_charts.html', 'axis_portfolio.html', 'axis_bitacora.html', 'axis_analisis.html']
 
 @app.route("/source/<filename>")
+@require_admin
 def get_source(filename):
-    key = request.args.get('key', '')
-    if key != os.environ.get('AXIS_PASSWORD', 'axis2026'):
-        return jsonify({"error": "unauthorized"}), 401
     if filename not in ARCHIVOS_FUENTE:
         return jsonify({"error": "not found"}), 404
     try:

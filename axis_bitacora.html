@@ -240,7 +240,7 @@ function render() {
 
 async function cargar() {
   try {
-    const r = await fetch('/bitacora/data');
+    const r = await adminFetch('/bitacora/data');
     const d = await r.json();
     entradas = d.entradas || [];
     render();
@@ -266,7 +266,7 @@ async function guardar() {
   const titulo = document.getElementById('f-titulo').value.trim();
   if (!titulo) { toast('⚠️ El título es requerido'); return; }
   try {
-    const r = await fetch('/bitacora/agregar', {
+    const r = await adminFetch('/bitacora/agregar', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -284,7 +284,7 @@ async function guardar() {
 
 async function marcarResuelto(id) {
   try {
-    const r = await fetch('/bitacora/resolver', {
+    const r = await adminFetch('/bitacora/resolver', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id }),
@@ -292,6 +292,23 @@ async function marcarResuelto(id) {
     if (r.ok) { toast('✅ Marcado como resuelto'); await cargar(); }
     else { toast('❌ Error'); }
   } catch(e) { toast('❌ Error de conexión'); }
+}
+
+function adminToken() {
+  let token = sessionStorage.getItem('axis_admin_token');
+  if (!token) {
+    token = window.prompt('Token administrativo de AXIS');
+    if (token) sessionStorage.setItem('axis_admin_token', token.trim());
+  }
+  return token;
+}
+
+async function adminFetch(url, options = {}) {
+  const token = adminToken();
+  if (!token) throw new Error('Token administrativo requerido');
+  const headers = new Headers(options.headers || {});
+  headers.set('X-AXIS-Admin-Token', token);
+  return fetch(url, { ...options, headers });
 }
 
 document.addEventListener('keydown', e => { if (e.key === 'Escape') cerrar(); });
