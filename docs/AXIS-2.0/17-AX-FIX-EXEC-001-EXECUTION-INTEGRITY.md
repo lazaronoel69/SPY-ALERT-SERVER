@@ -17,9 +17,10 @@ la API no incluía `order.id` o respondía con error HTTP.
 2. Sin esa confirmación, la alerta queda `CANCELLED` y no existe posición.
 3. Si la compra fue confirmada pero el GTC no, la posición sí se conserva con
    `gtc_confirmada=false` y evento `GTC_SUBMISSION_FAILED`.
-4. Los registros históricos sin `alert_id` ni `tradier_orden_id` se anulan con
-   `integridad_ejecucion=NO_CONFIRMADA` y `excluida_metricas=true`; nunca se
-   borran ni cuentan como P&L o resultado de estrategia.
+4. Los registros del incidente documentado desde 2026-08-03 sin `alert_id` ni
+   `tradier_orden_id` se anulan con `integridad_ejecucion=NO_CONFIRMADA` y
+   `excluida_metricas=true`; nunca se borran ni cuentan como P&L o resultado de
+   estrategia. Registros legacy ambiguos permanecen intactos.
 
 ## Reconciliación posterior al despliegue
 

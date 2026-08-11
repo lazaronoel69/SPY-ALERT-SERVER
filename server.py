@@ -664,10 +664,18 @@ def cerrar_posicion(pos_id, precio_cierre, motivo="panic"):
     return pos
 
 
+INCIDENTE_EJECUCION_SIN_CONFIRMACION_DESDE = date(2026, 8, 3)
+
+
 def _sin_confirmacion_tradier(pos):
-    """Posición sin evidencia de alerta ni orden aceptada; no es un resultado de trading."""
+    """Incidente documentado desde 2026-08-03; preserva registros legacy ambiguos."""
+    try:
+        fecha_entrada = date.fromisoformat(str(pos.get("ts_entrada", ""))[:10])
+    except (TypeError, ValueError):
+        return False
     return (
-        not pos.get("alert_id")
+        fecha_entrada >= INCIDENTE_EJECUCION_SIN_CONFIRMACION_DESDE
+        and not pos.get("alert_id")
         and not pos.get("tradier_orden_id")
         and not pos.get("integridad_ejecucion")
     )
@@ -676,9 +684,10 @@ def _sin_confirmacion_tradier(pos):
 def reconciliar_posiciones_sin_confirmacion(confirmar=False):
     """Anula registros creados por el defecto histórico sin alterar órdenes reales.
 
-    Es idempotente: solo toca registros sin alert_id, sin orden Tradier y sin
-    una marca previa de integridad. Las anulaciones permanecen auditables en
-    historial y quedan fuera de P&L, win rate y tuning.
+    Es idempotente: solo toca el incidente documentado desde 2026-08-03, sin
+    alert_id, sin orden Tradier y sin marca previa de integridad. Las
+    anulaciones permanecen auditables en historial y quedan fuera de P&L, win
+    rate y tuning.
     """
     global _portfolio
     if _portfolio is None:

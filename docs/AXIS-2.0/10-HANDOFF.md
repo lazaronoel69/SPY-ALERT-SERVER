@@ -38,8 +38,9 @@
   sin GTC queda visible como excepción, nunca se oculta ni se trata como fallo
   de compra.
 - La reconciliación protegida tiene dry-run por defecto y anula de forma
-  auditable solo registros sin `alert_id` ni `tradier_orden_id`; quedan fuera
-  de P&L, tasa de acierto y tuning.
+  auditable solo el incidente documentado desde 2026-08-03, sin `alert_id` ni
+  `tradier_orden_id`; deja intacto cualquier legacy ambiguo y excluye los
+  anulados de P&L, tasa de acierto y tuning.
 
 ### Estado de reconciliación — 2026-08-08
 
