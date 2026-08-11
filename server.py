@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v8.98
+AXIS Breakout Sentinel v8.99
 Estrategias: 1VR | 1VR+ | RPG | GNA | GBA | RCB/CNF
 Multi-activo: SPY, AAPL, BA, GLD, NVDA, AMZN, GOOG, META, MU, SPCX
 v8.43: Portfolio fix — ejecutar_orden_tradier en webhook exec/reto | Panic Button al bid |
@@ -49,6 +49,7 @@ v8.95: AX-TRACK-NOTIFY-001: cada reconciliación semanal se envía una sola vez 
 v8.96: AX-SEC-001: control administrativo autenticado, webhook Telegram validado, CORS restringido y rutas mutables solo POST.
 v8.97: AX-FIX-EXEC-001: una posición solo se registra tras confirmación de compra de Tradier; huérfanas sin confirmación se anulan y excluyen de métricas.
 v8.98: AX-MOBILE-001: Derby móvil se empareja por Telegram privado con sesión HttpOnly; el token administrativo nunca se comparte.
+v8.99: AX-RISK-001: telemetría de salidas sombra registra stops y drawdowns hipotéticos; no cierra ni altera posiciones.
 """
 
 import os
@@ -210,7 +211,7 @@ def loop_limpiar_ordenes():
             print(f"Error loop_limpiar_ordenes: {e}")
 
 # ── VERSIÓN ──────────────────────────────────────────────────────────────────
-AXIS_VERSION = "8.98"
+AXIS_VERSION = "8.99"
 _BUILD_DATE  = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
 
 def _git_commit_short():
@@ -590,6 +591,56 @@ def cargar_portfolio():
 def guardar_portfolio():
     _axis_portfolio.guardar_portfolio(_portfolio)
 
+
+# ── AX-RISK-001: observación de salidas, sin ejecución de trading ─────────
+# Estos niveles no son stops activos. Se registran para medir, con datos reales,
+# qué protección habría conservado capital sin expulsar ganadoras.
+SALIDA_SOMBRA_STOPS_PCT = (-25, -50, -75, -90)
+SALIDA_SOMBRA_ACTIVACION_TRAILING_PCT = 25
+SALIDA_SOMBRA_DRAWDOWNS_PCT = (-25, -50)
+
+
+def _salidas_sombra_vacias():
+    return {
+        "version": "AX-RISK-001",
+        "stops_pct": list(SALIDA_SOMBRA_STOPS_PCT),
+        "trailing": {
+            "activacion_mfe_pct": SALIDA_SOMBRA_ACTIVACION_TRAILING_PCT,
+            "drawdowns_pct": list(SALIDA_SOMBRA_DRAWDOWNS_PCT),
+        },
+        "stops_cruzados": {},
+        "trailing_cruzados": {},
+    }
+
+
+def actualizar_salidas_sombra(pos, pl_pct, mfe_pct, ahora, minutos_abierta):
+    """Registra cruces hipotéticos; nunca llama a Tradier ni cierra una posición."""
+    sombra = pos.setdefault("salidas_sombra", _salidas_sombra_vacias())
+    sombra.setdefault("version", "AX-RISK-001")
+    stops = sombra.setdefault("stops_cruzados", {})
+    trailing = sombra.setdefault("trailing_cruzados", {})
+    datos_base = {
+        "ts": ahora.isoformat(),
+        "pl_pct": round(float(pl_pct), 2),
+        "mfe_pct": round(float(mfe_pct), 2),
+        "minutos_abierta": int(minutos_abierta),
+    }
+    for nivel in SALIDA_SOMBRA_STOPS_PCT:
+        clave = str(nivel)
+        if pl_pct <= nivel and clave not in stops:
+            stops[clave] = {"nivel_pct": nivel, **datos_base}
+    if mfe_pct >= SALIDA_SOMBRA_ACTIVACION_TRAILING_PCT:
+        drawdown_pct = round(float(pl_pct) - float(mfe_pct), 2)
+        for nivel in SALIDA_SOMBRA_DRAWDOWNS_PCT:
+            clave = str(nivel)
+            if drawdown_pct <= nivel and clave not in trailing:
+                trailing[clave] = {
+                    "drawdown_pct": drawdown_pct,
+                    "nivel_pct": nivel,
+                    **datos_base,
+                }
+    return sombra
+
 def registrar_posicion(opcion, estrategia, simbolo, precio_entrada, es_reto=False, carril_id=None,
                        contratos=1, tradier_orden_id=None, tradier_gtc_id=None,
                        alert_id=None, gtc_confirmada=True, gtc_error=None):
@@ -635,6 +686,7 @@ def registrar_posicion(opcion, estrategia, simbolo, precio_entrada, es_reto=Fals
         "fecha_minimo":   datetime.now(EST).strftime("%Y-%m-%d"),
         "mfe_pct":        0.0,
         "mae_pct":        0.0,
+        "salidas_sombra": _salidas_sombra_vacias(),
         "minutos_abierta": 0,
         "seguimiento": [
             {
@@ -733,6 +785,9 @@ def cerrar_posicion(pos_id, precio_cierre, motivo="panic"):
         pos["fecha_minimo"]  = fecha_cierre
     pos["mfe_pct"] = pos.get("pl_pct_maximo", 0)
     pos["mae_pct"] = pos.get("pl_pct_minimo", 0)
+    actualizar_salidas_sombra(
+        pos, pl_pct, pos["mfe_pct"], datetime.now(EST), minutos_abierta,
+    )
 
     if pos.get("es_reto") and pos.get("carril_id"):
         derby = _portfolio["derby"]
@@ -3867,6 +3922,7 @@ def actualizar_seguimiento_posicion(pos, bid, ahora=None):
         pos["fecha_maximo"] = ahora.strftime("%Y-%m-%d")
     if pl_pct < mae_anterior or not pos.get("fecha_minimo"):
         pos["fecha_minimo"] = ahora.strftime("%Y-%m-%d")
+    actualizar_salidas_sombra(pos, pl_pct, mfe_pct, ahora, minutos_abierta)
     pos.setdefault("seguimiento", []).append({
         "ts": ahora.isoformat(), "bid": bid, "pl_pct": pl_pct, "pl_usd": pl_usd,
     })
