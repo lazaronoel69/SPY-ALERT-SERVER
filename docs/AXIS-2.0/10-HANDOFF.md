@@ -7,21 +7,21 @@
 | Campo | Valor |
 |---|---|
 | **Estado** | PRODUCTION ACTIVE — TRACKING VALIDATION |
-| **Versión actual** | v8.98 |
-| **Commit producción** | `9033cd7` — AX-MOBILE-001 |
-| **Build producción** | 2026-08-11 22:07 UTC |
+| **Versión actual** | v8.99 |
+| **Commit producción** | `d55b8e1` — AX-RISK-001 |
+| **Build producción** | 2026-08-11 22:44 UTC |
 | **Core** | Frozen |
 | **Backtest** | BT-001 → BT-011 COMPLETED |
 | **Producción** | Running (Railway), `/version` y `/status` OK |
 | **Universo** | 10 activos: SPY, AAPL, BA, GLD, NVDA, AMZN, GOOG, META, MU, SPCX |
-| **Último sprint** | AX-MOBILE-001 — acceso móvil seguro a Derby |
+| **Último sprint** | AX-RISK-001 — telemetría de salidas sombra |
 | **Alert Lifecycle** | 191 expedientes: 26 ACTIVE, 87 CLOSED, 78 CANCELLED |
 | **Portfolio observado** | 25 posiciones abiertas: todas vinculadas a alerta e ID Tradier; 6 registros anulados/excluidos de métricas |
 | **AX-TUNE-001A** | COMPLETED — reporte diario de señales (`tools/daily_signal_review.py`) |
 | **AX-TUNE-001B** | COMPLETED — automated daily debrief (`axis_debrief.html`, `/daily_debrief/*`, Telegram 16:10) |
 | **AX-TUNE-002A** | COMPLETED — root cause engine v1: anomalías estructuradas (CONFLICTO_DIRECCION, MULTIPLES_ESTRATEGIAS, SIMBOLO_SOBREACTIVO, ESTRATEGIA_DOMINANTE, SEÑAL_TARDIA) con prioridad ALTA/MEDIA/BAJA y accion_recomendada. Telegram filtra solo ALTA+MEDIA. |
 | **AX-STATS-001** | COMPLETED — cohorte 1VR trazable validada; sin cambios de estrategia autorizados por la muestra |
-| **Última verificación** | 2026-08-11 18:07 EDT — v8.98, 5 hilos vivos, Railway y webhook Telegram OK, 25 posiciones abiertas |
+| **Última verificación** | 2026-08-11 18:44 EDT — v8.99, 5 hilos vivos, Railway OK, 25 posiciones abiertas intactas |
 
 ### Seguridad del plano de control — AX-SEC-001
 
@@ -61,6 +61,17 @@
 - La muestra tiene solo 12 fechas de cierre y 4–11 operaciones por activo; es
   suficiente para hipótesis y monitoreo, no para alterar parámetros 1VR ni
   hacer decisiones por activo. BA y GLD son señales de observación, no cambios.
+
+### Riesgo de salida — AX-RISK-001
+
+- Evidencia al corte: 16 de 25 posiciones abiertas estaban por debajo de −50%
+  y 11 habían alcanzado MAE ≤ −80%; 69 cierres históricos terminaron ≤ −80%.
+  No existe todavía histórico intradía completo de MFE/MAE para simular un
+  stop retrospectivo de forma válida.
+- v8.99 registra en modo sombra el primer cruce hipotético de −25/−50/−75/−90%
+  y los drawdowns de −25/−50% desde un MFE de al menos +25%. No vende, no
+  modifica GTC, no manda Telegram adicional y no altera estrategias ni
+  posiciones. Esta evidencia decidirá una política futura, no la presupone.
 
 ### Estado de reconciliación — 2026-08-08
 
@@ -108,17 +119,17 @@
 | **AX-FIX-EXEC-001** | Prevent positions when Tradier execution fails | COMPLETED — v8.97, reconciliación verificada |
 | **AX-STATS-001** | Validate 1VR Lifecycle Statistics | COMPLETED — 2026-08-11 |
 | **AX-MOBILE-001** | Secure mobile Derby access | COMPLETED — v8.98, Telegram pairing verified locally and Railway healthy |
+| **AX-RISK-001** | Shadow exit-risk telemetry | COMPLETED — v8.99; observación sin stops activos |
 | **AX-TUNE-002** | Evidence-based Strategy Improvements | RESEARCH ONLY — acumular 30–40 sesiones y ≥20 cierres por activo antes de cambios |
 | **AX-ASSET-002** | Add TSLA to Monitoring Universe | PENDING — include in next approved update |
 | **AX-BT-012** | Historical Channel Reconstruction | FUTURE |
 
 ### Immediate Objective
 
-AX-MOBILE-001 está completado: Derby puede abrirse desde celular sin copiar el
-token administrativo, mediante emparejamiento con Telegram privado y una
-sesión revocable. AX-FIX-EXEC-001 y AX-STATS-001 permanecen validados; la
-próxima decisión estratégica sigue siendo acumular 30–40 sesiones y ≥20
-cierres por activo para AX-TUNE-002. Strategy rules remain frozen.
+AX-RISK-001 está recopilando evidencia de stops y trailing en modo sombra, sin
+intervenir órdenes. AX-MOBILE-001, AX-FIX-EXEC-001 y AX-STATS-001 permanecen
+validados; la próxima decisión estratégica sigue siendo acumular 30–40
+sesiones y ≥20 cierres por activo para AX-TUNE-002. Strategy rules remain frozen.
 
 Latest report:
 [`reconciliations/2026-08-08-AX-TRACK-AUDIT-003.md`](reconciliations/2026-08-08-AX-TRACK-AUDIT-003.md)
@@ -241,8 +252,8 @@ Run: 2026-05-04 a 2026-06-30.
 
 | ID | Prioridad | Descripción |
 |---|---|---|
-| R1 | P1 CRÍTICO | Sin stop-loss automático — posición puede caer indefinidamente |
-| R3 | P1 | GTC fijo a 2x sin trailing stop |
+| R1 | P1 EN MEDICIÓN | Sin stop-loss automático; AX-RISK-001 mide cruces sombra antes de decidir una política |
+| R3 | P1 EN MEDICIÓN | GTC fijo a 2x sin trailing activo; AX-RISK-001 mide drawdowns desde MFE |
 | R4 | RESOLVED | V7 provisional determinística y reintento seguro implementados en v8.87/v8.88 |
 | R5 | P1 | 26 posiciones abiertas simultáneamente; no existe evidencia en este handoff de un límite operativo aplicado |
 | R6 | P2 | Crecimiento continuo de `axis_portfolio.json` por snapshots cada cinco minutos; ~2.5 MB al 2026-07-25 |
