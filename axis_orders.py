@@ -37,6 +37,13 @@ def guardar_ordenes(ordenes_pendientes):
                 "message_id":     d["message_id"],
                 "chat_id":        d["chat_id"],
                 "texto_original": d.get("texto_original", ""),
+                "estado_ejecucion": d.get("estado_ejecucion", "PENDING"),
+                "intentos_ejecucion": d.get("intentos_ejecucion", 0),
+                "ts_ejecucion": d.get("ts_ejecucion"),
+                "ultimo_error_ejecucion": d.get("ultimo_error_ejecucion"),
+                "decision_ejecucion": d.get("decision_ejecucion"),
+                "contratos_ejecucion": d.get("contratos_ejecucion"),
+                "ts_revision_broker": d.get("ts_revision_broker"),
             }
         with open(ORDENES_FILE, "w") as f:
             json.dump(data, f, indent=2)
@@ -71,6 +78,13 @@ def cargar_ordenes(ordenes_pendientes):
                     "message_id":     d["message_id"],
                     "chat_id":        d["chat_id"],
                     "texto_original": d.get("texto_original", ""),
+                    "estado_ejecucion": d.get("estado_ejecucion", "PENDING"),
+                    "intentos_ejecucion": d.get("intentos_ejecucion", 0),
+                    "ts_ejecucion": d.get("ts_ejecucion"),
+                    "ultimo_error_ejecucion": d.get("ultimo_error_ejecucion"),
+                    "decision_ejecucion": d.get("decision_ejecucion"),
+                    "contratos_ejecucion": d.get("contratos_ejecucion"),
+                    "ts_revision_broker": d.get("ts_revision_broker"),
                 }
                 recuperadas += 1
             except Exception as e:

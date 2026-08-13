@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v8.99
+AXIS Breakout Sentinel v9.00
 Estrategias: 1VR | 1VR+ | RPG | GNA | GBA | RCB/CNF
 Multi-activo: SPY, AAPL, BA, GLD, NVDA, AMZN, GOOG, META, MU, SPCX
 v8.43: Portfolio fix — ejecutar_orden_tradier en webhook exec/reto | Panic Button al bid |
@@ -50,6 +50,7 @@ v8.96: AX-SEC-001: control administrativo autenticado, webhook Telegram validado
 v8.97: AX-FIX-EXEC-001: una posición solo se registra tras confirmación de compra de Tradier; huérfanas sin confirmación se anulan y excluyen de métricas.
 v8.98: AX-MOBILE-001: Derby móvil se empareja por Telegram privado con sesión HttpOnly; el token administrativo nunca se comparte.
 v8.99: AX-RISK-001: telemetría de salidas sombra registra stops y drawdowns hipotéticos; no cierra ni altera posiciones.
+v9.00: AX-FIX-FLOW-001: ejecución Tradier ambigua queda en revisión segura; no hay reintento automático ni doble envío Derby.
 """
 
 import os
@@ -188,8 +189,12 @@ def loop_limpiar_ordenes():
                 datos = ordenes_pendientes.pop(oid, None)
                 if not datos:
                     continue
-                actualizar_alerta(datos.get("alert_id"), "CANCELLED", "ORDER_EXPIRED",
-                                  decision="EXPIRED")
+                en_revision = datos.get("estado_ejecucion") == "REVIEW_REQUIRED"
+                actualizar_alerta(
+                    datos.get("alert_id"), "CANCELLED",
+                    "TRADIER_REVIEW_EXPIRED" if en_revision else "ORDER_EXPIRED",
+                    decision="REVIEW_EXPIRED" if en_revision else "EXPIRED",
+                )
                 guardar_ordenes()
                 # Editar mensaje original en Telegram
                 try:
@@ -199,7 +204,12 @@ def loop_limpiar_ordenes():
                         json={
                             "chat_id":    datos["chat_id"],
                             "message_id": datos["message_id"],
-                            "text":       f"{texto_original}\n\n━━━━━━━━━━━━━━━━━━\n⏰ <b>Orden expirada</b> — no se ejecutó (>{ORDEN_TIMEOUT_MIN} min sin respuesta)",
+                            "text":       (
+                                f"{texto_original}\n\n━━━━━━━━━━━━━━━━━━\n"
+                                "⚠️ <b>Revisión Tradier vencida</b> — no se reintentó la compra."
+                                if en_revision else
+                                f"{texto_original}\n\n━━━━━━━━━━━━━━━━━━\n⏰ <b>Orden expirada</b> — no se ejecutó (>{ORDEN_TIMEOUT_MIN} min sin respuesta)"
+                            ),
                             "parse_mode": "HTML",
                         },
                         timeout=5
@@ -211,7 +221,7 @@ def loop_limpiar_ordenes():
             print(f"Error loop_limpiar_ordenes: {e}")
 
 # ── VERSIÓN ──────────────────────────────────────────────────────────────────
-AXIS_VERSION = "8.99"
+AXIS_VERSION = "9.00"
 _BUILD_DATE  = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
 
 def _git_commit_short():
@@ -721,6 +731,7 @@ from axis_tradier import (
     cancelar_orden_tradier,
     get_bid_opcion_tradier,
     vender_opcion_tradier,
+    tiene_posicion_opcion_tradier,
 )
 
 def cerrar_posicion(pos_id, precio_cierre, motivo="panic"):
@@ -1917,7 +1928,7 @@ from axis_tradier import (
 # ═══════════════════════════════════════════════════════════
 # TELEGRAM — ENVIAR MENSAJE CON BOTONES
 # ═══════════════════════════════════════════════════════════
-def enviar_telegram_botones(mensaje, orden_id):
+def botones_orden_actuales(orden_id):
     global _portfolio
     if _portfolio is None:
         cargar_portfolio()
@@ -1935,13 +1946,18 @@ def enviar_telegram_botones(mensaje, orden_id):
                 caballo_disponible = c["id"]
                 caballo_nombre = c["nombre"]
                 break
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     botones = [
         {"text": "✅ x1",     "callback_data": f"exec_c:{orden_id}:1"},
         {"text": "📦 x2-10", "callback_data": f"exec_multi:{orden_id}"},
     ]
     if derby_activo and caballo_disponible:
         botones.insert(2, {"text": "🏇 DERBY", "callback_data": f"reto:{orden_id}:{caballo_disponible}"})
+    return botones
+
+
+def enviar_telegram_botones(mensaje, orden_id):
+    botones = botones_orden_actuales(orden_id)
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     payload = {
         "chat_id":    TELEGRAM_CHAT_ID,
         "text":       mensaje,
@@ -2839,10 +2855,6 @@ def registrar_ejecucion_confirmada(resultado, opcion, estrategia, alert_id, deci
                                    contratos=1, es_reto=False, carril_id=None):
     """Único punto de alta: solo después de que Tradier confirmó la compra."""
     if not resultado.get("ok"):
-        actualizar_alerta(
-            alert_id, "CANCELLED", "TRADIER_EXECUTION_FAILED", decision=decision,
-            motivo_cancelacion=resultado.get("error", "Tradier no confirmó compra"),
-        )
         return None
     venta_confirmada = bool(resultado.get("venta_ok", resultado.get("venta_id")))
     pos = registrar_posicion(
@@ -2858,6 +2870,79 @@ def registrar_ejecucion_confirmada(resultado, opcion, estrategia, alert_id, deci
             motivo_gtc=resultado.get("venta_error", "Tradier no confirmó GTC de salida"),
         )
     return pos
+
+
+def iniciar_ejecucion_orden(orden_id, decision, contratos=1):
+    """Bloquea un único intento persistente antes de hablar con Tradier."""
+    datos = ordenes_pendientes.get(orden_id)
+    if not datos:
+        return None, "MISSING"
+    estado = datos.get("estado_ejecucion", "PENDING")
+    if estado != "PENDING":
+        return None, estado
+    datos.update({
+        "estado_ejecucion": "EXECUTING",
+        "intentos_ejecucion": int(datos.get("intentos_ejecucion", 0) or 0) + 1,
+        "ts_ejecucion": datetime.now(EST).isoformat(),
+        "decision_ejecucion": decision,
+        "contratos_ejecucion": contratos,
+    })
+    guardar_ordenes()
+    return datos, None
+
+
+def finalizar_ejecucion_orden(orden_id):
+    ordenes_pendientes.pop(orden_id, None)
+    guardar_ordenes()
+
+
+def marcar_ejecucion_fallida(orden_id, datos, resultado, decision):
+    """Separa un rechazo definitivo de una respuesta broker ambigua."""
+    error = resultado.get("error", "Tradier no confirmó compra")
+    if resultado.get("ambiguous"):
+        datos.update({
+            "estado_ejecucion": "REVIEW_REQUIRED",
+            "ultimo_error_ejecucion": error,
+            "decision_ejecucion": decision,
+        })
+        guardar_ordenes()
+        actualizar_alerta(
+            datos.get("alert_id"), "NOTIFIED", "TRADIER_EXECUTION_REVIEW",
+            decision=decision, motivo_ejecucion_no_confirmada=error,
+        )
+        return "REVIEW_REQUIRED"
+    finalizar_ejecucion_orden(orden_id)
+    actualizar_alerta(
+        datos.get("alert_id"), "CANCELLED", "TRADIER_EXECUTION_FAILED",
+        decision=decision, motivo_cancelacion=error,
+    )
+    return "FAILED"
+
+
+def revisar_ejecucion_orden(orden_id):
+    """Consulta la posición broker antes de permitir un reintento manual."""
+    datos = ordenes_pendientes.get(orden_id)
+    if not datos:
+        return "MISSING", None
+    if datos.get("estado_ejecucion") != "REVIEW_REQUIRED":
+        return datos.get("estado_ejecucion", "PENDING"), datos
+    encontrada = tiene_posicion_opcion_tradier(datos.get("opcion", {}).get("symbol"))
+    datos["ts_revision_broker"] = datetime.now(EST).isoformat()
+    if encontrada is True:
+        datos["estado_ejecucion"] = "BROKER_POSITION_FOUND"
+        guardar_ordenes()
+        actualizar_alerta(
+            datos.get("alert_id"), "NOTIFIED", "TRADIER_BROKER_POSITION_FOUND",
+            motivo_ejecucion_no_confirmada=datos.get("ultimo_error_ejecucion"),
+        )
+        return "BROKER_POSITION_FOUND", datos
+    if encontrada is False:
+        datos["estado_ejecucion"] = "PENDING"
+        guardar_ordenes()
+        actualizar_alerta(datos.get("alert_id"), "NOTIFIED", "TRADIER_REVIEW_CLEAR")
+        return "REVIEW_CLEAR", datos
+    guardar_ordenes()
+    return "REVIEW_UNAVAILABLE", datos
 
 
 @app.route("/telegram_webhook", methods=["POST"])
@@ -2899,10 +2984,20 @@ def telegram_webhook():
                           json={"chat_id": chat_id, "message_id": message_id,
                                 "text": f"{texto_original}\n\n{recibo}", "parse_mode": "HTML"}, timeout=5)
 
+        def editar_botones(botones):
+            requests.post(
+                f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/editMessageReplyMarkup",
+                json={"chat_id": chat_id, "message_id": message_id,
+                      "reply_markup": {"inline_keyboard": botones}},
+                timeout=5,
+            )
+
         if accion == "exec_multi":
             # Mostrar menu de contratos 2-10
-            if orden_id not in ordenes_pendientes:
-                editar_mensaje("⚠️ <b>Orden expirada o ya procesada.</b>")
+            datos_menu = ordenes_pendientes.get(orden_id)
+            estado_menu = datos_menu.get("estado_ejecucion", "PENDING") if datos_menu else "MISSING"
+            if estado_menu != "PENDING":
+                editar_mensaje("⚠️ <b>Orden no disponible para otro envío.</b> Revisa su estado actual.")
                 return jsonify({"ok": True}), 200
             fila1 = [{"text": str(i), "callback_data": f"exec_c:{orden_id}:{i}"} for i in range(2, 7)]
             fila2 = [{"text": str(i), "callback_data": f"exec_c:{orden_id}:{i}"} for i in range(7, 11)]
@@ -2916,11 +3011,11 @@ def telegram_webhook():
         elif accion == "exec_c":
             # Ejecutar con cantidad elegida
             contratos = int(partes[2]) if len(partes) >= 3 else 1
-            datos = ordenes_pendientes.pop(orden_id, None)
-            guardar_ordenes()
+            datos, estado_orden = iniciar_ejecucion_orden(orden_id, "EXECUTE", contratos)
             if not datos:
-                editar_mensaje("⚠️ <b>Orden expirada o ya procesada.</b>")
+                editar_mensaje("⚠️ <b>Orden no disponible.</b> Ya fue expirada, está en curso o requiere revisión Tradier.")
                 return jsonify({"ok": True}), 200
+            editar_botones([])
             opcion     = datos["opcion"]
             estrategia = datos.get("estrategia", "AXIS")
             alert_id   = datos.get("alert_id")
@@ -2930,12 +3025,20 @@ def telegram_webhook():
                 resultado_tradier, opcion, estrategia, alert_id, "EXECUTE", contratos=contratos,
             )
             if not pos:
-                estado_tradier = f"⚠️ Compra no confirmada: {resultado_tradier.get('error', '')}"
-                encabezado = "⚠️ <b>NO EJECUTADA</b> — no registrada en Portfolio"
+                resultado_flujo = marcar_ejecucion_fallida(orden_id, datos, resultado_tradier, "EXECUTE")
+                if resultado_flujo == "REVIEW_REQUIRED":
+                    estado_tradier = "⚠️ Compra no confirmada. Revisa Tradier antes de reintentar manualmente."
+                    encabezado = "⚠️ <b>EJECUCIÓN EN REVISIÓN</b> — sin alta en Portfolio"
+                    editar_botones([[{"text": "🔎 REVISAR TRADIER", "callback_data": f"review:{orden_id}"}]])
+                else:
+                    estado_tradier = f"⚠️ Compra rechazada: {resultado_tradier.get('error', '')}"
+                    encabezado = "⚠️ <b>NO EJECUTADA</b> — no registrada en Portfolio"
             elif resultado_tradier.get("venta_ok"):
+                finalizar_ejecucion_orden(orden_id)
                 estado_tradier = "✅ Compra y GTC confirmados por Tradier"
                 encabezado = f"✅ <b>EJECUTADA</b> — {contratos} contrato{'s' if contratos > 1 else ''}"
             else:
+                finalizar_ejecucion_orden(orden_id)
                 estado_tradier = f"⚠️ Compra confirmada; GTC no confirmado: {resultado_tradier.get('venta_error', '')}"
                 encabezado = "⚠️ <b>COMPRA CONFIRMADA</b> — GTC pendiente"
             agregar_recibo(
@@ -2948,23 +3051,31 @@ def telegram_webhook():
             )
 
         elif accion == "exec":
-            datos = ordenes_pendientes.pop(orden_id, None)
-            guardar_ordenes()
+            datos, estado_orden = iniciar_ejecucion_orden(orden_id, "EXECUTE", 1)
             if not datos:
-                editar_mensaje("⚠️ <b>Orden expirada o ya procesada.</b>")
+                editar_mensaje("⚠️ <b>Orden no disponible.</b> Ya fue expirada, está en curso o requiere revisión Tradier.")
                 return jsonify({"ok": True}), 200
+            editar_botones([])
             opcion     = datos["opcion"]
             estrategia = datos.get("estrategia", "AXIS")
             alert_id   = datos.get("alert_id")
             resultado_tradier = ejecutar_orden_tradier(opcion)
             pos = registrar_ejecucion_confirmada(resultado_tradier, opcion, estrategia, alert_id, "EXECUTE")
             if not pos:
-                estado_tradier = f"⚠️ Compra no confirmada: {resultado_tradier.get('error', '')}"
-                encabezado = "⚠️ <b>NO EJECUTADA</b> — no registrada en Portfolio"
+                resultado_flujo = marcar_ejecucion_fallida(orden_id, datos, resultado_tradier, "EXECUTE")
+                if resultado_flujo == "REVIEW_REQUIRED":
+                    estado_tradier = "⚠️ Compra no confirmada. Revisa Tradier antes de reintentar manualmente."
+                    encabezado = "⚠️ <b>EJECUCIÓN EN REVISIÓN</b> — sin alta en Portfolio"
+                    editar_botones([[{"text": "🔎 REVISAR TRADIER", "callback_data": f"review:{orden_id}"}]])
+                else:
+                    estado_tradier = f"⚠️ Compra rechazada: {resultado_tradier.get('error', '')}"
+                    encabezado = "⚠️ <b>NO EJECUTADA</b> — no registrada en Portfolio"
             elif resultado_tradier.get("venta_ok"):
+                finalizar_ejecucion_orden(orden_id)
                 estado_tradier = "✅ Compra y GTC confirmados por Tradier"
                 encabezado = "✅ <b>EJECUTADA</b> — registrada en Portfolio"
             else:
+                finalizar_ejecucion_orden(orden_id)
                 estado_tradier = f"⚠️ Compra confirmada; GTC no confirmado: {resultado_tradier.get('venta_error', '')}"
                 encabezado = "⚠️ <b>COMPRA CONFIRMADA</b> — GTC pendiente"
             agregar_recibo(
@@ -2977,11 +3088,11 @@ def telegram_webhook():
 
         elif accion == "reto":
             caballo_id = carril_id_reto or 1
-            datos = ordenes_pendientes.pop(orden_id, None)
-            guardar_ordenes()
+            datos, estado_orden = iniciar_ejecucion_orden(orden_id, "DERBY", 1)
             if not datos:
-                editar_mensaje("⚠️ <b>Orden expirada o ya procesada.</b>")
+                editar_mensaje("⚠️ <b>Orden no disponible.</b> Ya fue expirada, está en curso o requiere revisión Tradier.")
                 return jsonify({"ok": True}), 200
+            editar_botones([])
             opcion     = datos["opcion"]
             estrategia = datos.get("estrategia", "AXIS")
             alert_id   = datos.get("alert_id")
@@ -2995,6 +3106,7 @@ def telegram_webhook():
                         nuevo_id = c["id"]
                         break
                 if not nuevo_id:
+                    finalizar_ejecucion_orden(orden_id)
                     actualizar_alerta(alert_id, "CANCELLED", "NO_DERBY_LANE_AVAILABLE",
                                       decision="DERBY")
                     agregar_recibo(f"━━━━━━━━━━━━━━━━━━\n⚠️ <b>Todos los caballos ocupados o eliminados</b>")
@@ -3009,6 +3121,7 @@ def telegram_webhook():
                         nuevo_id = c["id"]
                         break
                 if not nuevo_id:
+                    finalizar_ejecucion_orden(orden_id)
                     actualizar_alerta(alert_id, "CANCELLED", "NO_DERBY_LANE_AVAILABLE",
                                       decision="DERBY")
                     agregar_recibo(f"━━━━━━━━━━━━━━━━━━\n⚠️ <b>Todos los caballos en carrera</b>")
@@ -3034,6 +3147,7 @@ def telegram_webhook():
                 if costo_1cont > presupuesto:
                     opcion_reto = buscar_opcion_reto(opcion, presupuesto)
                     if not opcion_reto:
+                        finalizar_ejecucion_orden(orden_id)
                         actualizar_alerta(alert_id, "CANCELLED", "DERBY_CAPITAL_INSUFFICIENT",
                                           decision="DERBY")
                         rec_claude = recomendar_opcion_claude(opcion, caballo["capital"], presupuesto)
@@ -3056,9 +3170,16 @@ def telegram_webhook():
             if not pos:
                 caballo.update(estado_caballo_previo)
                 guardar_portfolio()
-                estado_tradier = f"⚠️ Compra no confirmada: {resultado_tradier.get('error', '')}"
-                encabezado = "⚠️ <b>NO EJECUTADA</b> — carril sin cambios"
+                resultado_flujo = marcar_ejecucion_fallida(orden_id, datos, resultado_tradier, "DERBY")
+                if resultado_flujo == "REVIEW_REQUIRED":
+                    estado_tradier = "⚠️ Compra no confirmada. Revisa Tradier antes de reintentar manualmente."
+                    encabezado = "⚠️ <b>EJECUCIÓN EN REVISIÓN</b> — carril sin cambios"
+                    editar_botones([[{"text": "🔎 REVISAR TRADIER", "callback_data": f"review:{orden_id}"}]])
+                else:
+                    estado_tradier = f"⚠️ Compra rechazada: {resultado_tradier.get('error', '')}"
+                    encabezado = "⚠️ <b>NO EJECUTADA</b> — carril sin cambios"
             else:
+                finalizar_ejecucion_orden(orden_id)
                 siguiente = next((c["id"] for c in derby["caballos"]
                                   if not c.get("eliminado") and c["posicion"] is None and c["id"] != caballo_id), None)
                 derby["turno_actual"] = siguiente if siguiente else caballo_id
@@ -3080,13 +3201,34 @@ def telegram_webhook():
                 f"🏦 <b>Tradier:</b> {estado_tradier}"
             )
 
+        elif accion == "review":
+            resultado_revision, datos = revisar_ejecucion_orden(orden_id)
+            if resultado_revision == "REVIEW_CLEAR":
+                editar_botones([botones_orden_actuales(orden_id)])
+                editar_mensaje(
+                    f"{datos.get('texto_original', '')}\n\n━━━━━━━━━━━━━━━━━━\n"
+                    "✅ <b>Tradier sin posición encontrada</b> — puedes reintentar manualmente una vez."
+                )
+            elif resultado_revision == "BROKER_POSITION_FOUND":
+                editar_botones([])
+                editar_mensaje(
+                    f"{datos.get('texto_original', '')}\n\n━━━━━━━━━━━━━━━━━━\n"
+                    "⚠️ <b>Tradier muestra una posición</b> — bloqueado para evitar duplicado; requiere reconciliación."
+                )
+            elif resultado_revision == "REVIEW_UNAVAILABLE":
+                editar_mensaje("⚠️ <b>Tradier aún no responde.</b> No se reintentó la compra; vuelve a revisar más tarde.")
+            else:
+                editar_mensaje("⚠️ <b>Revisión no disponible.</b> La orden fue expirada o ya se resolvió.")
+
         elif accion == "skip":
-            datos = ordenes_pendientes.pop(orden_id, None)
-            guardar_ordenes()
-            if datos:
+            datos = ordenes_pendientes.get(orden_id)
+            if datos and datos.get("estado_ejecucion", "PENDING") == "PENDING":
+                finalizar_ejecucion_orden(orden_id)
                 actualizar_alerta(datos.get("alert_id"), "CANCELLED", "USER_SKIPPED",
                                   decision="SKIP")
-            agregar_recibo("━━━━━━━━━━━━━━━━━━\n❌ <b>Orden ignorada</b>")
+                agregar_recibo("━━━━━━━━━━━━━━━━━━\n❌ <b>Orden ignorada</b>")
+            else:
+                editar_mensaje("⚠️ <b>Orden no disponible para ignorar.</b> Está en curso o requiere revisión Tradier.")
 
     except Exception as e:
         print(f"Error webhook: {e}")

@@ -63,6 +63,25 @@ def get_bid_opcion_tradier(option_symbol):
         return None
 
 
+def tiene_posicion_opcion_tradier(option_symbol):
+    """Consulta de solo lectura para revisar una compra con respuesta ambigua."""
+    try:
+        r = requests.get(
+            f"{TRADIER_BASE}/accounts/{TRADIER_ACCOUNT}/positions",
+            headers=TRADIER_HEADERS,
+            timeout=10,
+        )
+        if r.status_code != 200:
+            return None
+        posiciones = r.json().get("positions", {}).get("position", [])
+        if isinstance(posiciones, dict):
+            posiciones = [posiciones]
+        return any(p.get("symbol") == option_symbol for p in posiciones)
+    except Exception as e:
+        print(f"Error revisando posición Tradier {option_symbol}: {e}")
+        return None
+
+
 def _detalle_error_tradier(response, etapa):
     """Mensaje seguro y accionable cuando Tradier no confirma una orden."""
     try:
@@ -224,7 +243,7 @@ def _ejecutar_orden_tradier(opcion, contratos):
         )
         orden_id, status, error = _orden_confirmada(r, "compra")
         if error:
-            return {"ok": False, "error": error}
+            return {"ok": False, "error": error, "ambiguous": r.status_code >= 500}
 
         precio_venta = round(opcion["ask"] * 2, 2)
         payload_venta = {
@@ -263,7 +282,7 @@ def _ejecutar_orden_tradier(opcion, contratos):
         return resultado
     except Exception as e:
         print(f"Error ejecutar orden Tradier: {e}")
-        return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": str(e), "ambiguous": True}
 
 
 def ejecutar_orden_tradier(opcion):
