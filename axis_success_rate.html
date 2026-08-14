@@ -133,21 +133,18 @@
 <script>
 const RAILWAY = 'https://web-production-bf9d0.up.railway.app';
 
-function adminToken() {
-  let token = sessionStorage.getItem('axis_admin_token');
-  if (!token) {
-    token = window.prompt('Token administrativo de AXIS');
-    if (token) sessionStorage.setItem('axis_admin_token', token.trim());
-  }
-  return token;
-}
-
 async function adminFetch(url, options = {}) {
-  const token = adminToken();
-  if (!token) throw new Error('Token administrativo requerido');
   const headers = new Headers(options.headers || {});
-  headers.set('X-AXIS-Admin-Token', token);
-  return fetch(url, { ...options, headers });
+  let token = sessionStorage.getItem('axis_admin_token');
+  if (token) headers.set('X-AXIS-Admin-Token', token);
+  let response = await fetch(url, { ...options, headers, credentials: 'same-origin' });
+  if (response.status !== 401) return response;
+  if (token) sessionStorage.removeItem('axis_admin_token');
+  token = window.prompt('Acceso requerido. En este navegador abre /mobile para emparejarlo; el token queda como respaldo.');
+  if (!token) return response;
+  sessionStorage.setItem('axis_admin_token', token.trim());
+  headers.set('X-AXIS-Admin-Token', token.trim());
+  return fetch(url, { ...options, headers, credentials: 'same-origin' });
 }
 
 function stars(avg) {

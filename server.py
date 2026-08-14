@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v9.00
+AXIS Breakout Sentinel v9.01
 Estrategias: 1VR | 1VR+ | RPG | GNA | GBA | RCB/CNF
 Multi-activo: SPY, AAPL, BA, GLD, NVDA, AMZN, GOOG, META, MU, SPCX
 v8.43: Portfolio fix — ejecutar_orden_tradier en webhook exec/reto | Panic Button al bid |
@@ -51,6 +51,7 @@ v8.97: AX-FIX-EXEC-001: una posición solo se registra tras confirmación de com
 v8.98: AX-MOBILE-001: Derby móvil se empareja por Telegram privado con sesión HttpOnly; el token administrativo nunca se comparte.
 v8.99: AX-RISK-001: telemetría de salidas sombra registra stops y drawdowns hipotéticos; no cierra ni altera posiciones.
 v9.00: AX-FIX-FLOW-001: ejecución Tradier ambigua queda en revisión segura; no hay reintento automático ni doble envío Derby.
+v9.01: AX-UX-ACCESS-001: dashboards internos reconocen sesión móvil/desktop emparejada antes de solicitar token.
 """
 
 import os
@@ -221,7 +222,7 @@ def loop_limpiar_ordenes():
             print(f"Error loop_limpiar_ordenes: {e}")
 
 # ── VERSIÓN ──────────────────────────────────────────────────────────────────
-AXIS_VERSION = "9.00"
+AXIS_VERSION = "9.01"
 _BUILD_DATE  = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
 
 def _git_commit_short():
