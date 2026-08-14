@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v9.01
+AXIS Breakout Sentinel v9.02
 Estrategias: 1VR | 1VR+ | RPG | GNA | GBA | RCB/CNF
 Multi-activo: SPY, AAPL, BA, GLD, NVDA, AMZN, GOOG, META, MU, SPCX
 v8.43: Portfolio fix — ejecutar_orden_tradier en webhook exec/reto | Panic Button al bid |
@@ -52,6 +52,7 @@ v8.98: AX-MOBILE-001: Derby móvil se empareja por Telegram privado con sesión 
 v8.99: AX-RISK-001: telemetría de salidas sombra registra stops y drawdowns hipotéticos; no cierra ni altera posiciones.
 v9.00: AX-FIX-FLOW-001: ejecución Tradier ambigua queda en revisión segura; no hay reintento automático ni doble envío Derby.
 v9.01: AX-UX-ACCESS-001: dashboards internos reconocen sesión móvil/desktop emparejada antes de solicitar token.
+v9.02: AX-DERBY-001: Derby muestra premio actual, P&L y una sola barra de vida hasta vencimiento.
 """
 
 import os
@@ -222,7 +223,7 @@ def loop_limpiar_ordenes():
             print(f"Error loop_limpiar_ordenes: {e}")
 
 # ── VERSIÓN ──────────────────────────────────────────────────────────────────
-AXIS_VERSION = "9.01"
+AXIS_VERSION = "9.02"
 _BUILD_DATE  = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
 
 def _git_commit_short():
@@ -2684,16 +2685,34 @@ def derby_status():
     if _portfolio is None:
         cargar_portfolio()
     derby = _portfolio["derby"]
+    posiciones_abiertas = {
+        p.get("id"): p for p in _portfolio.get("posiciones", [])
+        if p.get("estado") == "abierta"
+    }
     caballos_info = []
     for c in derby["caballos"]:
+        posicion = posiciones_abiertas.get(c.get("posicion"))
+        carrera = None
+        premio_actual = c["capital"]
+        if posicion:
+            pl_usd = posicion.get("pl_usd_actual", 0) or 0
+            premio_actual = round(c["capital"] + pl_usd, 2)
+            carrera = {
+                "simbolo": posicion.get("simbolo"),
+                "tipo": posicion.get("tipo"),
+                "expiration": posicion.get("expiration"),
+                "entrada": posicion.get("ts_entrada"),
+                "pl_pct": posicion.get("pl_pct_actual"),
+            }
         caballos_info.append({
             "id":       c["id"],
             "nombre":   c["nombre"],
             "capital":  c["capital"],
+            "capital_inicial": c.get("capital_inicial", 0),
+            "premio_actual": premio_actual,
             "ronda":    c["ronda"],
-            "posicion": c["posicion"],
+            "carrera": carrera,
             "eliminado": c.get("eliminado", False),
-            "historial": c.get("historial", []),
         })
     return jsonify({
         "nombre":           derby["nombre"],

@@ -18,27 +18,29 @@ body { background: #0a0a0f; color: #e8e8f0; font-family: 'Space Grotesk', sans-s
 .pill.activo { border-color: #c0392b; color: #e74c3c; }
 .pill.inactivo { border-color: #666688; color: #666688; }
 .pill.ganador { border-color: #f1c40f; color: #f1c40f; }
-.caballos-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; max-width: 1100px; margin: 0 auto 32px; }
-.caballo-card { background: #111118; border: 2px solid #2a2a3a; border-radius: 20px; padding: 24px; transition: all 0.2s; position: relative; overflow: hidden; }
+.caballos-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; max-width: 980px; margin: 0 auto 32px; }
+.caballo-card { background: #111118; border: 2px solid #2a2a3a; border-radius: 20px; padding: 22px; transition: all 0.2s; position: relative; overflow: hidden; min-height: 252px; display: flex; flex-direction: column; }
 .caballo-card.activo { border-color: #c0392b; }
 .caballo-card.eliminado { border-color: #333; opacity: 0.5; }
 .caballo-card.ganador { border-color: #f1c40f; background: #1a1800; }
 .caballo-card.en-carrera { border-color: #e67e22; }
-.caballo-emoji { font-size: 48px; margin-bottom: 8px; display: block; }
+.caballo-emoji { font-size: 44px; margin-bottom: 6px; display: block; }
 .caballo-nombre { font-size: 22px; font-weight: 700; margin-bottom: 4px; }
-.caballo-estado { font-size: 11px; color: #666688; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 16px; }
-.caballo-capital { font-family: 'JetBrains Mono', monospace; }
-.capital-label { font-size: 11px; color: #666688; text-transform: uppercase; letter-spacing: 1px; }
-.capital-valor { font-size: 28px; font-weight: 700; color: #00e676; }
-.capital-valor.negativo { color: #e74c3c; }
-.capital-valor.cero { color: #666688; }
+.caballo-estado { font-size: 11px; color: #8c8ca3; text-transform: uppercase; letter-spacing: 1.5px; }
+.premio { font-family: 'JetBrains Mono', monospace; margin: 18px 0 10px; }
+.premio-label { display: block; color: #666688; font-size: 10px; letter-spacing: 1.2px; margin-bottom: 5px; }
+.premio-valor { font-size: 24px; font-weight: 700; color: #f1c40f; white-space: nowrap; }
+.premio-inicial { color: #8c8ca3; }
+.pl-valor { font-family: 'JetBrains Mono', monospace; font-size: 34px; line-height: 1; font-weight: 700; color: #00e676; margin-top: auto; }
+.pl-valor.negativo { color: #e74c3c; }
+.pl-valor.neutro { color: #666688; }
+.vida { margin-top: 20px; }
+.vida-meta { display: flex; justify-content: space-between; margin-bottom: 7px; color: #8c8ca3; font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 1.2px; }
+.vida-meta strong { color: #e8e8f0; font-size: 11px; }
+.vida-barra { height: 10px; background: #1a1a24; border-radius: 999px; overflow: hidden; }
+.vida-restante { height: 100%; min-width: 3px; border-radius: inherit; transition: width .8s ease; }
+.en-espera { color: #666688; font-family: 'JetBrains Mono', monospace; font-size: 12px; margin: auto 0; letter-spacing: 1px; }
 .ronda-badge { position: absolute; top: 16px; right: 16px; background: #1a1a24; border: 1px solid #2a2a3a; border-radius: 12px; padding: 4px 12px; font-size: 11px; font-family: 'JetBrains Mono', monospace; color: #666688; }
-.historial { margin-top: 16px; border-top: 1px solid #1a1a24; padding-top: 16px; }
-.historial-title { font-size: 11px; color: #666688; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }
-.historial-item { display: flex; justify-content: space-between; font-size: 12px; font-family: 'JetBrains Mono', monospace; padding: 3px 0; border-bottom: 1px solid #111; }
-.win { color: #00e676; }
-.loss { color: #e74c3c; }
-.posicion-badge { background: #1a1000; border: 1px solid #e67e22; border-radius: 8px; padding: 6px 10px; font-size: 11px; color: #e67e22; margin-top: 10px; font-family: 'JetBrains Mono', monospace; }
 .eliminado-banner { position: absolute; top: 0; left: 0; right: 0; bottom: 0; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.6); border-radius: 18px; font-size: 40px; }
 .ganador-banner { text-align: center; background: #1a1800; border: 2px solid #f1c40f; border-radius: 20px; padding: 32px; max-width: 600px; margin: 0 auto 32px; }
 .ganador-banner h2 { font-size: 28px; color: #f1c40f; margin-bottom: 8px; }
@@ -51,15 +53,9 @@ body { background: #0a0a0f; color: #e8e8f0; font-family: 'Space Grotesk', sans-s
 .btn-desactivar:hover { color: #e8e8f0; }
 .btn-home { background: #1a1a24; color: #4fc3f7; border: 1px solid #1a3a4a; }
 .btn-home:hover { background: #1a3a4a; }
-.track { max-width: 1100px; margin: 0 auto 32px; background: #111118; border: 1px solid #2a2a3a; border-radius: 20px; padding: 24px; }
-.track-title { font-size: 13px; color: #666688; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 16px; }
-.track-row { display: flex; align-items: center; gap: 16px; margin-bottom: 12px; }
-.track-nombre { width: 120px; font-size: 13px; font-weight: 600; }
-.track-bar-container { flex: 1; background: #1a1a24; border-radius: 8px; height: 24px; overflow: hidden; position: relative; }
-.track-bar { height: 100%; border-radius: 8px; transition: width 0.8s ease; min-width: 4px; }
-.track-capital { width: 100px; text-align: right; font-family: 'JetBrains Mono', monospace; font-size: 13px; }
 .loading { text-align: center; color: #666688; padding: 40px; font-family: 'JetBrains Mono', monospace; }
 .error { text-align: center; color: #e74c3c; padding: 20px; }
+@media (max-width: 600px) { body { padding: 16px; } .title { font-size: 29px; } .caballos-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; } .caballo-card { min-height: 238px; padding: 16px; border-radius: 16px; } .caballo-emoji { font-size: 36px; } .caballo-nombre { font-size: 18px; } .premio { margin-top: 15px; } .premio-valor { font-size: 17px; } .pl-valor { font-size: 27px; } .btn { padding: 10px 14px; font-size: 12px; } }
 </style>
 </head>
 <body>
@@ -85,17 +81,11 @@ body { background: #0a0a0f; color: #e8e8f0; font-family: 'Space Grotesk', sans-s
 
 <div id="ganadorBanner" style="display:none"></div>
 
-<div class="track" id="trackSection">
-  <div class="track-title">🏁 Posiciones en la pista</div>
-  <div id="trackRows"><div class="loading">Cargando...</div></div>
-</div>
-
 <div class="caballos-grid" id="caballosGrid">
   <div class="loading">Cargando caballos...</div>
 </div>
 
 <script>
-const COLORES = ['#e74c3c', '#3498db', '#2ecc71', '#f39c12'];
 const EMOJIS  = ['🏇', '🐴', '🎠', '🦄'];
 
 async function cargarDerby() {
@@ -123,7 +113,7 @@ function renderDerby(d) {
   }
 
   const vivos = d.caballos.filter(c => !c.eliminado);
-  const capitalTotal = vivos.reduce((s, c) => s + c.capital, 0);
+  const capitalTotal = vivos.reduce((s, c) => s + (c.premio_actual ?? c.capital), 0);
   document.getElementById('pillCapital').textContent = `Capital: $${capitalTotal.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
   document.getElementById('pillVivos').textContent = `Caballos vivos: ${vivos.length}`;
   const turnoActual = d.caballos.find(c => c.id === d.turno_actual);
@@ -147,67 +137,67 @@ function renderDerby(d) {
     banner.style.display = 'none';
   }
 
-  // Track (barras de progreso)
-  const maxCapital = Math.max(...d.caballos.map(c => c.capital), 1);
-  let trackHTML = '';
-  d.caballos.forEach((c, i) => {
-    const pct = Math.max((c.capital / maxCapital) * 100, c.capital > 0 ? 2 : 0);
-    const color = c.eliminado ? '#333' : COLORES[i];
-    trackHTML += `
-      <div class="track-row">
-        <div class="track-nombre">${c.eliminado ? '💀' : EMOJIS[i]} ${c.nombre}</div>
-        <div class="track-bar-container">
-          <div class="track-bar" style="width:${pct}%; background:${color}"></div>
-        </div>
-        <div class="track-capital" style="color:${c.eliminado ? '#333' : c.capital > 0 ? '#00e676' : '#666688'}">
-          $${c.capital.toFixed(2)}
-        </div>
-      </div>`;
-  });
-  document.getElementById('trackRows').innerHTML = trackHTML;
-
-  // Cards de caballos
+  // Una sola barra por caballo: vida de la opción hasta vencimiento.
   let cardsHTML = '';
   d.caballos.forEach((c, i) => {
-    const enCarrera = c.posicion !== null && !c.eliminado;
+    const enCarrera = Boolean(c.carrera) && !c.eliminado;
     let cardClass = 'caballo-card';
     if (c.nombre === d.ganador) cardClass += ' ganador';
     else if (c.eliminado) cardClass += ' eliminado';
     else if (enCarrera) cardClass += ' en-carrera';
     else if (d.activo) cardClass += ' activo';
 
-    let capitalClass = c.capital > 0 ? 'capital-valor' : c.capital < 0 ? 'capital-valor negativo' : 'capital-valor cero';
-    let historialHTML = '';
-    if (c.historial && c.historial.length > 0) {
-      historialHTML = `<div class="historial">
-        <div class="historial-title">Historial de carreras</div>`;
-      c.historial.slice(-5).reverse().forEach(h => {
-        const cls = h.pl_usd >= 0 ? 'win' : 'loss';
-        const signo = h.pl_usd >= 0 ? '+' : '';
-        historialHTML += `<div class="historial-item">
-          <span>Carrera #${h.ronda}</span>
-          <span class="${cls}">${signo}$${h.pl_usd.toFixed(2)} (${signo}${h.pl_pct.toFixed(1)}%)</span>
-        </div>`;
-      });
-      historialHTML += '</div>';
-    }
+    const premioInicial = Number(c.capital_inicial || 0);
+    const premioActual = Number(c.premio_actual ?? c.capital ?? 0);
+    const premioHTML = premioInicial > 0 ? `<div class="premio"><span class="premio-label">PREMIO</span><div class="premio-valor"><span class="premio-inicial">$${premioInicial.toFixed(0)}</span> → $${premioActual.toFixed(0)}</div></div>` : '';
+    const carreraHTML = enCarrera ? resumenCarrera(c.carrera) : '<div class="en-espera">EN ESPERA</div>';
 
     cardsHTML += `
       <div class="${cardClass}">
         <div class="ronda-badge">Carrera #${c.ronda}</div>
         <span class="caballo-emoji">${c.nombre === d.ganador ? '🏆' : c.eliminado ? '💀' : EMOJIS[i]}</span>
         <div class="caballo-nombre">${c.nombre}</div>
-        <div class="caballo-estado">${c.nombre === d.ganador ? '🏆 GANADOR' : c.eliminado ? '💀 Eliminado' : enCarrera ? '🏇 En carrera' : d.activo ? '✅ Disponible' : '⏸ En espera'}</div>
-        <div class="caballo-capital">
-          <div class="capital-label">Capital acumulado</div>
-          <div class="${capitalClass}">$${c.capital.toFixed(2)}</div>
-        </div>
-        ${enCarrera ? `<div class="posicion-badge">📋 Posición activa</div>` : ''}
-        ${historialHTML}
+        <div class="caballo-estado">${c.nombre === d.ganador ? 'GANADOR' : c.eliminado ? 'FUERA DE CARRERA' : enCarrera ? `${c.carrera.simbolo} · ${c.carrera.tipo}` : d.activo ? 'LISTO PARA CORRER' : 'EN ESPERA'}</div>
+        ${premioHTML}
+        ${carreraHTML}
         ${c.eliminado ? '<div class="eliminado-banner">💀</div>' : ''}
       </div>`;
   });
   document.getElementById('caballosGrid').innerHTML = cardsHTML;
+}
+
+function resumenCarrera(carrera) {
+  const pl = Number(carrera.pl_pct);
+  const plValido = Number.isFinite(pl);
+  const clase = !plValido ? 'neutro' : pl < 0 ? 'negativo' : '';
+  const texto = plValido ? `${pl >= 0 ? '+' : ''}${pl.toFixed(1)}%` : '—';
+  const vida = vidaRestante(carrera.entrada, carrera.expiration);
+  return `
+    <div class="pl-valor ${clase}">${texto}</div>
+    <div class="vida">
+      <div class="vida-meta"><span>VIDA</span><strong>${vida.etiqueta}</strong></div>
+      <div class="vida-barra"><div class="vida-restante" style="width:${vida.pct}%; background:${vida.color}"></div></div>
+    </div>`;
+}
+
+function fechaLocal(valor) {
+  const match = String(valor || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return match ? new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3])) : null;
+}
+
+function vidaRestante(entrada, vencimiento) {
+  const expira = fechaLocal(vencimiento);
+  const inicio = fechaLocal(entrada);
+  const hoy = new Date();
+  hoy.setHours(0, 0, 0, 0);
+  if (!expira || !inicio) return { etiqueta: '—', pct: 0, color: '#666688' };
+  const unDia = 24 * 60 * 60 * 1000;
+  const restante = Math.ceil((expira - hoy) / unDia);
+  const total = Math.max(1, Math.ceil((expira - inicio) / unDia));
+  if (restante < 0) return { etiqueta: 'FINALIZÓ', pct: 0, color: '#e74c3c' };
+  if (restante === 0) return { etiqueta: 'HOY', pct: 6, color: '#e74c3c' };
+  const color = restante <= 2 ? '#e74c3c' : restante <= 4 ? '#f39c12' : '#00e676';
+  return { etiqueta: `${restante} DÍAS`, pct: Math.max(6, Math.min(100, (restante / total) * 100)), color };
 }
 
 async function activarDerby() {
