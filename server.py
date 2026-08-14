@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v9.02
+AXIS Breakout Sentinel v9.03
 Estrategias: 1VR | 1VR+ | RPG | GNA | GBA | RCB/CNF
 Multi-activo: SPY, AAPL, BA, GLD, NVDA, AMZN, GOOG, META, MU, SPCX
 v8.43: Portfolio fix — ejecutar_orden_tradier en webhook exec/reto | Panic Button al bid |
@@ -53,6 +53,7 @@ v8.99: AX-RISK-001: telemetría de salidas sombra registra stops y drawdowns hip
 v9.00: AX-FIX-FLOW-001: ejecución Tradier ambigua queda en revisión segura; no hay reintento automático ni doble envío Derby.
 v9.01: AX-UX-ACCESS-001: dashboards internos reconocen sesión móvil/desktop emparejada antes de solicitar token.
 v9.02: AX-DERBY-001: Derby muestra premio actual, P&L y una sola barra de vida hasta vencimiento.
+v9.03: AX-DERBY-002: Derby muestra strike junto al contrato activo.
 """
 
 import os
@@ -223,7 +224,7 @@ def loop_limpiar_ordenes():
             print(f"Error loop_limpiar_ordenes: {e}")
 
 # ── VERSIÓN ──────────────────────────────────────────────────────────────────
-AXIS_VERSION = "9.02"
+AXIS_VERSION = "9.03"
 _BUILD_DATE  = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
 
 def _git_commit_short():
@@ -2700,6 +2701,7 @@ def derby_status():
             carrera = {
                 "simbolo": posicion.get("simbolo"),
                 "tipo": posicion.get("tipo"),
+                "strike": posicion.get("strike"),
                 "expiration": posicion.get("expiration"),
                 "entrada": posicion.get("ts_entrada"),
                 "pl_pct": posicion.get("pl_pct_actual"),

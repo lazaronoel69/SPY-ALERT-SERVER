@@ -157,13 +157,19 @@ function renderDerby(d) {
         <div class="ronda-badge">Carrera #${c.ronda}</div>
         <span class="caballo-emoji">${c.nombre === d.ganador ? '🏆' : c.eliminado ? '💀' : EMOJIS[i]}</span>
         <div class="caballo-nombre">${c.nombre}</div>
-        <div class="caballo-estado">${c.nombre === d.ganador ? 'GANADOR' : c.eliminado ? 'FUERA DE CARRERA' : enCarrera ? `${c.carrera.simbolo} · ${c.carrera.tipo}` : d.activo ? 'LISTO PARA CORRER' : 'EN ESPERA'}</div>
+        <div class="caballo-estado">${c.nombre === d.ganador ? 'GANADOR' : c.eliminado ? 'FUERA DE CARRERA' : enCarrera ? contratoCorto(c.carrera) : d.activo ? 'LISTO PARA CORRER' : 'EN ESPERA'}</div>
         ${premioHTML}
         ${carreraHTML}
         ${c.eliminado ? '<div class="eliminado-banner">💀</div>' : ''}
       </div>`;
   });
   document.getElementById('caballosGrid').innerHTML = cardsHTML;
+}
+
+function contratoCorto(carrera) {
+  const strike = Number(carrera.strike);
+  const strikeTexto = Number.isFinite(strike) ? ` · ${strike.toFixed(strike % 1 ? 1 : 0)}` : '';
+  return `${carrera.simbolo} · ${carrera.tipo}${strikeTexto}`;
 }
 
 function resumenCarrera(carrera) {
