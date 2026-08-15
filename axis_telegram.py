@@ -30,5 +30,7 @@ def enviar_telegram(mensaje):
     try:
         r = requests.post(url, json=payload, timeout=10)
         print(f"Telegram: {r.status_code} — {mensaje[:60]}")
+        return r.ok
     except Exception as e:
         print(f"Error Telegram: {e}")
+        return False

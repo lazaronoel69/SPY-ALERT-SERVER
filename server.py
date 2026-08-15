@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v9.04
+AXIS Breakout Sentinel v9.05
 Estrategias: 1VR | 1VR+ | RPG | GNA | GBA | RCB/CNF
 Multi-activo: SPY, AAPL, BA, GLD, NVDA, AMZN, GOOG, META, MU, SPCX
 v8.43: Portfolio fix — ejecutar_orden_tradier en webhook exec/reto | Panic Button al bid |
@@ -55,6 +55,7 @@ v9.01: AX-UX-ACCESS-001: dashboards internos reconocen sesión móvil/desktop em
 v9.02: AX-DERBY-001: Derby muestra premio actual, P&L y una sola barra de vida hasta vencimiento.
 v9.03: AX-DERBY-002: Derby muestra strike junto al contrato activo.
 v9.04: AX-CONFLICT-001: una tesis direccional por activo mientras haya posición abierta; refuerzos sin compra y contraseñales suprimidas.
+v9.05: AX-OPS-WATCH-001: reporte especial horario interno por Telegram; observa THESIS_LOCK y flujo, sin operar.
 """
 
 import os
@@ -225,7 +226,7 @@ def loop_limpiar_ordenes():
             print(f"Error loop_limpiar_ordenes: {e}")
 
 # ── VERSIÓN ──────────────────────────────────────────────────────────────────
-AXIS_VERSION = "9.04"
+AXIS_VERSION = "9.05"
 _BUILD_DATE  = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
 
 def _git_commit_short():
@@ -321,6 +322,39 @@ from axis_config import (
 from axis_alerts import crear_alerta, actualizar_alerta, listar_alertas
 DEBRIEF_FILE  = f"{DATA_DIR}/axis_debrief.json"
 JOURNAL_FILE  = f"{DATA_DIR}/axis_journal.json"
+REPORTE_ESPECIAL_FILE = f"{DATA_DIR}/axis_reporte_especial.json"
+
+# AX-OPS-WATCH-001: memoria mínima para evitar duplicar un corte horario tras
+# reinicio. No guarda precios, credenciales ni snapshots de posiciones.
+_reporte_especial_lock = threading.RLock()
+_reporte_especial_estado = {"cortes_enviados": [], "ultimo_corte": None}
+
+
+def cargar_reporte_especial_estado():
+    global _reporte_especial_estado
+    try:
+        with open(REPORTE_ESPECIAL_FILE, "r") as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            _reporte_especial_estado = {
+                "cortes_enviados": list(data.get("cortes_enviados", []))[-80:],
+                "ultimo_corte": data.get("ultimo_corte"),
+            }
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        print(f"Error cargando estado reporte especial: {e}")
+
+
+def guardar_reporte_especial_estado():
+    try:
+        os.makedirs(os.path.dirname(REPORTE_ESPECIAL_FILE), exist_ok=True)
+        temporal = f"{REPORTE_ESPECIAL_FILE}.tmp"
+        with open(temporal, "w") as f:
+            json.dump(_reporte_especial_estado, f, ensure_ascii=False, separators=(",", ":"))
+        os.replace(temporal, REPORTE_ESPECIAL_FILE)
+    except Exception as e:
+        print(f"Error guardando estado reporte especial: {e}")
 
 # ── AX-MOBILE-001: acceso móvil emparejado con Telegram privado ──────────
 # La sesión se entrega solamente al navegador que inició el código; en disco
@@ -2289,6 +2323,136 @@ def monitor_loop():
             reporte_horario()
         else:
             print(f"No toca reporte: {ahora.strftime('%A %H:%M EST')}")
+
+
+# ═══════════════════════════════════════════════════════════
+# AX-OPS-WATCH-001 — REPORTE ESPECIAL, SOLO OBSERVACIÓN
+# ═══════════════════════════════════════════════════════════
+REPORTE_ESPECIAL_HORAS = {10, 11, 12, 13, 14, 15, 16}
+
+
+def _ts_reporte_especial(valor):
+    try:
+        ts = datetime.fromisoformat(str(valor).replace("Z", "+00:00"))
+        return EST.localize(ts) if ts.tzinfo is None else ts.astimezone(EST)
+    except Exception:
+        return None
+
+
+def _es_nuevo_desde_reporte(valor, anterior):
+    ts = _ts_reporte_especial(valor)
+    return ts is not None and (anterior is None or ts > anterior)
+
+
+def _resumen_eventos_alerta(alertas, desde):
+    nuevos = [a for a in alertas if _es_nuevo_desde_reporte(a.get("ts_generada"), desde)]
+    eventos = []
+    for alerta in alertas:
+        for evento in alerta.get("eventos", []):
+            if _es_nuevo_desde_reporte(evento.get("ts"), desde):
+                eventos.append((alerta, evento))
+    return nuevos, eventos
+
+
+def construir_reporte_especial(ahora):
+    """Construye un corte operativo sin consultar HTTP ni alterar trading."""
+    global _portfolio
+    if _portfolio is None:
+        cargar_portfolio()
+    fecha = ahora.strftime("%Y-%m-%d")
+    anterior = _ts_reporte_especial(_reporte_especial_estado.get("ultimo_corte"))
+    alertas_hoy = listar_alertas(fecha=fecha)
+    nuevas, eventos = _resumen_eventos_alerta(alertas_hoy, anterior)
+    nombres_eventos = [str(e.get("evento", "")) for _, e in eventos]
+    posiciones = list(_portfolio.get("posiciones", []))
+    historial = list(_portfolio.get("historial", []))
+    abiertas_nuevas = [p for p in posiciones if _es_nuevo_desde_reporte(p.get("ts_entrada"), anterior)]
+    cerradas_nuevas = [p for p in historial if _es_nuevo_desde_reporte(p.get("ts_cierre"), anterior)]
+    pendientes = list(ordenes_pendientes.values())
+    por_estado = {
+        estado: sum(1 for orden in pendientes if orden.get("estado_ejecucion", "PENDING") == estado)
+        for estado in ("PENDING", "EXECUTING", "REVIEW_REQUIRED")
+    }
+    tesis_eventos = [e for e in nombres_eventos if e.startswith("THESIS_")]
+    refuerzos = sum(1 for e in tesis_eventos if "REINFORCEMENT" in e)
+    contras = sum(1 for e in tesis_eventos if "COUNTERSIGNAL" in e)
+    bloqueos = sum(1 for e in tesis_eventos if "EXECUTION_BLOCKED" in e)
+    legacy = []
+    for simbolo in sorted({p.get("simbolo") for p in posiciones if p.get("simbolo")}):
+        lados = {str(p.get("tipo", "")).upper() for p in posiciones if p.get("simbolo") == simbolo}
+        if {"CALL", "PUT"}.issubset(lados):
+            legacy.append(simbolo)
+    integridad = [
+        p for p in posiciones
+        if not p.get("alert_id") or not p.get("tradier_orden_id")
+    ]
+    flujo_eventos = [
+        e for e in nombres_eventos
+        if e.startswith("TRADIER_EXECUTION") or e in {"POSITION_OPENED", "TRADIER_REVIEW_CLEAR"}
+    ]
+    estado = "PASS"
+    if integridad:
+        estado = "FAIL"
+    elif por_estado["EXECUTING"] or por_estado["REVIEW_REQUIRED"] or legacy:
+        estado = "OBSERVAR"
+    lineas = [
+        "📡 <b>REPORTE ESPECIAL — VIGILANCIA AXIS</b>",
+        f"<b>Corte:</b> {ahora.strftime('%m/%d %H:%M EST')} | AXIS v{AXIS_VERSION}",
+        "━━━━━━━━━━━━━━━━━━",
+        f"<b>Salud interna:</b> OK | Hilos vivos: {len(threading.enumerate())}",
+        f"<b>Alertas nuevas:</b> {len(nuevas)} | <b>Posiciones:</b> +{len(abiertas_nuevas)} / cierres {len(cerradas_nuevas)}",
+        f"<b>Órdenes:</b> PENDING {por_estado['PENDING']} · EXECUTING {por_estado['EXECUTING']} · REVIEW {por_estado['REVIEW_REQUIRED']}",
+        f"<b>AX-FIX-FLOW:</b> {len(flujo_eventos)} evento(s) nuevo(s) | integridad {'OK' if not integridad else 'REVISAR'}",
+        f"<b>THESIS_LOCK:</b> refuerzos {refuerzos} · contraseñales {contras} · bloqueos {bloqueos}",
+    ]
+    if legacy:
+        lineas.append(f"<b>Legacy mixto:</b> {', '.join(legacy)} — nuevas entradas bloqueadas")
+    if not nuevas and not eventos and not abiertas_nuevas and not cerradas_nuevas:
+        lineas.append("<i>Sin eventos nuevos; vigilancia activa.</i>")
+    if ahora.hour == 16:
+        lineas.append(f"\n<b>CIERRE DIARIO:</b> {estado}")
+        if estado == "PASS":
+            lineas.append("Sin excepción operativa observada en este corte.")
+        elif estado == "OBSERVAR":
+            lineas.append("Hay estado pendiente/revisión o exposición legacy; sin acción automática.")
+        else:
+            lineas.append("Integridad de posición requiere reconciliación manual; sin acción automática.")
+    return "\n".join(lineas), estado
+
+
+def enviar_reporte_especial(ahora):
+    """Entrega un solo corte por hora mediante el bot ya residente en Railway."""
+    clave = ahora.strftime("%Y-%m-%d-%H")
+    with _reporte_especial_lock:
+        if clave in _reporte_especial_estado.get("cortes_enviados", []):
+            return False
+        mensaje, estado = construir_reporte_especial(ahora)
+        if not enviar_telegram(mensaje):
+            print(f"Reporte especial {clave} no entregado por Telegram")
+            return False
+        cortes = _reporte_especial_estado.setdefault("cortes_enviados", [])
+        cortes.append(clave)
+        _reporte_especial_estado["cortes_enviados"] = cortes[-80:]
+        _reporte_especial_estado["ultimo_corte"] = ahora.isoformat()
+        guardar_reporte_especial_estado()
+        print(f"Reporte especial {clave} enviado — {estado}")
+        return True
+
+
+def loop_reporte_especial():
+    print("Thread reporte especial iniciado...")
+    while True:
+        try:
+            ahora = datetime.now(EST)
+            if (es_dia_mercado(ahora) and ahora.hour in REPORTE_ESPECIAL_HORAS
+                    and ahora.minute == 20):
+                enviar_reporte_especial(ahora)
+                time.sleep(61)
+            else:
+                time.sleep(20)
+        except Exception as e:
+            print(f"Error loop reporte especial: {e}")
+            time.sleep(60)
 
 # ═══════════════════════════════════════════════════════════
 # RUTAS FLASK
@@ -5356,11 +5520,13 @@ def arrancar_monitor():
     reconciliar_posiciones_vencidas(datetime.now(EST))
     cargar_ordenes()
     cargar_estado_dia()
+    cargar_reporte_especial_estado()
     construir_base_datos()
     threading.Thread(target=monitor_loop,              daemon=True).start()
     threading.Thread(target=loop_v7_anticipada,        daemon=True).start()
     threading.Thread(target=loop_limpiar_ordenes,      daemon=True).start()
     threading.Thread(target=loop_polling_posiciones,   daemon=True).start()
+    threading.Thread(target=loop_reporte_especial,     daemon=True).start()
 
 threading.Thread(target=arrancar_monitor, daemon=True).start()
 
