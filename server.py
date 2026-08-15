@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v9.05
+AXIS Breakout Sentinel v9.06
 Estrategias: 1VR | 1VR+ | RPG | GNA | GBA | RCB/CNF
 Multi-activo: SPY, AAPL, BA, GLD, NVDA, AMZN, GOOG, META, MU, SPCX
 v8.43: Portfolio fix — ejecutar_orden_tradier en webhook exec/reto | Panic Button al bid |
@@ -56,6 +56,7 @@ v9.02: AX-DERBY-001: Derby muestra premio actual, P&L y una sola barra de vida h
 v9.03: AX-DERBY-002: Derby muestra strike junto al contrato activo.
 v9.04: AX-CONFLICT-001: una tesis direccional por activo mientras haya posición abierta; refuerzos sin compra y contraseñales suprimidas.
 v9.05: AX-OPS-WATCH-001: reporte especial horario interno por Telegram; observa THESIS_LOCK y flujo, sin operar.
+v9.06: AX-RECON-OPS-001: reconciliación semanal interna obligatoria, con recuperación sábado y entrega Telegram.
 """
 
 import os
@@ -226,7 +227,7 @@ def loop_limpiar_ordenes():
             print(f"Error loop_limpiar_ordenes: {e}")
 
 # ── VERSIÓN ──────────────────────────────────────────────────────────────────
-AXIS_VERSION = "9.05"
+AXIS_VERSION = "9.06"
 _BUILD_DATE  = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
 
 def _git_commit_short():
@@ -323,11 +324,14 @@ from axis_alerts import crear_alerta, actualizar_alerta, listar_alertas
 DEBRIEF_FILE  = f"{DATA_DIR}/axis_debrief.json"
 JOURNAL_FILE  = f"{DATA_DIR}/axis_journal.json"
 REPORTE_ESPECIAL_FILE = f"{DATA_DIR}/axis_reporte_especial.json"
+RECONCILIACION_INTERNA_FILE = f"{DATA_DIR}/axis_reconciliacion_interna.json"
 
 # AX-OPS-WATCH-001: memoria mínima para evitar duplicar un corte horario tras
 # reinicio. No guarda precios, credenciales ni snapshots de posiciones.
 _reporte_especial_lock = threading.RLock()
 _reporte_especial_estado = {"cortes_enviados": [], "ultimo_corte": None}
+_reconciliacion_interna_lock = threading.RLock()
+_reconciliacion_interna_estado = {"ultimo_corte": None, "semanas_enviadas": []}
 
 
 def cargar_reporte_especial_estado():
@@ -355,6 +359,33 @@ def guardar_reporte_especial_estado():
         os.replace(temporal, REPORTE_ESPECIAL_FILE)
     except Exception as e:
         print(f"Error guardando estado reporte especial: {e}")
+
+
+def cargar_reconciliacion_interna_estado():
+    global _reconciliacion_interna_estado
+    try:
+        with open(RECONCILIACION_INTERNA_FILE, "r") as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            _reconciliacion_interna_estado = {
+                "ultimo_corte": data.get("ultimo_corte"),
+                "semanas_enviadas": list(data.get("semanas_enviadas", []))[-52:],
+            }
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        print(f"Error cargando reconciliación interna: {e}")
+
+
+def guardar_reconciliacion_interna_estado():
+    try:
+        os.makedirs(os.path.dirname(RECONCILIACION_INTERNA_FILE), exist_ok=True)
+        temporal = f"{RECONCILIACION_INTERNA_FILE}.tmp"
+        with open(temporal, "w") as f:
+            json.dump(_reconciliacion_interna_estado, f, ensure_ascii=False, separators=(",", ":"))
+        os.replace(temporal, RECONCILIACION_INTERNA_FILE)
+    except Exception as e:
+        print(f"Error guardando reconciliación interna: {e}")
 
 # ── AX-MOBILE-001: acceso móvil emparejado con Telegram privado ──────────
 # La sesión se entrega solamente al navegador que inició el código; en disco
@@ -1062,7 +1093,9 @@ def es_dia_mercado(dt=None):
 # mismo comportamiento, mismo parse_mode HTML, mismo timeout.
 from axis_telegram import enviar_telegram
 from axis_reconciliation_notify import (
+    latest_report,
     notification_status,
+    parse_report,
     reconciliation_notification_loop,
 )
 
@@ -2453,6 +2486,136 @@ def loop_reporte_especial():
         except Exception as e:
             print(f"Error loop reporte especial: {e}")
             time.sleep(60)
+
+
+# ═══════════════════════════════════════════════════════════
+# AX-RECON-OPS-001 — RECONCILIACIÓN SEMANAL INTERNA
+# ═══════════════════════════════════════════════════════════
+def _corte_reconciliacion_anterior():
+    guardado = _ts_reporte_especial(_reconciliacion_interna_estado.get("ultimo_corte"))
+    if guardado:
+        return guardado
+    try:
+        reporte = latest_report()
+        corte = parse_report(reporte).get("cutoff") if reporte else None
+        if corte:
+            return EST.localize(datetime.strptime(corte[:16], "%Y-%m-%d %H:%M"))
+    except Exception as e:
+        print(f"Error leyendo corte reconciliación previo: {e}")
+    return None
+
+
+def _sesiones_completas_desde(corte, ahora):
+    inicio = (corte.date() + timedelta(days=1)) if corte else (ahora.date() - timedelta(days=7))
+    fin = ahora.date() - timedelta(days=1)
+    sesiones = []
+    cursor = inicio
+    while cursor <= fin:
+        prueba = EST.localize(datetime.combine(cursor, datetime.min.time())).replace(hour=12)
+        if es_dia_mercado(prueba):
+            sesiones.append(cursor.isoformat())
+        cursor += timedelta(days=1)
+    return sesiones
+
+
+def construir_reconciliacion_interna(ahora):
+    """Corte incremental con datos de Railway; no abre, cierra ni altera órdenes."""
+    global _portfolio
+    if _portfolio is None:
+        cargar_portfolio()
+    corte_anterior = _corte_reconciliacion_anterior()
+    sesiones = _sesiones_completas_desde(corte_anterior, ahora)
+    sesiones_set = set(sesiones)
+    en_sesion_completa = lambda valor: (
+        (_ts_reporte_especial(valor).date().isoformat() if _ts_reporte_especial(valor) else None)
+        in sesiones_set
+    )
+    alertas = listar_alertas()
+    terminales = [
+        alerta for alerta in alertas
+        if alerta.get("estado") in {"CLOSED", "CANCELLED"}
+        and _es_nuevo_desde_reporte(alerta.get("ts_ultima_actualizacion"), corte_anterior)
+        and en_sesion_completa(alerta.get("ts_ultima_actualizacion"))
+    ]
+    cierres = [
+        pos for pos in _portfolio.get("historial", [])
+        if not pos.get("excluida_metricas")
+        and _es_nuevo_desde_reporte(pos.get("ts_cierre"), corte_anterior)
+        and en_sesion_completa(pos.get("ts_cierre"))
+    ]
+    canceladas = sum(1 for alerta in terminales if alerta.get("estado") == "CANCELLED")
+    por_estado = {
+        estado: sum(1 for alerta in alertas if alerta.get("estado") == estado)
+        for estado in ("ACTIVE", "CLOSED", "CANCELLED")
+    }
+    abiertas = list(_portfolio.get("posiciones", []))
+    sin_vinculo = [
+        pos for pos in abiertas
+        if not pos.get("alert_id") or not pos.get("tradier_orden_id")
+    ]
+    vencidas = sum(1 for pos in cierres if pos.get("motivo_cierre") == "vencimiento")
+    gtc = sum(1 for pos in cierres if pos.get("motivo_cierre") == "gtc")
+    promedio = lambda campo: round(sum(float(p.get(campo, 0) or 0) for p in cierres) / len(cierres), 2) if cierres else None
+    tesis_eventos = []
+    for alerta in alertas:
+        for evento in alerta.get("eventos", []):
+            if _es_nuevo_desde_reporte(evento.get("ts"), corte_anterior):
+                nombre = str(evento.get("evento", ""))
+                if nombre.startswith("THESIS_"):
+                    tesis_eventos.append(nombre)
+    resultado = "PASS" if not sin_vinculo else "FAIL"
+    if resultado == "PASS" and not sesiones:
+        resultado = "OBSERVAR"
+    mensaje = "\n".join([
+        "📊 <b>AXIS — RECONCILIACIÓN SEMANAL</b>",
+        f"<b>Corte:</b> {ahora.strftime('%Y-%m-%d %H:%M EST')}",
+        f"<b>Sesiones completas:</b> {', '.join(sesiones) if sesiones else 'sin sesiones nuevas'}",
+        "━━━━━━━━━━━━━━━━━━",
+        f"<b>Alertas:</b> {len(alertas)} total | ACTIVE {por_estado['ACTIVE']} · CLOSED {por_estado['CLOSED']} · CANCELLED {por_estado['CANCELLED']}",
+        f"<b>Terminales nuevos:</b> {len(terminales)} | cierres {len(cierres)} · cancelaciones {canceladas}",
+        f"<b>Cierres:</b> GTC {gtc} · vencimiento {vencidas}",
+        f"<b>MFE / MAE / duración:</b> "
+        + (f"{promedio('mfe_pct'):+.2f}% / {promedio('mae_pct'):+.2f}% / {int(promedio('minutos_abierta') or 0)} min" if cierres else "sin cierres nuevos"),
+        f"<b>Vínculos:</b> {len(abiertas) - len(sin_vinculo)}/{len(abiertas)} abiertas íntegras"
+        + (f" · excepciones {len(sin_vinculo)}" if sin_vinculo else ""),
+        f"<b>THESIS_LOCK:</b> {len(tesis_eventos)} evento(s) nuevo(s)",
+        f"\n<b>Resultado:</b> {resultado}",
+        "<i>Datos internos de Railway; no se ejecutó ninguna orden.</i>",
+    ])
+    return mensaje, resultado, sesiones
+
+
+def ejecutar_reconciliacion_interna(ahora=None):
+    """Una reconciliación por sábado; un arranque tardío del sábado la recupera."""
+    ahora = ahora or datetime.now(EST)
+    semana = ahora.strftime("%G-W%V")
+    with _reconciliacion_interna_lock:
+        if semana in _reconciliacion_interna_estado.get("semanas_enviadas", []):
+            return False
+        mensaje, resultado, sesiones = construir_reconciliacion_interna(ahora)
+        if not enviar_telegram(mensaje):
+            print(f"Reconciliación interna {semana} no entregada por Telegram")
+            return False
+        _reconciliacion_interna_estado["ultimo_corte"] = ahora.isoformat()
+        semanas = _reconciliacion_interna_estado.setdefault("semanas_enviadas", [])
+        semanas.append(semana)
+        _reconciliacion_interna_estado["semanas_enviadas"] = semanas[-52:]
+        guardar_reconciliacion_interna_estado()
+        print(f"Reconciliación interna {semana} enviada — {resultado} ({len(sesiones)} sesiones)")
+        return True
+
+
+def loop_reconciliacion_interna():
+    print("Thread reconciliación interna iniciado...")
+    while True:
+        try:
+            ahora = datetime.now(EST)
+            if ahora.weekday() == 5 and ahora.hour >= 10:
+                ejecutar_reconciliacion_interna(ahora)
+            time.sleep(300)
+        except Exception as e:
+            print(f"Error loop reconciliación interna: {e}")
+            time.sleep(300)
 
 # ═══════════════════════════════════════════════════════════
 # RUTAS FLASK
@@ -5521,12 +5684,14 @@ def arrancar_monitor():
     cargar_ordenes()
     cargar_estado_dia()
     cargar_reporte_especial_estado()
+    cargar_reconciliacion_interna_estado()
     construir_base_datos()
     threading.Thread(target=monitor_loop,              daemon=True).start()
     threading.Thread(target=loop_v7_anticipada,        daemon=True).start()
     threading.Thread(target=loop_limpiar_ordenes,      daemon=True).start()
     threading.Thread(target=loop_polling_posiciones,   daemon=True).start()
     threading.Thread(target=loop_reporte_especial,     daemon=True).start()
+    threading.Thread(target=loop_reconciliacion_interna, daemon=True).start()
 
 threading.Thread(target=arrancar_monitor, daemon=True).start()
 
