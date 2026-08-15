@@ -73,16 +73,20 @@
   modifica GTC, no manda Telegram adicional y no altera estrategias ni
   posiciones. Esta evidencia decidirá una política futura, no la presupone.
 
-### Estado de reconciliación — 2026-08-08
+### Estado de reconciliación — 2026-08-15
 
-- AX-TRACK-AUDIT-003 incluye sesiones completas del 2026-08-05 al 2026-08-07,
-  con 29 resultados terminales nuevos (20 CLOSED y 9 CANCELLED).
-- Las 23 alertas ACTIVE están vinculadas a posiciones abiertas; no hay
-  posiciones vencidas activas ni métricas MFE/MAE/duración faltantes.
-- Se mantienen dos posiciones huérfanas del 2026-08-03 y se detectan cuatro
-  adicionales del 2026-08-05 tras cancelaciones `EXECUTE`: seis en total.
-- Estas posiciones huérfanas permanecen excluidas del tuning hasta resolver
-  AX-FIX-EXEC-001. Producción y estrategias no fueron modificadas.
+- AX-TRACK-AUDIT-004 incluye exclusivamente sesiones completas del 2026-08-08
+  y 2026-08-10 al 2026-08-14, con 56 resultados terminales nuevos (24 CLOSED
+  y 32 CANCELLED) y fecha de corte 2026-08-15 15:54 EDT.
+- Producción v9.06 / `772e207` y Railway `OK`; hay siete posiciones abiertas,
+  todas vinculadas a `alert_id`, orden Tradier y GTC, sin vencidas ni huérfanas.
+- Las métricas MFE/MAE/duración están disponibles para 20 de los 24 cierres;
+  cuatro cierres antiguos quedan fuera de la ventana de 20 fichas de
+  `/portfolio/data` y se documentan como limitación de visibilidad, no como
+  datos estimados.
+- La automatización formal quedó reforzada con recuperación idempotente en
+  tres ventanas de cada sábado; su salida obligatoria es Markdown + CSV
+  versionados y publicados.
 
 ### Open Limitations
 
@@ -132,7 +136,7 @@ validados; la próxima decisión estratégica sigue siendo acumular 30–40
 sesiones y ≥20 cierres por activo para AX-TUNE-002. Strategy rules remain frozen.
 
 Latest report:
-[`reconciliations/2026-08-08-AX-TRACK-AUDIT-003.md`](reconciliations/2026-08-08-AX-TRACK-AUDIT-003.md)
+[`reconciliations/2026-08-15-AX-TRACK-AUDIT-004.md`](reconciliations/2026-08-15-AX-TRACK-AUDIT-004.md)
 
 ### AX-TUNE-001 — Production Signal Review
 Revisar señales reales disparadas en producción (últimas 4-6 semanas). Identificar patrones de falsos positivos por estrategia. Input requerido para AX-TUNE-002.
