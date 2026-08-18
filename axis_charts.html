@@ -137,6 +137,27 @@
   #tooltip .tt-lbl   { color:var(--dim); }
   #tooltip .tt-val   { color:var(--text); font-weight:600; }
 
+  /* AX-CHART-UX-001 — un solo flujo gráfico de canal */
+  #canal-directo-panel {
+    position:absolute; right:16px; top:16px; z-index:30; display:none;
+    width:250px; padding:12px; border:1px solid var(--border); border-radius:7px;
+    background:var(--surface); box-shadow:0 10px 30px rgba(0,0,0,.45);
+  }
+  #canal-directo-panel h4 { color:var(--accent); font-size:11px; letter-spacing:1px; margin-bottom:7px; }
+  #canal-directo-step { color:var(--dim); font-size:10px; line-height:1.45; min-height:28px; }
+  .canal-tipo-row { display:flex; gap:6px; margin:9px 0; }
+  .canal-tipo-btn { flex:1; padding:6px; border:1px solid var(--border); border-radius:4px; background:#0b0f14; color:var(--dim); cursor:pointer; font:700 10px var(--mono); }
+  .canal-tipo-btn.on { color:var(--text); border-color:var(--cyan); background:rgba(88,166,255,.12); }
+  .canal-directo-action { width:100%; margin-top:6px; padding:7px; border:1px solid var(--cyan); border-radius:4px; background:rgba(88,166,255,.14); color:var(--text); cursor:pointer; font:700 10px var(--mono); }
+  .canal-directo-action:disabled { opacity:.42; cursor:not-allowed; }
+  .canal-directo-cancel { width:100%; margin-top:6px; padding:5px; border:1px solid var(--border); border-radius:4px; background:transparent; color:var(--dim); cursor:pointer; font:10px var(--mono); }
+  #canal-directo-menu { position:fixed; z-index:1000; display:none; width:230px; padding:10px 12px; border:1px solid #3b5773; border-radius:7px; background:#0d1117; box-shadow:0 8px 24px rgba(0,0,0,.6); }
+  #canal-directo-menu .cdm-title { color:var(--cyan); font-size:10px; font-weight:700; letter-spacing:1px; margin-bottom:5px; }
+  #canal-directo-menu .cdm-info { color:var(--dim); font-size:10px; line-height:1.45; margin-bottom:8px; }
+  #canal-directo-menu button { width:100%; padding:6px; border:1px solid var(--cyan); border-radius:4px; background:rgba(88,166,255,.13); color:var(--text); cursor:pointer; font:700 10px var(--mono); }
+  #canal-directo-menu .cdm-other { margin-top:6px; border-color:var(--border); background:transparent; color:var(--dim); }
+  #canal-directo-status { color:var(--dim); font-size:10px; white-space:nowrap; }
+
   /* Panel P's */
   #panel-ps {
     position:absolute; right:16px; top:50%; transform:translateY(-50%);
@@ -196,23 +217,15 @@
 </head>
 <body>
 
-<div id="vela-menu">
-  <div class="vm-title">ESTABLECER PUNTO</div>
-  <div class="vm-info" id="vm-info">—</div>
-  <div class="vm-btns">
-    <button class="vm-btn vm-btn-p1" onmousedown="event.stopPropagation();establecerP('P1')">P1</button>
-    <button class="vm-btn vm-btn-p2" onmousedown="event.stopPropagation();establecerP('P2')">P2</button>
-    <button class="vm-btn vm-btn-p3" onmousedown="event.stopPropagation();establecerP('P3')">P3</button>
-  </div>
-  <div class="vm-cancel" style="display:none"></div>
-</div>
-
-<div id="canal-delete-btn" style="display:none;position:fixed;background:#1a1a2e;border:1px solid #f85149;border-radius:6px;padding:8px 14px;color:#f85149;font-family:var(--mono);font-size:12px;font-weight:600;cursor:pointer;z-index:999;box-shadow:0 4px 12px rgba(0,0,0,0.5);" onclick="borrarCanalClick()">
-  🗑 Borrar canal
+<div id="canal-directo-menu">
+  <div class="cdm-title" id="canal-directo-menu-title">ESTABLECER PUNTO</div>
+  <div class="cdm-info" id="canal-directo-menu-info">—</div>
+  <button id="canal-directo-set" type="button">Establecer</button>
+  <button class="cdm-other" type="button" onclick="cerrarSelectorCanalDirecto()">Elegir otra vela</button>
 </div>
 
 <header>
-  <div class="logo">AXIS<small>CHARTS v1.4.0 — SEÑALES</small></div>
+  <div class="logo">AXIS<small>CHARTS v1.5.1 — CANAL DIRECTO · PILOTO SPY</small></div>
   <div class="tabs">
     <button class="tab on"  data-activo="SPY"  onclick="cambiar('SPY')">SPY</button>
     <button class="tab"     data-activo="AAPL" onclick="cambiar('AAPL')">AAPL</button>
@@ -277,7 +290,8 @@
   </div>
   <div class="tg">
     <span class="tlbl">Canal</span>
-    <button class="btn" id="btn-panel-ps" onclick="togPanelPs()">⊞ P's</button>
+    <button class="btn" id="btn-canal-directo" onclick="abrirCanalDirecto()">+ Nuevo canal</button>
+    <span id="canal-directo-status">Cargando…</span>
   </div>
   <div class="tg"><span id="info">Cargando...</span></div>
 </div>
@@ -286,51 +300,16 @@
   <canvas id="chartCanvas"></canvas>
   <canvas id="drawCanvas"></canvas>
 
-  <!-- Panel de P's -->
-  <div id="panel-ps">
-    <h4 id="ps-titulo">Canal — SPY</h4>
-    <div class="ps-tipo none" id="ps-tipo">SIN CANAL</div>
-    <div id="ps-apagado-banner" style="display:none;background:rgba(248,81,73,0.12);border:1px solid #f85149;border-radius:6px;padding:6px 10px;margin-bottom:8px;font-size:11px;color:#f85149;font-family:'JetBrains Mono',monospace;letter-spacing:0.5px;">
-      🔕 CANAL DESACTIVADO
-      <button onclick="reactivarCanal()" style="margin-left:10px;padding:2px 8px;font-size:10px;background:#3a1a1a;border:1px solid #f85149;border-radius:4px;color:#f85149;cursor:pointer;font-family:'JetBrains Mono',monospace;">🔄 REACTIVAR</button>
+  <div id="canal-directo-panel">
+    <h4 id="canal-directo-title">Nuevo canal — SPY</h4>
+    <div id="canal-directo-step">Elige el tipo y coloca P1 sobre una vela.</div>
+    <div class="canal-tipo-row">
+      <button class="canal-tipo-btn on" id="canal-tipo-cnf" type="button" onclick="seleccionarTipoCanalDirecto('CNF')">CNF · P1/P2</button>
+      <button class="canal-tipo-btn" id="canal-tipo-rcb" type="button" onclick="seleccionarTipoCanalDirecto('RCB')">RCB · P1/P2/P3</button>
     </div>
-    <div class="ps-status" id="ps-status">Cargando...</div>
-    <div class="ps-row">
-      <span class="ps-lbl">P1</span>
-      <select class="ps-vela" id="ps-p1-vela">
-        <option>V1</option><option>V2</option><option>V3</option>
-        <option>V4</option><option>V5</option><option>V6</option><option>V7</option>
-      </select>
-      <input class="ps-input" id="ps-p1-high" type="number" step="0.01" placeholder="High P1">
-      <input class="ps-input" id="ps-p1-fecha" type="date" style="width:110px" onclick="try{this.showPicker()}catch(e){}">
-    </div>
-    <div class="ps-row">
-      <span class="ps-lbl">P2</span>
-      <select class="ps-vela" id="ps-p2-vela">
-        <option>V1</option><option>V2</option><option>V3</option>
-        <option>V4</option><option>V5</option><option>V6</option><option>V7</option>
-      </select>
-      <input class="ps-input" id="ps-p2-high" type="number" step="0.01" placeholder="High P2">
-      <input class="ps-input" id="ps-p2-fecha" type="date" style="width:110px" onclick="try{this.showPicker()}catch(e){}">
-    </div>
-    <div class="ps-row">
-      <span class="ps-lbl" style="color:#f0b429">P3</span>
-      <select class="ps-vela" id="ps-p3-vela">
-        <option value="">--</option>
-        <option>V1</option><option>V2</option><option>V3</option>
-        <option>V4</option><option>V5</option><option>V6</option><option>V7</option>
-      </select>
-      <input class="ps-input" id="ps-p3-low" type="number" step="0.01" placeholder="Low P3 (RCB)">
-      <input class="ps-input" id="ps-p3-fecha" type="date" style="width:110px" onclick="try{this.showPicker()}catch(e){}">
-    </div>
-    <div class="ps-row" style="margin-top:4px;font-size:10px;color:var(--dim)">
-      <span>Techo:</span><span id="ps-techo">—</span>
-      <span style="margin-left:8px">Mitad:</span><span id="ps-mitad">—</span>
-      <span style="margin-left:8px">Piso:</span><span id="ps-piso">—</span>
-    </div>
-    <button class="btn-ps-act" onclick="activarCanal()">⬆ ACTIVAR CANAL</button>
-    <button class="btn-ps-act" style="background:#1a3a2a;border-color:#1D9E75;color:#5ecba8;" onclick="actualizarP2()">↻ ACTUALIZAR P2</button>
-    <button class="btn-ps-clear" onclick="desactivarCanal()">✕ DESACTIVAR</button>
+    <button class="canal-directo-action" id="canal-directo-confirmar" type="button" onclick="confirmarCanalDirecto()" disabled>Revisar y confirmar canal</button>
+    <button class="canal-directo-cancel" type="button" onclick="deshacerCanalDirecto()">Deshacer último punto</button>
+    <button class="canal-directo-cancel" type="button" onclick="cancelarCanalDirecto()">Cancelar borrador</button>
   </div>
 
   <div id="tooltip">
@@ -349,6 +328,8 @@
 // ═══════════════════════════════════════
 const RAILWAY = 'https://web-production-bf9d0.up.railway.app';
 const ACTIVOS = ['SPY','AAPL','BA','GLD','NVDA','AMZN','GOOG','META','MU','SPCX'];
+// AX-CHART-UX-001: reflejo visual del piloto. El servidor es la protección real.
+const CANAL_DIRECTO_PILOTO = ['SPY'];
 
 async function adminFetch(url, options = {}) {
   const headers = new Headers(options.headers || {});
@@ -456,202 +437,13 @@ function resize() {
 // ═══════════════════════════════════════
 // CARGAR DATOS — Tradier 15min via Railway
 // ═══════════════════════════════════════
-async function borrarCanalClick() {
-  document.getElementById('canal-delete-btn').style.display = 'none';
-  try {
-    await adminFetch(`${RAILWAY}/desactivar?activo=${activo}`, { method: 'POST' });
-    invalidarCanal(activo);
-    window.canalRailway = { on: false };
-    window.canalLineas  = null;
-    render();
-    toast('✅ Canal borrado');
-  } catch(e) { toast('❌ Error borrando canal'); }
-}
-
-// Detectar click sobre línea del canal en canvas
-function detectarClickCanal(e) {
-  if (!window.canalRailway || !window.canalRailway.on) return false;
-  const c = window.canalRailway;
-  if (!c.p1 || !c.p2 || !allVelas.length) return false;
-
-  const rect = cc.getBoundingClientRect();
-  const mx   = e.clientX - rect.left;
-  const my   = e.clientY - rect.top;
-
-  // Calcular visible localmente
-  const visibleLocal = allVelas.slice(zoomStart, zoomEnd + 1);
-  const W  = cc.width, H = cc.height;
-  const gW = W - M.left - M.right;
-  const gH = H - M.top - M.bottom;
-  const prices = visibleLocal.map(v => [v.h, v.l]).flat();
-  const maxP = Math.max(...prices);
-  const minP = Math.min(...prices);
-  const xOfL = i => M.left + (i / (visibleLocal.length - 1 || 1)) * gW;
-  const yOfL = p => M.top + (1 - (p - minP) / (maxP - minP || 1)) * gH;
-
-  // Buscar p1Idx en allVelas
-  const esDiario = (timeframe === 'daily' || timeframe === 'weekly' || timeframe === 'monthly');
-  let p1Idx = -1, p2Idx = -1;
-  allVelas.forEach((v, i) => {
-    const f = (v.datetime||'').substring(0,10);
-    const h = parseInt((v.datetime||'').substring(11,13));
-    if (esDiario) {
-      if (f === c.p1.fecha) p1Idx = i;
-      if (f === c.p2.fecha) p2Idx = i;
-    } else {
-      if (f === c.p1.fecha && h === c.p1.hora_est) p1Idx = i;
-      if (f === c.p2.fecha && h === c.p2.hora_est) p2Idx = i;
-    }
-  });
-  if (p1Idx < 0 || p2Idx <= p1Idx) return false;
-
-  const slope = (c.p2.high - c.p1.high) / (p2Idx - p1Idx);
-  const visStart = Math.max(0, p1Idx - zoomStart);
-  const visEnd   = Math.min(visibleLocal.length - 1, allVelas.length - 1 - zoomStart);
-
-  // Verificar si el click está cerca de la línea del techo (±8px)
-  for (let k = visStart; k <= visEnd; k++) {
-    const absK  = k + zoomStart;
-    const precio = c.p1.high + slope * (absK - p1Idx);
-    const px    = xOfL(k);
-    const py    = yOfL(precio);
-    if (Math.abs(mx - px) < 12 && Math.abs(my - py) < 8) {
-      const btn = document.getElementById('canal-delete-btn');
-      btn.style.display = 'block';
-      btn.style.left    = `${e.clientX + 10}px`;
-      btn.style.top     = `${e.clientY - 20}px`;
-      return true;
-    }
-  }
-  return false;
-}
-
-// ── Click en vela para establecer P1/P2/P3 ──
-let _velaSeleccionada = null;  // { h, l, fecha, hora, vela }
-let _p1Local = null;  // P1 guardado localmente para usar en P2
-
-function cerrarMenuVela() {
-  document.getElementById('vela-menu').style.display = 'none';
-  // NO limpiar _velaSeleccionada aquí — establecerP la necesita
-}
-
-function mostrarMenuVela(e, v) {
-  if (timeframe !== '1H') return false;
-  const dt      = (v.datetime||'').trim();
-  const fecha   = dt.substring(0, 10);
-  const hora    = parseInt(dt.substring(11, 13));
-  const velaLbl = v.vela || '—';
-
-  _velaSeleccionada = { h: v.h, l: v.l, fecha, hora, vela: velaLbl };
-
-  document.getElementById('vm-info').innerHTML =
-    `<b>${fecha}</b> ${velaLbl} &nbsp;|&nbsp; H: <b>$${v.h.toFixed(2)}</b> &nbsp;L: <b>$${v.l.toFixed(2)}</b>`;
-
-  // Canal activo = P1+P2 establecidos
-  const canalActivo = window.canalRailway && window.canalRailway.on
-    && window.canalRailway.p1 && window.canalRailway.p2;
-
-  // P3 solo visible cuando canal activo
-  const btnP3 = document.querySelector('.vm-btn-p3');
-  if (btnP3) btnP3.style.display = canalActivo ? 'inline-block' : 'none';
-
-  // P2: label normal sin canal, "↻ P2" con canal activo
-  const btnP2 = document.querySelector('.vm-btn-p2');
-  if (btnP2) btnP2.textContent = canalActivo ? '↻ P2' : 'P2';
-
-  // P1: solo visible cuando NO hay canal activo
-  const btnP1 = document.querySelector('.vm-btn-p1');
-  if (btnP1) btnP1.style.display = canalActivo ? 'none' : 'inline-block';
-
-  const menu = document.getElementById('vela-menu');
-  menu.style.display = 'block';
-  menu.style.left    = `${e.clientX + 12}px`;
-  menu.style.top     = `${e.clientY - 20}px`;
-
-  const mw = menu.offsetWidth || 160;
-  const mh = menu.offsetHeight || 80;
-  if (e.clientX + 12 + mw > window.innerWidth)  menu.style.left = `${e.clientX - mw - 12}px`;
-  if (e.clientY - 20 + mh > window.innerHeight) menu.style.top  = `${e.clientY - mh}px`;
-
-  return true;
-}
-
-async function establecerP(punto) {
-  const v = _velaSeleccionada;
-  cerrarMenuVela();
-  if (!v) return;
-
-  if (punto === 'P1') {
-    // Guardar P1 localmente y en servidor
-    _p1Local = { high: v.h, fecha: v.fecha, hora_est: v.hora };
-    try {
-      const r = await adminFetch(`${RAILWAY}/establecer_p1?activo=${activo}&p1_high=${v.h}&p1_fecha=${v.fecha}&p1_hora=${v.hora}`, { method: 'POST' });
-      if (r.ok) {
-        invalidarCanal(activo);
-        await cargarEstadoCanal(activo);
-        toast(`✅ P1 — $${v.h.toFixed(2)} · ${v.fecha} ${v.vela}`);
-      } else { toast('❌ Error estableciendo P1'); }
-    } catch(e) { toast('❌ Error conectando servidor'); }
-
-  } else if (punto === 'P2') {
-    const canalActivo = window.canalRailway && window.canalRailway.on;
-    if (canalActivo) {
-      // Canal activo → actualizar P2 dinámico
-      try {
-        const url = `${RAILWAY}/actualizar_p2?activo=${activo}&p2_high=${v.h}&p2_fecha=${v.fecha}&p2_hora=${v.hora}`;
-        const r = await adminFetch(url, { method: 'POST' });
-        if (r.ok) {
-          invalidarCanal(activo);
-          await cargarEstadoCanal(activo);
-          render();
-          toast(`✅ P2 actualizado — $${v.h.toFixed(2)} · ${v.fecha} ${v.vela}`);
-        } else { const d = await r.json(); toast(`❌ ${d.error || 'Error'}`); }
-      } catch(e) { toast('❌ Error conectando servidor'); }
-    } else {
-      // Sin canal activo → necesita P1 → activar canal
-      const p1 = _p1Local || (window.canalRailway && window.canalRailway.p1);
-      if (!p1) { toast('⚠️ Selecciona P1 primero'); return; }
-      try {
-        const url = `${RAILWAY}/activar?activo=${activo}`
-          + `&p1_high=${p1.high}&p1_fecha=${p1.fecha}&p1_hora=${p1.hora_est}`
-          + `&p2_high=${v.h}&p2_fecha=${v.fecha}&p2_hora=${v.hora}`;
-        const r = await adminFetch(url, { method: 'POST' });
-        if (r.ok) {
-          _p1Local = null;
-          invalidarCanal(activo);
-          await cargarEstadoCanal(activo);
-          render();
-          toast(`✅ Canal activo — P2 $${v.h.toFixed(2)} · ${v.fecha} ${v.vela}`);
-        } else { const d = await r.json(); toast(`❌ ${d.error || 'Error'}`); }
-      } catch(e) { toast('❌ Error conectando servidor'); }
-    }
-
-  } else if (punto === 'P3') {
-    // Necesita P1+P2 — convierte a RCB automáticamente
-    const p1 = _p1Local || (window.canalRailway && window.canalRailway.p1);
-    const p2 = window.canalRailway && window.canalRailway.p2;
-    if (!p1 || !p2) { toast('⚠️ Selecciona P1 y P2 primero'); return; }
-    try {
-      const url = `${RAILWAY}/activar?activo=${activo}`
-        + `&p1_high=${p1.high}&p1_fecha=${p1.fecha}&p1_hora=${p1.hora_est}`
-        + `&p2_high=${p2.high}&p2_fecha=${p2.fecha}&p2_hora=${p2.hora_est}`
-        + `&piso_low=${v.l}&piso_fecha=${v.fecha}&piso_hora=${v.hora}`;
-      const r = await adminFetch(url, { method: 'POST' });
-      if (r.ok) {
-        invalidarCanal(activo);
-        await cargarEstadoCanal(activo);
-        render();
-        toast(`✅ Canal RCB — P3 $${v.l.toFixed(2)} · ${v.fecha} ${v.vela}`);
-      } else { const d = await r.json(); toast(`❌ ${d.error || 'Error'}`); }
-    } catch(e) { toast('❌ Error conectando servidor'); }
-  }
-}
-
 function cambiarTF(tf) {
+  if (canalDraft.abierto) cancelarCanalDirecto();
   timeframe = tf;
   document.querySelectorAll('.tf-btn').forEach(b =>
     b.classList.toggle('on', b.getAttribute('data-tf') === tf)
   );
+  actualizarCanalDirectoUI();
   allVelas = []; zoomStart = 0; zoomEnd = 0;
   cargarDatos(activo);
 }
@@ -798,7 +590,7 @@ async function actualizarLucesCanal() {
       const prev = btn.querySelector('.canal-luz');
       if (prev) prev.remove();
       // Agregar luz según estado
-      if (c.on && !c.apagado) {
+      if (c.operativo) {
         const luz = document.createElement('span');
         luz.className = 'canal-luz';
         luz.style.cssText = 'display:inline-block;width:6px;height:6px;border-radius:50%;background:#1D9E75;margin-left:5px;vertical-align:middle;flex-shrink:0;';
@@ -903,7 +695,7 @@ function calcSeñales(velas) {
   let p1Idx = -1, p2Idx = -1;
 
   // Encontrar índices P1 y P2 del canal Railway si existe
-  if (window.canalRailway && window.canalRailway.on && window.canalRailway.p1 && window.canalRailway.p2) {
+  if (canalOperativo(window.canalRailway)) {
     const cr = window.canalRailway;
     const esDiario = (timeframe === 'daily' || timeframe === 'weekly' || timeframe === 'monthly');
     allVelas.forEach((v, i) => {
@@ -1066,7 +858,7 @@ function calcSeñales(velas) {
       }
 
       // 4PASOS en V1 — solo si hay canal RCB activo
-      if (window.canalRailway && window.canalRailway.on && window.canalRailway.tipo === 'RCB') {
+      if (canalOperativo(window.canalRailway) && window.canalRailway.tipo === 'RCB') {
         if (!ps4Active) {
           ps4Active = true; ps4P1Low = v.l; ps4P1Idx = i;
           ps4P2Low = null; ps4P2Idx = null; ps4VelasSobreP1 = 0; ps4P1Maduro = false;
@@ -1120,7 +912,7 @@ function calcSeñales(velas) {
       }
 
       // CNF/RCB — señal visual cuando hay ruptura del techo
-      if (window.canalRailway && window.canalRailway.on && !canalFired) {
+      if (canalOperativo(window.canalRailway) && !canalFired) {
         const c = window.canalRailway;
         if (c.p1 && c.p2 && p1Idx >= 0 && p2Idx > p1Idx) {
           const slope     = (c.p2.high - c.p1.high) / (p2Idx - p1Idx);
@@ -1135,7 +927,7 @@ function calcSeñales(velas) {
       }
 
       // 4PASOS — V2-V7
-      if (ps4Active && ps4P1Maduro && window.canalRailway && window.canalRailway.on) {
+      if (ps4Active && ps4P1Maduro && canalOperativo(window.canalRailway)) {
         const cr = window.canalRailway;
 
         // Si precio sale del canal → reset
@@ -1424,6 +1216,122 @@ async function desactivarCanal() {
 }
 
 // ═══════════════════════════════════════
+// AX-CHART-UX-001 — CANAL DIRECTO
+// El borrador existe solo en el navegador. Una única llamada lo confirma.
+// ═══════════════════════════════════════
+const canalDraft = { abierto:false, tipo:'CNF', puntos:[], seleccion:null };
+function canalOperativo(c) { return Boolean(c && c.operativo && c.p1 && c.p2); }
+function rolesCanalDirecto() { return canalDraft.tipo === 'RCB' ? ['P1','P2','P3'] : ['P1','P2']; }
+function rolPendienteCanalDirecto() { return rolesCanalDirecto()[canalDraft.puntos.length] || null; }
+function cerrarSelectorCanalDirecto() {
+  canalDraft.seleccion = null;
+  document.getElementById('canal-directo-menu').style.display = 'none';
+}
+function actualizarCanalDirectoUI() {
+  const c = window.canalRailway || {}, activoAhora = canalOperativo(c);
+  const disponibleEnActivo = CANAL_DIRECTO_PILOTO.includes(activo);
+  const boton = document.getElementById('btn-canal-directo');
+  const estado = document.getElementById('canal-directo-status');
+  const panel = document.getElementById('canal-directo-panel');
+  const confirmacion = document.getElementById('canal-directo-confirmar');
+  boton.disabled = timeframe !== '1H' || !disponibleEnActivo;
+  if (!canalDraft.abierto) {
+    panel.style.display = 'none';
+    boton.textContent = activoAhora ? 'Editar canal' : '+ Nuevo canal';
+    estado.textContent = !disponibleEnActivo ? 'Piloto disponible solo en SPY'
+      : (activoAhora ? `${c.tipo} activo` : ((c.on || c.apagado || c.roto) ? 'Canal cerrado' : 'Sin canal'));
+    return;
+  }
+  const rol = rolPendienteCanalDirecto();
+  panel.style.display = 'block';
+  document.getElementById('canal-directo-title').textContent = `${activoAhora ? 'Reemplazar' : 'Nuevo'} canal — ${activo}`;
+  document.getElementById('canal-tipo-cnf').classList.toggle('on', canalDraft.tipo === 'CNF');
+  document.getElementById('canal-tipo-rcb').classList.toggle('on', canalDraft.tipo === 'RCB');
+  document.getElementById('canal-tipo-cnf').disabled = canalDraft.puntos.length > 0;
+  document.getElementById('canal-tipo-rcb').disabled = canalDraft.puntos.length > 0;
+  confirmacion.disabled = Boolean(rol);
+  estado.textContent = `Borrador ${canalDraft.tipo}`;
+  document.getElementById('canal-directo-step').textContent = rol
+    ? `Paso ${canalDraft.puntos.length + 1}/${rolesCanalDirecto().length}: haz clic en una vela para ${rol}.`
+    : 'Vista previa lista. El servidor validará las velas reales al confirmar.';
+}
+function abrirCanalDirecto() {
+  if (!CANAL_DIRECTO_PILOTO.includes(activo)) { toast('Canal Directo está en piloto controlado: disponible solo para SPY'); return; }
+  if (timeframe !== '1H') { toast('Canales directos solo se establecen en 1H'); return; }
+  if (!allVelas.length) { toast('Espera a que carguen las velas'); return; }
+  canalDraft.abierto = true; canalDraft.tipo = 'CNF'; canalDraft.puntos = [];
+  cerrarSelectorCanalDirecto(); hideTooltip(); actualizarCanalDirectoUI(); render();
+}
+function seleccionarTipoCanalDirecto(tipo) {
+  if (canalDraft.puntos.length) return;
+  canalDraft.tipo = tipo; actualizarCanalDirectoUI(); render();
+}
+function seleccionarVelaCanalDirecto(e, vela, visibleIdx) {
+  const rol = rolPendienteCanalDirecto(); if (!rol) return;
+  const dt = (vela.datetime || '').trim();
+  const punto = { rol, idx:visibleIdx + zoomStart, datetime:dt, fecha:dt.slice(0,10), hora_est:parseInt(dt.slice(11,13)), valor:rol === 'P3' ? vela.l : vela.h, vela:vela.vela || '—' };
+  canalDraft.seleccion = punto;
+  document.getElementById('canal-directo-menu-title').textContent = `USAR COMO ${rol}`;
+  document.getElementById('canal-directo-menu-info').innerHTML = `${punto.fecha} · ${punto.vela}<br>${rol === 'P3' ? 'Low' : 'High'} <b>$${punto.valor.toFixed(2)}</b>`;
+  const set = document.getElementById('canal-directo-set');
+  set.textContent = `Establecer ${rol} · $${punto.valor.toFixed(2)}`; set.onclick = confirmarPuntoCanalDirecto;
+  const menu = document.getElementById('canal-directo-menu');
+  menu.style.display = 'block'; menu.style.left = `${Math.min(e.clientX + 12, window.innerWidth - 246)}px`; menu.style.top = `${Math.min(e.clientY - 12, window.innerHeight - 150)}px`;
+}
+function confirmarPuntoCanalDirecto() {
+  const punto = canalDraft.seleccion, rol = rolPendienteCanalDirecto(); if (!punto || !rol) return;
+  const p1 = canalDraft.puntos[0];
+  if (rol === 'P2') {
+    if (punto.datetime <= p1.datetime) { toast('P2 debe estar después de P1'); return; }
+    if (punto.valor >= p1.valor) { toast('P2 debe ser menor que P1'); return; }
+  }
+  if (rol === 'P3') {
+    const p2 = canalDraft.puntos[1];
+    if (punto.datetime < p1.datetime) { toast('P3 no puede ser anterior a P1'); return; }
+    const techo = p1.valor + ((p2.valor - p1.valor) / (p2.idx - p1.idx)) * (punto.idx - p1.idx);
+    if (punto.valor >= techo) { toast('P3 debe quedar por debajo del techo'); return; }
+  }
+  canalDraft.puntos.push(punto); cerrarSelectorCanalDirecto(); actualizarCanalDirectoUI(); render();
+}
+function deshacerCanalDirecto() {
+  if (!canalDraft.puntos.length) { toast('No hay puntos para deshacer'); return; }
+  canalDraft.puntos.pop(); cerrarSelectorCanalDirecto(); actualizarCanalDirectoUI(); render();
+}
+function cancelarCanalDirecto() {
+  canalDraft.abierto = false; canalDraft.puntos = []; cerrarSelectorCanalDirecto(); actualizarCanalDirectoUI(); render();
+}
+async function confirmarCanalDirecto() {
+  if (rolPendienteCanalDirecto()) return;
+  const boton = document.getElementById('canal-directo-confirmar');
+  try {
+    boton.disabled = true; boton.textContent = 'Validando y activando…';
+    const r = await adminFetch(`${RAILWAY}/canal/directo`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ activo, tipo:canalDraft.tipo, puntos:canalDraft.puntos.map(p => ({fecha:p.fecha,hora_est:p.hora_est})) }) });
+    const data = await r.json(); if (!r.ok) throw new Error(data.error || 'No se pudo activar el canal');
+    canalDraft.abierto = false; canalDraft.puntos = []; cerrarSelectorCanalDirecto(); invalidarCanal(activo);
+    await cargarEstadoCanal(activo); toast(`✅ Canal ${data.tipo} activado${data.archivado_anterior ? ' · anterior archivado' : ''}`);
+  } catch (e) { toast(`❌ ${e.message}`); }
+  finally { boton.textContent = 'Revisar y confirmar canal'; actualizarCanalDirectoUI(); }
+}
+function dibujarBorradorCanal(ctx, xOf, yOf) {
+  if (!canalDraft.abierto || !canalDraft.puntos.length) return;
+  const puntos = canalDraft.puntos, color = canalDraft.tipo === 'RCB' ? '#f0b429' : '#58a6ff';
+  if (puntos.length >= 2) {
+    const [p1,p2] = puntos, pendiente = (p2.valor-p1.valor)/(p2.idx-p1.idx), inicio = Math.max(0,p1.idx-zoomStart), fin = allVelas.length-1-zoomStart;
+    ctx.beginPath(); ctx.strokeStyle=color; ctx.lineWidth=2; ctx.moveTo(xOf(inicio),yOf(p1.valor)); ctx.lineTo(xOf(fin),yOf(p1.valor+pendiente*(allVelas.length-1-p1.idx))); ctx.stroke();
+    if (puntos.length === 3) { const p3=puntos[2]; ctx.beginPath(); ctx.setLineDash([4,3]); ctx.moveTo(xOf(inicio),yOf(p3.valor+pendiente*(p1.idx-p3.idx))); ctx.lineTo(xOf(fin),yOf(p3.valor+pendiente*(allVelas.length-1-p3.idx))); ctx.stroke(); ctx.setLineDash([]); }
+  }
+  puntos.forEach(p => { const vis=p.idx-zoomStart; if (vis<0 || vis>zoomEnd-zoomStart) return; ctx.beginPath(); ctx.arc(xOf(vis),yOf(p.valor),5,0,Math.PI*2); ctx.fillStyle=color; ctx.fill(); ctx.fillStyle=color; ctx.font='bold 9px JetBrains Mono'; ctx.textAlign='center'; ctx.fillText(p.rol,xOf(vis),yOf(p.valor)-9); }); ctx.textAlign='left';
+}
+async function cargarEstadoCanal(sym) {
+  try {
+    const r = await adminFetch(`${RAILWAY}/canal_estado?activo=${sym}`), data = await r.json(), c = data[sym]; if (!c) return;
+    window.canalRailway = c; _canalCache[sym] = c; window.canalLineas = null;
+    if (canalOperativo(c)) { const r2 = await adminFetch(`${RAILWAY}/canal_lineas?activo=${sym}`), d2 = await r2.json(); if (d2.on && d2.lineas) window.canalLineas = d2.lineas; }
+    actualizarCanalDirectoUI(); render();
+  } catch(e) { document.getElementById('canal-directo-status').textContent = 'Error de canal'; }
+}
+
+// ═══════════════════════════════════════
 // RENDER PRINCIPAL
 // ═══════════════════════════════════════
 function actualizarReloj() {
@@ -1603,7 +1511,7 @@ function render() {
   });
 
   // Dibujar canales PM40 — solo si NO hay canal manual activo (RCB/CNF)
-  if (!window.canalRailway || !window.canalRailway.on) {
+  if (!canalOperativo(window.canalRailway)) {
   canalesPM40.forEach(c => {
     // Solo dibujar canales con P1 y P2 válidos (P2 < P1)
     if (!c.p2Idx || !c.p2High || c.p2High >= c.p1High) return;
@@ -1747,7 +1655,7 @@ function render() {
   });
 
   // ── Canales RCB/CNF — misma lógica que PM40 ──
-  if (window.canalRailway && window.canalRailway.on) {
+  if (canalOperativo(window.canalRailway)) {
     const c     = window.canalRailway;
     const color = c.tipo === 'RCB' ? '#f0b429' : '#58a6ff';
 
@@ -1868,6 +1776,9 @@ function render() {
     }
   }
 
+  // ── Borrador local de canal — nunca proviene ni modifica Railway ──
+  dibujarBorradorCanal(ctx, xOf, yOf);
+
   // ── Vela en formación — fuente de verdad: vela.completa del servidor ──
   if (esMercadoAbierto() && visible.length > 0) {
     let idxFormacion = -1;
@@ -1970,13 +1881,10 @@ cc.addEventListener('wheel', e => {
 // ═══════════════════════════════════════
 cc.addEventListener('mousedown', e => {
   if (drawMode) return;
-  // No cerrar menú si el click fue en el menú de vela
-  if (e.target.closest('#vela-menu')) return;
-  // Verificar si click sobre línea del canal
-  if (detectarClickCanal(e)) return;
-  // Ocultar menús previos
-  document.getElementById('canal-delete-btn').style.display = 'none';
-  cerrarMenuVela();
+  if (canalDraft.abierto) {
+    _clickPos = { x: e.clientX, y: e.clientY };
+    return;
+  }
   _clickPos = { x: e.clientX, y: e.clientY };
   panActive = true;
   panX0     = e.clientX;
@@ -1987,17 +1895,15 @@ cc.addEventListener('mousedown', e => {
 cc.addEventListener('click', e => {
   if (drawMode) return;
   if (timeframe !== '1H') return;
-  // Solo si no hubo pan (click en lugar, no arrastre)
-  if (_clickPos && Math.abs(e.clientX - _clickPos.x) < 5 && Math.abs(e.clientY - _clickPos.y) < 5) {
-    const rect  = cc.getBoundingClientRect();
-    const mouseX = e.clientX - rect.left;
-    const W = cc.width;
-    const gW = W - M.left - M.right;
-    const visible = allVelas.slice(zoomStart, zoomEnd + 1);
-    const i = Math.round((mouseX - M.left) / gW * (visible.length - 1));
-    if (i >= 0 && i < visible.length) {
-      mostrarMenuVela(e, visible[i]);
+  if (canalDraft.abierto) {
+    if (_clickPos && Math.abs(e.clientX - _clickPos.x) < 5 && Math.abs(e.clientY - _clickPos.y) < 5) {
+      const rect = cc.getBoundingClientRect();
+      const visible = allVelas.slice(zoomStart, zoomEnd + 1);
+      const i = Math.round((e.clientX - rect.left - M.left) / (cc.width - M.left - M.right) * (visible.length - 1));
+      if (i >= 0 && i < visible.length) seleccionarVelaCanalDirecto(e, visible[i], i);
     }
+    _clickPos = null;
+    return;
   }
   _clickPos = null;
 });
@@ -2015,6 +1921,12 @@ cc.addEventListener('mousemove', e => {
     zoomStart = Math.max(0, ns);
     zoomEnd   = Math.min(total-1, ne);
     render();
+  } else if (!drawMode && canalDraft.abierto) {
+    const rect = cc.getBoundingClientRect();
+    const visible = allVelas.slice(zoomStart, zoomEnd + 1);
+    const i = Math.round((e.clientX - rect.left - M.left) / (cc.width - M.left - M.right) * (visible.length - 1));
+    document.getElementById('tooltip').style.display = 'none';
+    if (i >= 0 && i < visible.length && i !== hoveredIdx) { hoveredIdx = i; render(); }
   } else if (!drawMode) {
     showTooltip(e);
   }
@@ -2053,6 +1965,7 @@ function togSMA(p) {
 // CAMBIAR ACTIVO
 // ═══════════════════════════════════════
 async function cambiar(sym) {
+  if (canalDraft.abierto) cancelarCanalDirecto();
   activo = sym;
   clearTimeout(refreshTimer);
   document.querySelectorAll('.tab').forEach(b => {
@@ -2067,6 +1980,7 @@ async function cambiar(sym) {
     allVelas = _velasCache[sym];
     zoomStart = 0; zoomEnd = allVelas.length - 1;
     updatePrecio(allVelas);
+    actualizarCanalDirectoUI();
     render();
     document.getElementById('info').textContent =
       `${allVelas.length} velas · ${timeframe} · ⚡ cache`;
@@ -2082,7 +1996,6 @@ async function cambiar(sym) {
   allVelas = []; zoomStart = 0; zoomEnd = 0;
   window.senalesHoy = [];
   señalesHistoricas = {};
-  _p1Local = null;  // limpiar P1 local al cambiar activo
   document.getElementById('info').textContent = `Cargando ${sym}...`;
 
   await Promise.all([
@@ -2133,6 +2046,7 @@ function togDraw() {
 
 // ESC cancela modo dibujo
 document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && canalDraft.abierto) { cancelarCanalDirecto(); return; }
   if (e.key === 'Escape' && drawMode) togDraw();
 });
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v9.07
+AXIS Breakout Sentinel v9.09
 Estrategias: 1VR | 1VR+ | RPG | GNA | GBA | RCB/CNF
 Multi-activo: SPY, AAPL, BA, GLD, NVDA, AMZN, GOOG, META, MU, SPCX
 v8.43: Portfolio fix — ejecutar_orden_tradier en webhook exec/reto | Panic Button al bid |
@@ -59,6 +59,9 @@ v9.05: AX-OPS-WATCH-001: reporte especial horario interno por Telegram; observa 
 v9.06: AX-RECON-OPS-001: reconciliación semanal interna obligatoria, con recuperación sábado y entrega Telegram.
 v9.07: AX-CHAIN-001: tesis matriz y confirmaciones manuales encadenadas; contraseñales suprimidas,
        cohortes PRE-CHAIN/CHAIN-001 y retiro de la vigilancia horaria de Telegram.
+v9.08: AX-CHART-UX-001: canales CNF/RCB se crean desde velas del chart mediante borrador local y
+       confirmación atómica validada por servidor; se archiva el canal reemplazado.
+v9.09: AX-CHART-UX-001 PILOTO: Canal Directo limitado temporalmente a SPY hasta validación controlada.
 """
 
 import os
@@ -68,6 +71,7 @@ import time
 import hmac
 import hashlib
 import secrets
+from copy import deepcopy
 from functools import wraps
 from datetime import datetime, timedelta, date
 import pytz
@@ -229,7 +233,7 @@ def loop_limpiar_ordenes():
             print(f"Error loop_limpiar_ordenes: {e}")
 
 # ── VERSIÓN ──────────────────────────────────────────────────────────────────
-AXIS_VERSION = "9.07"
+AXIS_VERSION = "9.09"
 _BUILD_DATE  = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
 
 def _git_commit_short():
@@ -259,6 +263,10 @@ from axis_config import (
     ACTIVOS, HORAS_REPORTE, ACTIVOS_SPY, SISTEMA_ACTIVO,
     VR1_ON, RPG_ON, GNA_ON, GBA_ON,
 )
+
+# AX-CHART-UX-001: piloto de interfaz. La autorización efectiva vive en el
+# servidor; quitar "SPY" de esta tupla habilita el flujo para todos los activos.
+CANAL_DIRECTO_PILOTO = ("SPY",)
 
 # ═══════════════════════════════════════════════════════════
 # ESTADO POR ACTIVO
@@ -1049,7 +1057,7 @@ from axis_channels import CANALES_DEFAULT
 import axis_channels as _axis_channels
 
 def guardar_canales():
-    _axis_channels.guardar_canales(canal, ACTIVOS, CANALES_FILE)
+    return _axis_channels.guardar_canales(canal, ACTIVOS, CANALES_FILE)
 
 def cargar_canales():
     _axis_channels.cargar_canales(canal, ACTIVOS, CANALES_FILE, EST)
@@ -2832,6 +2840,173 @@ def reporte_manual():
     reporte_horario()
     return jsonify({"status": "reporte enviado"}), 200
 
+
+# ═══════════════════════════════════════════════════════════
+# AX-CHART-UX-001 — CANAL DIRECTO DESDE VELAS REALES
+# ═══════════════════════════════════════════════════════════
+def _canal_operativo(c):
+    """Un canal roto o apagado conserva historial, pero no es operativo."""
+    return bool(c.get("on") and not c.get("apagado") and not c.get("roto")
+                and c.get("p1") and c.get("p2"))
+
+
+def _resolver_punto_canal_directo(simbolo, nombre, dato, velas):
+    """Resuelve un punto por fecha/hora contra la vela AXIS real.
+
+    El cliente nunca envía High/Low: el servidor vuelve a leer el valor de su
+    propia cache antes de permitir una activación.
+    """
+    if not isinstance(dato, dict):
+        raise ValueError(f"{nombre} inválido")
+    fecha = str(dato.get("fecha", ""))
+    try:
+        hora = int(dato.get("hora_est"))
+    except (TypeError, ValueError):
+        raise ValueError(f"{nombre} requiere fecha y hora AXIS válidas")
+    if hora < 9 or hora > 15:
+        raise ValueError(f"{nombre} tiene una hora fuera de V1–V7")
+
+    coincidencias = []
+    for vela in velas:
+        dt = str(vela.get("datetime", ""))
+        if dt[:10] != fecha:
+            continue
+        try:
+            hora_vela = int(dt[11:13])
+        except (TypeError, ValueError):
+            continue
+        if hora_vela == hora:
+            coincidencias.append(vela)
+    if len(coincidencias) != 1:
+        raise ValueError(f"{nombre} no existe como vela AXIS disponible")
+    vela = coincidencias[0]
+    if vela.get("completa") is False:
+        raise ValueError(f"{nombre} no puede usar una vela aún en formación")
+
+    valor = float(vela["low"] if nombre == "P3" else vela["high"])
+    return {
+        "fecha": fecha,
+        "hora_est": hora,
+        "valor": valor,
+        "ts": ts_a_datetime(fecha, hora),
+    }
+
+
+def _construir_canal_directo(simbolo, payload):
+    if not isinstance(payload, dict):
+        raise ValueError("Payload de canal inválido")
+    tipo = str(payload.get("tipo", "")).upper()
+    if tipo not in ("CNF", "RCB"):
+        raise ValueError("Tipo debe ser CNF o RCB")
+    puntos = payload.get("puntos")
+    esperados = 3 if tipo == "RCB" else 2
+    if not isinstance(puntos, list) or len(puntos) != esperados:
+        raise ValueError(f"{tipo} requiere exactamente {esperados} puntos")
+
+    velas = get_velas(simbolo, outputsize=280)
+    if not velas:
+        raise ValueError(f"Sin velas AXIS disponibles para {simbolo}")
+
+    p1 = _resolver_punto_canal_directo(simbolo, "P1", puntos[0], velas)
+    p2 = _resolver_punto_canal_directo(simbolo, "P2", puntos[1], velas)
+    if p2["ts"] <= p1["ts"]:
+        raise ValueError("P2 debe estar después de P1")
+    if p2["valor"] >= p1["valor"]:
+        raise ValueError(f"P2 ${p2['valor']:.2f} debe ser menor que P1 ${p1['valor']:.2f}")
+
+    pasos_p1_p2 = velas_mercado_entre(p1["ts"], p2["ts"])
+    if pasos_p1_p2 <= 0:
+        raise ValueError("P1 y P2 no definen una pendiente de mercado válida")
+
+    p3 = None
+    if tipo == "RCB":
+        p3 = _resolver_punto_canal_directo(simbolo, "P3", puntos[2], velas)
+        if p3["ts"] < p1["ts"]:
+            raise ValueError("P3 no puede ser anterior a P1")
+        pendiente = (p2["valor"] - p1["valor"]) / pasos_p1_p2
+        techo_p3 = p1["valor"] + pendiente * velas_mercado_entre(p1["ts"], p3["ts"])
+        if p3["valor"] >= techo_p3:
+            raise ValueError(f"P3 ${p3['valor']:.2f} debe quedar por debajo del techo ${techo_p3:.2f}")
+
+    return {
+        "on": True,
+        "apagado": False,
+        "roto": False,
+        "fecha_ruptura": None,
+        "p1": {"fecha": p1["fecha"], "hora_est": p1["hora_est"], "high": p1["valor"]},
+        "p2": {"fecha": p2["fecha"], "hora_est": p2["hora_est"], "high": p2["valor"]},
+        "p3": ({"fecha": p3["fecha"], "hora_est": p3["hora_est"], "low": p3["valor"]} if p3 else None),
+        "p2_actual_high": p2["valor"],
+        "p2_actual_ts": p2["ts"],
+        "v1_candidato": None,
+        "historial": [],
+    }
+
+
+def _archivo_canal_directo(c):
+    """Devuelve una versión JSON-safe del canal anterior para trazabilidad."""
+    ts = c.get("p2_actual_ts")
+    return {
+        "archivado_en": datetime.now(EST).isoformat(),
+        "origen": "AX-CHART-UX-001",
+        "motivo": "reemplazo_confirmado_desde_chart",
+        "canal": {
+            "on": bool(c.get("on")), "apagado": bool(c.get("apagado")),
+            "roto": bool(c.get("roto")), "fecha_ruptura": c.get("fecha_ruptura"),
+            "p1": deepcopy(c.get("p1")), "p2": deepcopy(c.get("p2")), "p3": deepcopy(c.get("p3")),
+            "p2_actual_high": c.get("p2_actual_high"),
+            "p2_actual_ts": ts.isoformat() if hasattr(ts, "isoformat") else ts,
+        },
+    }
+
+
+@app.route("/canal/directo", methods=["POST"])
+@require_admin
+def canal_directo():
+    payload = request.get_json(silent=True) or {}
+    simbolo = str(payload.get("activo", "")).upper()
+    if simbolo not in ACTIVOS:
+        return jsonify({"error": "Activo no reconocido"}), 400
+    if simbolo not in CANAL_DIRECTO_PILOTO:
+        return jsonify({"error": "Canal Directo está en piloto controlado: disponible solo para SPY"}), 403
+    try:
+        propuesto = _construir_canal_directo(simbolo, payload)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
+    if payload.get("dry_run") is True:
+        return jsonify({
+            "ok": True, "dry_run": True, "activo": simbolo,
+            "tipo": "RCB" if propuesto["p3"] else "CNF",
+            "p1": propuesto["p1"], "p2": propuesto["p2"], "p3": propuesto["p3"],
+        }), 200
+
+    anterior = canal[simbolo]
+    historial = list(anterior.get("historial", []))
+    if anterior.get("p1") and anterior.get("p2"):
+        historial.append(_archivo_canal_directo(anterior))
+    propuesto["historial"] = historial[-20:]
+
+    # Todas las validaciones ocurrieron antes de esta asignación única.
+    canal[simbolo] = propuesto
+    if not guardar_canales():
+        canal[simbolo] = anterior
+        return jsonify({"error": "No se pudo guardar el canal; no se aplicaron cambios"}), 500
+
+    tipo = "RCB" if propuesto["p3"] else "CNF"
+    enviar_telegram(
+        f"✅ <b>Canal {tipo} activado — {simbolo}</b>\n"
+        f"<b>Origen:</b> AXIS Charts · canal directo\n"
+        f"<b>P1:</b> ${propuesto['p1']['high']:.2f} — {propuesto['p1']['fecha']} V{propuesto['p1']['hora_est']}\n"
+        f"<b>P2:</b> ${propuesto['p2']['high']:.2f} — {propuesto['p2']['fecha']} V{propuesto['p2']['hora_est']}" +
+        (f"\n<b>P3:</b> ${propuesto['p3']['low']:.2f} — {propuesto['p3']['fecha']} V{propuesto['p3']['hora_est']}" if propuesto["p3"] else "")
+    )
+    return jsonify({
+        "ok": True, "activo": simbolo, "tipo": tipo,
+        "p1": propuesto["p1"], "p2": propuesto["p2"], "p3": propuesto["p3"],
+        "archivado_anterior": bool(anterior.get("p1") and anterior.get("p2")),
+    }), 200
+
 @app.route("/activar", methods=["POST"])
 @require_admin
 def activar():
@@ -4070,7 +4245,7 @@ def ruta_bitacora_seed():
         "instrucciones_ai": "Lee este archivo completo antes de actuar. NUNCA codifiques sin autorización de Noel. Conversa, diseña, Noel aprueba, luego implementas. Un cambio a la vez. Verifica con /status después de cada deploy.",
         "versiones": {
             "server_py":          f"v{AXIS_VERSION}",
-            "axis_charts_html":   "v1.4.1",
+            "axis_charts_html":   "v1.5.1",
             "axis_portfolio_html":"v1.3",
             "axis_bitacora_html": "v1.0"
         },
@@ -4496,11 +4671,13 @@ def canal_estado():
     for a in activos:
         c = canal[a]
         ahora_dt = datetime.now(EST)
-        techo = calcular_techo_canal(a, ahora_dt) if c["on"] else None
-        piso_mitad = calcular_piso_mitad_canal(a, ahora_dt) if c["on"] and c["p3"] else (None, None)
+        operativo = _canal_operativo(c)
+        techo = calcular_techo_canal(a, ahora_dt) if operativo else None
+        piso_mitad = calcular_piso_mitad_canal(a, ahora_dt) if operativo and c["p3"] else (None, None)
         resultado[a] = {
             "on": c["on"], "apagado": c.get("apagado", False),
             "roto": c.get("roto", False), "fecha_ruptura": c.get("fecha_ruptura", None),
+            "operativo": operativo,
             "tipo": "RCB" if (c["on"] and c["p3"]) else ("CNF" if c["on"] else "---"),
             "p1": c["p1"], "p2": c["p2"], "p3": c["p3"],
             "techo": round(techo, 2) if techo else None,
@@ -4516,8 +4693,8 @@ def canal_lineas():
     if simbolo not in ACTIVOS:
         return jsonify({"error": "Activo no reconocido"}), 400
     c = canal[simbolo]
-    if not c["on"] or not c["p1"] or not c["p2"]:
-        return jsonify({"activo": simbolo, "on": False, "lineas": []}), 200
+    if not _canal_operativo(c):
+        return jsonify({"activo": simbolo, "on": False, "operativo": False, "lineas": []}), 200
     velas = get_velas(simbolo, outputsize=280)
     if not velas:
         return jsonify({"error": "Sin velas"}), 500
@@ -4543,7 +4720,7 @@ def canal_lineas():
         except:
             continue
     tipo = "RCB" if c["p3"] else "CNF"
-    return jsonify({"activo": simbolo, "on": True, "tipo": tipo, "lineas": lineas}), 200
+    return jsonify({"activo": simbolo, "on": True, "operativo": True, "tipo": tipo, "lineas": lineas}), 200
 
 # ═══════════════════════════════════════════════════════════
 # POLLING GTC Y VENCIMIENTO

@@ -31,6 +31,7 @@ def canal_vacio():
         "apagado":        False,
         "roto":           False,
         "fecha_ruptura":  None,
+        "historial":      [],
     }
 
 
@@ -75,6 +76,7 @@ def guardar_canales(canal, ACTIVOS, CANALES_FILE):
                 "apagado":        c["apagado"],
                 "roto":           c.get("roto", False),
                 "fecha_ruptura":  c.get("fecha_ruptura", None),
+                "historial":      c.get("historial", [])[-20:],
                 "p1":             c["p1"],
                 "p2":             c["p2"],
                 "p3":             c["p3"],
@@ -85,8 +87,10 @@ def guardar_canales(canal, ACTIVOS, CANALES_FILE):
         with open(CANALES_FILE, 'w') as f:
             json.dump(data, f, indent=2)
         print(f"Canales guardados → {CANALES_FILE}")
+        return True
     except Exception as e:
         print(f"Error guardando canales: {e}")
+        return False
 
 
 def cargar_canales(canal, ACTIVOS, CANALES_FILE, EST):
@@ -108,6 +112,7 @@ def cargar_canales(canal, ACTIVOS, CANALES_FILE, EST):
             canal[a]["apagado"]        = d.get("apagado", False)
             canal[a]["roto"]           = d.get("roto", False)
             canal[a]["fecha_ruptura"]  = d.get("fecha_ruptura", None)
+            canal[a]["historial"]      = d.get("historial", [])[-20:]
             canal[a]["p1"]             = d.get("p1")
             canal[a]["p2"]             = d.get("p2")
             canal[a]["p3"]             = d.get("p3")
