@@ -225,7 +225,7 @@
 </div>
 
 <header>
-  <div class="logo">AXIS<small>CHARTS v1.5.1 — CANAL DIRECTO · PILOTO SPY</small></div>
+  <div class="logo">AXIS<small>CHARTS v1.5.2 — CANAL DIRECTO</small></div>
   <div class="tabs">
     <button class="tab on"  data-activo="SPY"  onclick="cambiar('SPY')">SPY</button>
     <button class="tab"     data-activo="AAPL" onclick="cambiar('AAPL')">AAPL</button>
@@ -328,8 +328,6 @@
 // ═══════════════════════════════════════
 const RAILWAY = 'https://web-production-bf9d0.up.railway.app';
 const ACTIVOS = ['SPY','AAPL','BA','GLD','NVDA','AMZN','GOOG','META','MU','SPCX'];
-// AX-CHART-UX-001: reflejo visual del piloto. El servidor es la protección real.
-const CANAL_DIRECTO_PILOTO = ['SPY'];
 
 async function adminFetch(url, options = {}) {
   const headers = new Headers(options.headers || {});
@@ -1229,17 +1227,15 @@ function cerrarSelectorCanalDirecto() {
 }
 function actualizarCanalDirectoUI() {
   const c = window.canalRailway || {}, activoAhora = canalOperativo(c);
-  const disponibleEnActivo = CANAL_DIRECTO_PILOTO.includes(activo);
   const boton = document.getElementById('btn-canal-directo');
   const estado = document.getElementById('canal-directo-status');
   const panel = document.getElementById('canal-directo-panel');
   const confirmacion = document.getElementById('canal-directo-confirmar');
-  boton.disabled = timeframe !== '1H' || !disponibleEnActivo;
+  boton.disabled = timeframe !== '1H';
   if (!canalDraft.abierto) {
     panel.style.display = 'none';
     boton.textContent = activoAhora ? 'Editar canal' : '+ Nuevo canal';
-    estado.textContent = !disponibleEnActivo ? 'Piloto disponible solo en SPY'
-      : (activoAhora ? `${c.tipo} activo` : ((c.on || c.apagado || c.roto) ? 'Canal cerrado' : 'Sin canal'));
+    estado.textContent = activoAhora ? `${c.tipo} activo` : ((c.on || c.apagado || c.roto) ? 'Canal cerrado' : 'Sin canal');
     return;
   }
   const rol = rolPendienteCanalDirecto();
@@ -1256,7 +1252,6 @@ function actualizarCanalDirectoUI() {
     : 'Vista previa lista. El servidor validará las velas reales al confirmar.';
 }
 function abrirCanalDirecto() {
-  if (!CANAL_DIRECTO_PILOTO.includes(activo)) { toast('Canal Directo está en piloto controlado: disponible solo para SPY'); return; }
   if (timeframe !== '1H') { toast('Canales directos solo se establecen en 1H'); return; }
   if (!allVelas.length) { toast('Espera a que carguen las velas'); return; }
   canalDraft.abierto = true; canalDraft.tipo = 'CNF'; canalDraft.puntos = [];

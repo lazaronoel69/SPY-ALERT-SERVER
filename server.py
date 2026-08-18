@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v9.09
+AXIS Breakout Sentinel v9.10
 Estrategias: 1VR | 1VR+ | RPG | GNA | GBA | RCB/CNF
 Multi-activo: SPY, AAPL, BA, GLD, NVDA, AMZN, GOOG, META, MU, SPCX
 v8.43: Portfolio fix — ejecutar_orden_tradier en webhook exec/reto | Panic Button al bid |
@@ -62,6 +62,7 @@ v9.07: AX-CHAIN-001: tesis matriz y confirmaciones manuales encadenadas; contras
 v9.08: AX-CHART-UX-001: canales CNF/RCB se crean desde velas del chart mediante borrador local y
        confirmación atómica validada por servidor; se archiva el canal reemplazado.
 v9.09: AX-CHART-UX-001 PILOTO: Canal Directo limitado temporalmente a SPY hasta validación controlada.
+v9.10: AX-CHART-UX-001: piloto SPY validado; Canal Directo habilitado para todos los activos.
 """
 
 import os
@@ -233,7 +234,7 @@ def loop_limpiar_ordenes():
             print(f"Error loop_limpiar_ordenes: {e}")
 
 # ── VERSIÓN ──────────────────────────────────────────────────────────────────
-AXIS_VERSION = "9.09"
+AXIS_VERSION = "9.10"
 _BUILD_DATE  = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
 
 def _git_commit_short():
@@ -263,10 +264,6 @@ from axis_config import (
     ACTIVOS, HORAS_REPORTE, ACTIVOS_SPY, SISTEMA_ACTIVO,
     VR1_ON, RPG_ON, GNA_ON, GBA_ON,
 )
-
-# AX-CHART-UX-001: piloto de interfaz. La autorización efectiva vive en el
-# servidor; quitar "SPY" de esta tupla habilita el flujo para todos los activos.
-CANAL_DIRECTO_PILOTO = ("SPY",)
 
 # ═══════════════════════════════════════════════════════════
 # ESTADO POR ACTIVO
@@ -2967,8 +2964,6 @@ def canal_directo():
     simbolo = str(payload.get("activo", "")).upper()
     if simbolo not in ACTIVOS:
         return jsonify({"error": "Activo no reconocido"}), 400
-    if simbolo not in CANAL_DIRECTO_PILOTO:
-        return jsonify({"error": "Canal Directo está en piloto controlado: disponible solo para SPY"}), 403
     try:
         propuesto = _construir_canal_directo(simbolo, payload)
     except ValueError as e:
@@ -4245,7 +4240,7 @@ def ruta_bitacora_seed():
         "instrucciones_ai": "Lee este archivo completo antes de actuar. NUNCA codifiques sin autorización de Noel. Conversa, diseña, Noel aprueba, luego implementas. Un cambio a la vez. Verifica con /status después de cada deploy.",
         "versiones": {
             "server_py":          f"v{AXIS_VERSION}",
-            "axis_charts_html":   "v1.5.1",
+            "axis_charts_html":   "v1.5.2",
             "axis_portfolio_html":"v1.3",
             "axis_bitacora_html": "v1.0"
         },
