@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AXIS Breakout Sentinel v9.06
+AXIS Breakout Sentinel v9.07
 Estrategias: 1VR | 1VR+ | RPG | GNA | GBA | RCB/CNF
 Multi-activo: SPY, AAPL, BA, GLD, NVDA, AMZN, GOOG, META, MU, SPCX
 v8.43: Portfolio fix — ejecutar_orden_tradier en webhook exec/reto | Panic Button al bid |
@@ -57,6 +57,8 @@ v9.03: AX-DERBY-002: Derby muestra strike junto al contrato activo.
 v9.04: AX-CONFLICT-001: una tesis direccional por activo mientras haya posición abierta; refuerzos sin compra y contraseñales suprimidas.
 v9.05: AX-OPS-WATCH-001: reporte especial horario interno por Telegram; observa THESIS_LOCK y flujo, sin operar.
 v9.06: AX-RECON-OPS-001: reconciliación semanal interna obligatoria, con recuperación sábado y entrega Telegram.
+v9.07: AX-CHAIN-001: tesis matriz y confirmaciones manuales encadenadas; contraseñales suprimidas,
+       cohortes PRE-CHAIN/CHAIN-001 y retiro de la vigilancia horaria de Telegram.
 """
 
 import os
@@ -227,7 +229,7 @@ def loop_limpiar_ordenes():
             print(f"Error loop_limpiar_ordenes: {e}")
 
 # ── VERSIÓN ──────────────────────────────────────────────────────────────────
-AXIS_VERSION = "9.06"
+AXIS_VERSION = "9.07"
 _BUILD_DATE  = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
 
 def _git_commit_short():
@@ -664,11 +666,31 @@ _portfolio = None
 def cargar_portfolio():
     global _portfolio
     _portfolio, _debe_guardar = _axis_portfolio.cargar_portfolio()
+    if _etiquetar_cohortes_pre_chain(_portfolio):
+        _debe_guardar = True
     if _debe_guardar:
         guardar_portfolio()
 
 def guardar_portfolio():
     _axis_portfolio.guardar_portfolio(_portfolio)
+
+
+# ── AX-CHAIN-001: cohortes y cadena de tesis ─────────────────────────────
+# PRE-CHAIN preserva exactamente las posiciones previas. CHAIN-001 comienza
+# solo en nuevas posiciones; no reconstruye ni simula operaciones históricas.
+COHORTE_PRE_CHAIN = "PRE-CHAIN"
+COHORTE_CHAIN_001 = "CHAIN-001"
+
+
+def _etiquetar_cohortes_pre_chain(portfolio):
+    """Etiqueta registros existentes una sola vez, sin cambiar sus resultados."""
+    cambio = False
+    for clave in ("posiciones", "historial"):
+        for pos in portfolio.get(clave, []):
+            if not pos.get("cohorte"):
+                pos["cohorte"] = COHORTE_PRE_CHAIN
+                cambio = True
+    return cambio
 
 
 # ── AX-RISK-001: observación de salidas, sin ejecución de trading ─────────
@@ -722,7 +744,8 @@ def actualizar_salidas_sombra(pos, pl_pct, mfe_pct, ahora, minutos_abierta):
 
 def registrar_posicion(opcion, estrategia, simbolo, precio_entrada, es_reto=False, carril_id=None,
                        contratos=1, tradier_orden_id=None, tradier_gtc_id=None,
-                       alert_id=None, gtc_confirmada=True, gtc_error=None):
+                       alert_id=None, gtc_confirmada=True, gtc_error=None,
+                       chain_id=None, chain_root_alert_id=None, chain_role="MATRIZ"):
     global _portfolio
     if _portfolio is None:
         cargar_portfolio()
@@ -732,6 +755,10 @@ def registrar_posicion(opcion, estrategia, simbolo, precio_entrada, es_reto=Fals
     pos = {
         "id":               str(uuid.uuid4())[:8],
         "alert_id":         alert_id,
+        "cohorte":          COHORTE_CHAIN_001,
+        "chain_id":         chain_id or f"CHAIN-{alert_id}",
+        "chain_root_alert_id": chain_root_alert_id or alert_id,
+        "chain_role":       chain_role,
         "simbolo":          simbolo,
         "estrategia":       estrategia,
         "tipo":             opcion["tipo"],
@@ -786,6 +813,8 @@ def registrar_posicion(opcion, estrategia, simbolo, precio_entrada, es_reto=Fals
     actualizar_alerta(
         alert_id, "ACTIVE", "POSITION_OPENED",
         posicion_id=pos["id"], contratos=contratos,
+        cohorte=pos["cohorte"], chain_id=pos["chain_id"],
+        chain_root_alert_id=pos["chain_root_alert_id"], chain_role=pos["chain_role"],
         precio_entrada=precio_entrada,
         option_symbol=opcion.get("symbol"), strike=opcion.get("strike"),
         expiration=opcion.get("expiration"), tradier_orden_id=tradier_orden_id,
@@ -2083,17 +2112,15 @@ def registrar_senal_disparada(simbolo, estrategia, hora_label=None):
     guardar_estado_dia()
 
 
-# ── AX-CONFLICT-001: una tesis direccional viva por activo ───────────────
-# La tesis no es una nueva fuente de estado: se deriva exclusivamente de las
-# posiciones abiertas ya confirmadas por Tradier. Así, un reinicio no puede
-# olvidar el bloqueo ni mantenerlo después de un cierre real.
+# ── AX-CHAIN-001: una cadena direccional viva por activo ─────────────────
+# La cadena se deriva de posiciones abiertas confirmadas por Tradier. Así, un
+# reinicio no puede olvidar el bloqueo ni mantenerlo después del último cierre.
 def clasificar_tesis_activa(simbolo, direccion):
     """Clasifica una nueva dirección contra las posiciones abiertas del activo.
 
-    NEW permite una primera tesis. REINFORCEMENT conserva evidencia de una
-    señal alineada, pero no abre una segunda posición. COUNTERSIGNAL bloquea
-    la dirección opuesta. LEGACY_MIXED protege posiciones antiguas que ya
-    quedaron con CALL y PUT simultáneos sin escoger ni alterar una de ellas.
+    NEW crea la matriz. REINFORCEMENT permite una confirmación manual alineada.
+    COUNTERSIGNAL bloquea la dirección opuesta. PRE_CHAIN_ACTIVE aísla datos
+    legacy para que nunca se conviertan accidentalmente en CHAIN-001.
     """
     global _portfolio
     if _portfolio is None:
@@ -2112,20 +2139,41 @@ def clasificar_tesis_activa(simbolo, direccion):
             "accion": "NEW",
             "simbolo": simbolo_normalizado,
             "direccion_senal": direccion_normalizada,
+            "cohorte": COHORTE_CHAIN_001,
             "posicion_ids": [],
             "alert_ids": [],
         }
 
+    pre_chain = [p for p in abiertas if p.get("cohorte") == COHORTE_PRE_CHAIN]
+    if pre_chain:
+        return {
+            "accion": "PRE_CHAIN_ACTIVE",
+            "simbolo": simbolo_normalizado,
+            "direccion_senal": direccion_normalizada,
+            "cohorte": COHORTE_PRE_CHAIN,
+            "posicion_ids": [p.get("id") for p in pre_chain if p.get("id")],
+            "alert_ids": [p.get("alert_id") for p in pre_chain if p.get("alert_id")],
+        }
+
     direcciones = sorted({str(pos.get("tipo")).upper() for pos in abiertas})
+    chain_ids = {str(pos.get("chain_id")) for pos in abiertas if pos.get("chain_id")}
     contexto = {
         "simbolo": simbolo_normalizado,
         "direccion_senal": direccion_normalizada,
         "direccion_tesis": direcciones[0] if len(direcciones) == 1 else None,
+        "cohorte": COHORTE_CHAIN_001,
+        "chain_id": next(iter(chain_ids)) if len(chain_ids) == 1 else None,
+        "chain_root_alert_id": next(
+            (p.get("chain_root_alert_id") for p in abiertas if p.get("chain_root_alert_id")),
+            None,
+        ),
         "posicion_ids": [pos.get("id") for pos in abiertas if pos.get("id")],
         "alert_ids": [pos.get("alert_id") for pos in abiertas if pos.get("alert_id")],
     }
     if len(direcciones) != 1:
         return {"accion": "LEGACY_MIXED", "direcciones_abiertas": direcciones, **contexto}
+    if len(chain_ids) != 1:
+        return {"accion": "CHAIN_INTEGRITY", **contexto}
     if direccion_normalizada == direcciones[0]:
         return {"accion": "REINFORCEMENT", **contexto}
     return {"accion": "COUNTERSIGNAL", **contexto}
@@ -2136,13 +2184,16 @@ def _campos_tesis(tesis):
     return {
         "tesis_accion": tesis.get("accion"),
         "tesis_direccion": tesis.get("direccion_tesis"),
+        "tesis_cohorte": tesis.get("cohorte"),
+        "tesis_chain_id": tesis.get("chain_id"),
+        "tesis_chain_root_alert_id": tesis.get("chain_root_alert_id"),
         "tesis_posicion_ids": tesis.get("posicion_ids", []),
         "tesis_alert_ids": tesis.get("alert_ids", []),
     }
 
 
 def aplicar_tesis_a_alerta(alert_id, simbolo, estrategia, hora_label, direccion):
-    """Registra y comunica un bloqueo/refuerzo; devuelve None si es tesis nueva."""
+    """Registra cadena y devuelve contexto; solo las acciones bloqueadas paran el flujo."""
     tesis = clasificar_tesis_activa(simbolo, direccion)
     accion = tesis["accion"]
     if accion == "NEW":
@@ -2151,21 +2202,17 @@ def aplicar_tesis_a_alerta(alert_id, simbolo, estrategia, hora_label, direccion)
     campos = _campos_tesis(tesis)
     if accion == "REINFORCEMENT":
         actualizar_alerta(
-            alert_id, "NOTIFIED", "THESIS_REINFORCEMENT",
-            decision="REFUERZO", **campos,
+            alert_id, evento="THESIS_CONFIRMATION_AVAILABLE",
+            decision="CONFIRMACION", **campos,
         )
-        enviar_telegram(
-            f"🛡️ <b>REFUERZO DE TESIS — {simbolo} {direccion}</b>\n"
-            f"<b>Estrategia:</b> {estrategia} | <b>Hora:</b> {hora_label}\n"
-            f"<b>Tesis activa:</b> {tesis['direccion_tesis']} en posición abierta\n"
-            "Se registra como evidencia; no se abre otra posición."
-        )
+        return tesis
     else:
-        evento = (
-            "THESIS_COUNTERSIGNAL_SUPPRESSED"
-            if accion == "COUNTERSIGNAL"
-            else "THESIS_LEGACY_MIXED_SUPPRESSED"
-        )
+        evento = {
+            "COUNTERSIGNAL": "THESIS_COUNTERSIGNAL_SUPPRESSED",
+            "LEGACY_MIXED": "THESIS_LEGACY_MIXED_SUPPRESSED",
+            "PRE_CHAIN_ACTIVE": "PRE_CHAIN_ACTIVE_SUPPRESSED",
+            "CHAIN_INTEGRITY": "THESIS_CHAIN_INTEGRITY_SUPPRESSED",
+        }[accion]
         actualizar_alerta(
             alert_id, "CANCELLED", evento,
             decision="SUPPRESSED", **campos,
@@ -2176,18 +2223,20 @@ def aplicar_tesis_a_alerta(alert_id, simbolo, estrategia, hora_label, direccion)
 
 
 def bloquear_ejecucion_por_tesis(orden_id, datos):
-    """Cierra una orden pendiente si una tesis apareció antes del callback."""
+    """Bloquea solo dirección incompatible o legacy antes del callback broker."""
     opcion = datos.get("opcion", {})
     simbolo = opcion.get("subyacente") or datos.get("simbolo")
     direccion = opcion.get("tipo") or datos.get("tipo_opcion")
     tesis = clasificar_tesis_activa(simbolo, direccion)
-    if tesis["accion"] == "NEW":
+    if tesis["accion"] in {"NEW", "REINFORCEMENT"}:
+        datos["tesis_ejecucion"] = tesis
         return None
 
     evento = {
-        "REINFORCEMENT": "THESIS_REINFORCEMENT_EXECUTION_BLOCKED",
         "COUNTERSIGNAL": "THESIS_COUNTERSIGNAL_EXECUTION_BLOCKED",
         "LEGACY_MIXED": "THESIS_LEGACY_MIXED_EXECUTION_BLOCKED",
+        "PRE_CHAIN_ACTIVE": "PRE_CHAIN_ACTIVE_EXECUTION_BLOCKED",
+        "CHAIN_INTEGRITY": "THESIS_CHAIN_INTEGRITY_EXECUTION_BLOCKED",
     }[tesis["accion"]]
     actualizar_alerta(
         datos.get("alert_id"), "CANCELLED", evento,
@@ -2200,30 +2249,34 @@ def bloquear_ejecucion_por_tesis(orden_id, datos):
 def texto_bloqueo_tesis(tesis):
     simbolo = tesis.get("simbolo", "ACTIVO")
     direccion = tesis.get("direccion_senal", "")
-    if tesis["accion"] == "REINFORCEMENT":
-        return (
-            f"🛡️ <b>REFUERZO DE TESIS — {simbolo} {direccion}</b>\n"
-            f"Ya existe una posición {tesis.get('direccion_tesis')} abierta. "
-            "No se abrió una segunda posición."
-        )
     if tesis["accion"] == "COUNTERSIGNAL":
         return (
             f"🛡️ <b>CONTRASEÑAL BLOQUEADA — {simbolo} {direccion}</b>\n"
             f"La tesis {tesis.get('direccion_tesis')} sigue abierta; no se ejecutó una posición contraria."
         )
+    if tesis["accion"] == "PRE_CHAIN_ACTIVE":
+        return (
+            f"⏳ <b>ACTIVO PRE-CHAIN — {simbolo}</b>\n"
+            "La posición previa debe cerrar antes de iniciar una cadena nueva."
+        )
     return (
         f"⚠️ <b>TESIS MIXTA LEGACY — {simbolo}</b>\n"
-        "Ya existen CALL y PUT abiertos. AXIS bloqueó esta nueva ejecución hasta su reconciliación."
+        "La cadena no es íntegra; AXIS bloqueó la nueva ejecución hasta su reconciliación."
     )
 
 
-def enviar_senal_con_botones(simbolo, estrategia, hora_label, precio_vela, tipo_opcion, extra=""):
-    alert_id = crear_alerta(
-        simbolo, estrategia, tipo_opcion, precio_vela,
-        hora_label=hora_label, origen=_v7_eval_origen or "ESTRATEGIA",
-    )
+def enviar_senal_con_botones(simbolo, estrategia, hora_label, precio_vela, tipo_opcion, extra="",
+                             alert_id=None, tesis_previa=None):
+    if alert_id is None:
+        alert_id = crear_alerta(
+            simbolo, estrategia, tipo_opcion, precio_vela,
+            hora_label=hora_label, origen=_v7_eval_origen or "ESTRATEGIA",
+        )
     registrar_senal_disparada(simbolo, estrategia, hora_label=hora_label)
-    if aplicar_tesis_a_alerta(alert_id, simbolo, estrategia, hora_label, tipo_opcion):
+    tesis = tesis_previa if tesis_previa is not None else aplicar_tesis_a_alerta(
+        alert_id, simbolo, estrategia, hora_label, tipo_opcion,
+    )
+    if tesis and tesis["accion"] != "REINFORCEMENT":
         print(f"{simbolo}: señal {estrategia} procesada bajo THESIS_LOCK")
         return
     try:
@@ -2249,8 +2302,13 @@ def enviar_senal_con_botones(simbolo, estrategia, hora_label, precio_vela, tipo_
 
     if opcion:
         opcion["subyacente"] = simbolo
+        encabezado_cadena = (
+            "🔗 <b>CONFIRMACIÓN DE TESIS</b>\n"
+            f"<b>Cadena:</b> {tesis.get('chain_id')} | <b>Dirección activa:</b> {tesis.get('direccion_tesis')}\n"
+            if tesis and tesis["accion"] == "REINFORCEMENT" else ""
+        )
         msg = (
-            f"{emoji} <b>{estrategia}</b>\n"
+            f"{encabezado_cadena}{emoji} <b>{estrategia}</b>\n"
             f"<b>Activo:</b> {simbolo}\n"
             f"<b>Hora:</b> {hora_label}\n"
             f"<b>Alert ID:</b> {alert_id}\n"
@@ -2277,6 +2335,7 @@ def enviar_senal_con_botones(simbolo, estrategia, hora_label, precio_vela, tipo_
                 "message_id":      message_id,
                 "chat_id":         chat_id,
                 "texto_original":  msg,
+                "tesis_alerta":    tesis,
             }
             guardar_ordenes()
         else:
@@ -3342,10 +3401,15 @@ def serve_app():
     return Response("<h1>App no encontrada</h1>", mimetype="text/html"), 404
 
 def registrar_ejecucion_confirmada(resultado, opcion, estrategia, alert_id, decision,
-                                   contratos=1, es_reto=False, carril_id=None):
+                                   contratos=1, es_reto=False, carril_id=None,
+                                   tesis=None):
     """Único punto de alta: solo después de que Tradier confirmó la compra."""
     if not resultado.get("ok"):
         return None
+    tesis = tesis or {"accion": "NEW"}
+    es_confirmacion = tesis.get("accion") == "REINFORCEMENT"
+    chain_id = tesis.get("chain_id") if es_confirmacion else f"CHAIN-{alert_id}"
+    chain_root_alert_id = tesis.get("chain_root_alert_id") if es_confirmacion else alert_id
     venta_confirmada = bool(resultado.get("venta_ok", resultado.get("venta_id")))
     pos = registrar_posicion(
         opcion, estrategia, opcion["subyacente"], opcion["ask"],
@@ -3353,6 +3417,8 @@ def registrar_ejecucion_confirmada(resultado, opcion, estrategia, alert_id, deci
         tradier_orden_id=resultado.get("id"), tradier_gtc_id=resultado.get("venta_id"),
         alert_id=alert_id, gtc_confirmada=venta_confirmada,
         gtc_error=resultado.get("venta_error"),
+        chain_id=chain_id, chain_root_alert_id=chain_root_alert_id,
+        chain_role="CONFIRMACION" if es_confirmacion else "MATRIZ",
     )
     if not venta_confirmada:
         actualizar_alerta(
@@ -3517,6 +3583,7 @@ def telegram_webhook():
             costo_total = round(opcion["ask"] * 100 * contratos, 2)
             pos = registrar_ejecucion_confirmada(
                 resultado_tradier, opcion, estrategia, alert_id, "EXECUTE", contratos=contratos,
+                tesis=datos.get("tesis_ejecucion") or datos.get("tesis_alerta"),
             )
             if not pos:
                 resultado_flujo = marcar_ejecucion_fallida(orden_id, datos, resultado_tradier, "EXECUTE")
@@ -3555,7 +3622,10 @@ def telegram_webhook():
             estrategia = datos.get("estrategia", "AXIS")
             alert_id   = datos.get("alert_id")
             resultado_tradier = ejecutar_orden_tradier(opcion)
-            pos = registrar_ejecucion_confirmada(resultado_tradier, opcion, estrategia, alert_id, "EXECUTE")
+            pos = registrar_ejecucion_confirmada(
+                resultado_tradier, opcion, estrategia, alert_id, "EXECUTE",
+                tesis=datos.get("tesis_ejecucion") or datos.get("tesis_alerta"),
+            )
             if not pos:
                 resultado_flujo = marcar_ejecucion_fallida(orden_id, datos, resultado_tradier, "EXECUTE")
                 if resultado_flujo == "REVIEW_REQUIRED":
@@ -3662,6 +3732,7 @@ def telegram_webhook():
             pos = registrar_ejecucion_confirmada(
                 resultado_tradier, opcion, estrategia, alert_id, "DERBY", contratos=contratos,
                 es_reto=True, carril_id=caballo_id,
+                tesis=datos.get("tesis_ejecucion") or datos.get("tesis_alerta"),
             )
             if not pos:
                 caballo.update(estado_caballo_previo)
@@ -5407,12 +5478,21 @@ def evaluar_hed(simbolo):
             simbolo, "HED — SHOOTING STAR DIARIA", "PUT", v_close,
             hora_label=ahora_dt.strftime("%H:%M EST"), origen="HED_AUTO",
         )
-        if aplicar_tesis_a_alerta(
+        tesis = aplicar_tesis_a_alerta(
             alert_id, simbolo, "HED — SHOOTING STAR DIARIA",
             ahora_dt.strftime("%H:%M EST"), "PUT",
-        ):
+        )
+        if tesis and tesis["accion"] != "REINFORCEMENT":
             registrar_senal_disparada(simbolo, "HED — SHOOTING STAR DIARIA")
             print(f"{simbolo}: HED procesada bajo THESIS_LOCK")
+            return
+        if tesis and tesis["accion"] == "REINFORCEMENT":
+            # Un refuerzo HED nunca compra automáticamente: se entrega como
+            # confirmación manual igual que las demás estrategias.
+            enviar_senal_con_botones(
+                simbolo, "HED — SHOOTING STAR DIARIA", ahora_dt.strftime("%H:%M EST"),
+                v_close, "PUT", alert_id=alert_id, tesis_previa=tesis,
+            )
             return
         precio_actual = get_precio_tradier(simbolo) or v_close
         opcion = get_opcion_tradier(simbolo, "put", precio_actual)
@@ -5426,6 +5506,7 @@ def evaluar_hed(simbolo):
         cond_str = "RCB 30%" if cond_b else f"SMA20({sma20:.2f})>SMA40({sma40:.2f})"
         pos = registrar_ejecucion_confirmada(
             resultado, opcion, "HED — SHOOTING STAR DIARIA", alert_id, "AUTO",
+            tesis=tesis,
         )
         if pos:
             registrar_senal_disparada(simbolo, "HED — SHOOTING STAR DIARIA")
@@ -5683,14 +5764,12 @@ def arrancar_monitor():
     reconciliar_posiciones_vencidas(datetime.now(EST))
     cargar_ordenes()
     cargar_estado_dia()
-    cargar_reporte_especial_estado()
     cargar_reconciliacion_interna_estado()
     construir_base_datos()
     threading.Thread(target=monitor_loop,              daemon=True).start()
     threading.Thread(target=loop_v7_anticipada,        daemon=True).start()
     threading.Thread(target=loop_limpiar_ordenes,      daemon=True).start()
     threading.Thread(target=loop_polling_posiciones,   daemon=True).start()
-    threading.Thread(target=loop_reporte_especial,     daemon=True).start()
     threading.Thread(target=loop_reconciliacion_interna, daemon=True).start()
 
 threading.Thread(target=arrancar_monitor, daemon=True).start()
