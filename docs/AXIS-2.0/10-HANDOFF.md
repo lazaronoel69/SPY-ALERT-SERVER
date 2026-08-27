@@ -2,6 +2,21 @@
 
 ---
 
+## Estado de reconciliación — 2026-08-22 (backfill)
+
+- **AX-TRACK-AUDIT-005** recupera el corte omitido del 2026-08-22 con sesiones
+  completas del 2026-08-17 al 2026-08-21 y 38 terminales nuevos: 10 `CLOSED`
+  y 28 `CANCELLED`.
+- Los cierres vinculados suman $1,951; cuatro de diez fueron ganadores. MFE,
+  MAE y duración están disponibles en los diez cierres; el CSV compacto no
+  contiene secretos, IDs de Telegram ni snapshots completos.
+- Las cancelaciones incluyen 11 contraseñales suprimidas por CHAIN-001, ocho
+  expiraciones de orden, cuatro revisiones Tradier vencidas, dos señales sin
+  opción y tres sin carril Derby.
+- El reporte programado del 22 no se publicó porque su preflight no descubría
+  la credencial administrativa local. La automatización fue corregida y su
+  preflight autenticado validado antes de este backfill.
+
 ## PROJECT STATUS
 
 | Campo | Valor |
