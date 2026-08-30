@@ -2,20 +2,21 @@
 
 ---
 
-## Estado de reconciliación — 2026-08-22 (backfill)
+## Estado de reconciliación — 2026-08-29
 
-- **AX-TRACK-AUDIT-005** recupera el corte omitido del 2026-08-22 con sesiones
-  completas del 2026-08-17 al 2026-08-21 y 38 terminales nuevos: 10 `CLOSED`
-  y 28 `CANCELLED`.
-- Los cierres vinculados suman $1,951; cuatro de diez fueron ganadores. MFE,
-  MAE y duración están disponibles en los diez cierres; el CSV compacto no
-  contiene secretos, IDs de Telegram ni snapshots completos.
-- Las cancelaciones incluyen 11 contraseñales suprimidas por CHAIN-001, ocho
-  expiraciones de orden, cuatro revisiones Tradier vencidas, dos señales sin
-  opción y tres sin carril Derby.
-- El reporte programado del 22 no se publicó porque su preflight no descubría
-  la credencial administrativa local. La automatización fue corregida y su
-  preflight autenticado validado antes de este backfill.
+- **AX-TRACK-AUDIT-006** cubre exclusivamente las sesiones completas del
+  2026-08-24 al 2026-08-28, posteriores al corte de `AUDIT-005` (2026-08-22
+  10:15 EDT): 55 terminales nuevos, 19 `CLOSED` y 36 `CANCELLED`.
+- Los cierres vinculados suman -$5,456; cuatro de 19 fueron ganadores. MFE,
+  MAE y duración están presentes en los 19 cierres. El CSV compacto excluye
+  secretos, IDs de Telegram y snapshots completos.
+- Las cancelaciones incluyen 19 expiraciones de orden, 16 contraseñales
+  suprimidas por CHAIN-001 y una señal sin opción. Cinco cancelaciones sin
+  cadena no ejecutaron posiciones; no hay cierres sin `alert_id`.
+- Preflight y salud posteriores verificados: `/version`, `/status`,
+  `/alerts/data` y `/portfolio/data` autenticadas respondieron 200; producción
+  v9.10, Railway saludable, cinco posiciones abiertas CHAIN-001 con GTC
+  confirmada y sin vencimientos.
 
 ## PROJECT STATUS
 
