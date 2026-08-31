@@ -11,8 +11,8 @@
   MAE y duración están presentes en los 19 cierres. El CSV compacto excluye
   secretos, IDs de Telegram y snapshots completos.
 - Las cancelaciones incluyen 19 expiraciones de orden, 16 contraseñales
-  suprimidas por CHAIN-001 y una señal sin opción. Cinco cancelaciones sin
-  cadena no ejecutaron posiciones; no hay cierres sin `alert_id`.
+  suprimidas por CHAIN-001 y una señal sin opción. Ninguna cancelación ejecutó
+  posición; no hay cierres sin `alert_id`.
 - Preflight y salud posteriores verificados: `/version`, `/status`,
   `/alerts/data` y `/portfolio/data` autenticadas respondieron 200; producción
   v9.10, Railway saludable, cinco posiciones abiertas CHAIN-001 con GTC

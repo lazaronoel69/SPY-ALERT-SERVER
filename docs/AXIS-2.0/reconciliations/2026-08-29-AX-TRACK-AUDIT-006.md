@@ -24,8 +24,8 @@
 
 - La cohorte de cierres contiene nueve cadenas CHAIN-001: nueve matrices y diez
   confirmaciones. Las contraseñales permanecen separadas de las operaciones.
-- Cinco cancelaciones no llevan metadatos de cadena (cuatro de MU y una de
-  AMZN); ninguna creó posición ni afecta la trazabilidad de los 19 cierres.
+- Las 36 cancelaciones no ejecutaron posición; por ello no alteran la
+  trazabilidad ni la separación de cadenas de los 19 cierres.
 
 ## Integridad y excepciones
 
