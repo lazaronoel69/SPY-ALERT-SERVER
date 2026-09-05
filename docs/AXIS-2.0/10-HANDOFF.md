@@ -2,6 +2,21 @@
 
 ---
 
+## Estado de reconciliación — 2026-09-05
+
+- **AX-TRACK-AUDIT-007** cubre exclusivamente las sesiones completas del
+  2026-08-31 al 2026-09-04, posteriores al corte de `AUDIT-006` (2026-08-28
+  16:57 EDT): 42 terminales nuevos, 6 `CLOSED` y 36 `CANCELLED`.
+- Los seis cierres están correlacionados exactamente con Portfolio y conservan
+  MFE, MAE, duración, vencimiento, `alert_id` y cadena; sus resultados suman
+  -$271. Cinco cerraron por vencimiento y uno por GTC.
+- Las 36 cancelaciones no abrieron posición: 27 expiraciones de orden, ocho
+  contraseñales suprimidas y una revisión Tradier vencida. La única posición
+  abierta sigue vinculada a CHAIN-001, con GTC confirmada y sin vencimiento.
+- Preflight autenticado y salud verificados: `/version`, `/status`,
+  `/alerts/data` y `/portfolio/data` respondieron 200; producción v9.10,
+  commit `c162c49`, Railway saludable y seis hilos operativos.
+
 ## Estado de reconciliación — 2026-08-29
 
 - **AX-TRACK-AUDIT-006** cubre exclusivamente las sesiones completas del
